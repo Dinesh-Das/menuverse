@@ -1,4 +1,4 @@
-# Zaika Zindagi — Taste of Life
+# Menuverse — Zaika Zindagi
 ### Premium Digital Dining & Kitchen Orchestration System
 
 Zaika Zindagi is a high-fidelity, QR-based Progressive Web Application (PWA) and Administrative Suite designed for premium Indian culinary establishments. It reimagines the dining experience through a "Gourmet Tech Editorial" design lens, blending immersive visual storytelling with industrial-grade kitchen management.
