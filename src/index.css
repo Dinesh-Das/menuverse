@@ -1,0 +1,385 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Manrope:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #C5A059;
+    --color-on-primary: #FFFFFF;
+    --color-primary-container: #F4EFE6;
+    --color-on-primary-container: #4A3B1E;
+    --color-primary-fixed: #ffdea7;
+    --color-primary-fixed-dim: #ecc06f;
+    --color-on-primary-fixed: #271900;
+    --color-on-primary-fixed-variant: #5e4200;
+
+    --color-surface: #FAF9F6;
+    --color-surface-dim: #EBE7DF;
+    --color-surface-bright: #FFFFFF;
+    --color-surface-container-lowest: #FFFFFF;
+    --color-surface-container-low: #FDFCFB;
+    --color-surface-container: #FFFFFF;
+    --color-surface-container-high: #F5F2ED;
+    --color-surface-container-highest: #EBE7DF;
+    --color-on-surface: #1A1A1A;
+    --color-on-surface-variant: #6B665F;
+
+    --color-background: #FAF9F6;
+    --color-on-background: #1A1A1A;
+
+    --color-outline: #D1CDC7;
+    --color-outline-variant: #E8E4DF;
+
+    --color-secondary: #8D8881;
+    --color-on-secondary: #FFFFFF;
+    --color-secondary-container: #e5e2e1;
+    --color-on-secondary-container: #474746;
+    --color-secondary-fixed: #e5e2e1;
+    --color-secondary-fixed-dim: #c8c6c5;
+    --color-on-secondary-fixed: #1b1c1c;
+    --color-on-secondary-fixed-variant: #474746;
+
+    --color-tertiary: #788291;
+    --color-on-tertiary: #FFFFFF;
+    --color-tertiary-container: #D6E3FF;
+    --color-on-tertiary-container: #234270;
+    --color-tertiary-fixed: #d6e3ff;
+    --color-tertiary-fixed-dim: #aac7fe;
+    --color-on-tertiary-fixed: #001b3d;
+    --color-on-tertiary-fixed-variant: #284775;
+
+    --color-error: #B3261E;
+    --color-on-error: #FFFFFF;
+    --color-error-container: #F9DEDC;
+    --color-on-error-container: #410002;
+    
+    --color-inverse-surface: #31302F;
+    --color-inverse-on-surface: #F4F0EF;
+    --color-inverse-primary: #F0C372;
+    
+    --color-surface-tint: #C5A059;
+
+    /* ── Layout & Spacing Tokens ────────────────────── */
+    --tap-target:         44px;    /* WCAG minimum touch target */
+    --sidebar-width:      256px;   /* Admin sidebar */
+    --cart-sidebar-width: 360px;   /* Desktop cart panel */
+    --activity-width:     320px;   /* Admin activity/order thread */
+    --nav-height:         64px;    /* Customer top nav */
+    --bottom-nav-height:  72px;    /* Customer bottom nav */
+
+    /* ── Fluid Typography (clamp: min, preferred, max) ──*/
+    --text-xs:   clamp(0.625rem, 1vw,  0.75rem);   /* 10–12px  */
+    --text-sm:   clamp(0.75rem,  1.2vw, 0.875rem); /* 12–14px  */
+    --text-base: clamp(0.875rem, 1.5vw, 1rem);     /* 14–16px  */
+    --text-lg:   clamp(1rem,     1.8vw, 1.25rem);  /* 16–20px  */
+    --text-xl:   clamp(1.125rem, 2.2vw, 1.5rem);   /* 18–24px  */
+    --text-2xl:  clamp(1.25rem,  2.8vw, 2rem);     /* 20–32px  */
+    --text-3xl:  clamp(1.5rem,   3.5vw, 2.5rem);   /* 24–40px  */
+    --text-hero: clamp(2rem,     5vw,   3.5rem);   /* 32–56px  */
+
+    /* ── KDS-Specific Tokens (wall-mount readable at 2m) */
+    --font-kds-table:    28px;    /* Table number — large, bold  */
+    --font-kds-body:     18px;    /* Item text — minimum readable */
+    --font-kds-label:    13px;    /* Status badge labels          */
+    --kds-card-min:      280px;   /* Minimum KDS card width       */
+
+    /* ── Breakpoint Hints (for JS usage via getComputedStyle) */
+    --bp-sm:  640px;
+    --bp-md:  768px;
+    --bp-lg:  1024px;
+    --bp-xl:  1280px;
+    --bp-2xl: 1920px;
+  }
+
+  .dark {
+    --color-primary: #f0c372;
+    --color-on-primary: #412d00;
+    --color-primary-container: #d2a85a;
+    --color-on-primary-container: #573d00;
+    --color-primary-fixed: #ffdea7;
+    --color-primary-fixed-dim: #ecc06f;
+    --color-on-primary-fixed: #271900;
+    --color-on-primary-fixed-variant: #5e4200;
+
+    --color-surface: #131313;
+    --color-surface-dim: #131313;
+    --color-surface-bright: #393939;
+    --color-surface-container-lowest: #0e0e0e;
+    --color-surface-container-low: #1c1b1b;
+    --color-surface-container: #201f1f;
+    --color-surface-container-high: #2a2a2a;
+    --color-surface-container-highest: #353534;
+    --color-on-surface: #e5e2e1;
+    --color-on-surface-variant: #d2c5b3;
+
+    --color-background: #131313;
+    --color-on-background: #e5e2e1;
+
+    --color-outline: #9a8f7f;
+    --color-outline-variant: #4e4638;
+
+    --color-secondary: #c8c6c5;
+    --color-on-secondary: #303030;
+    --color-secondary-container: #474746;
+    --color-on-secondary-container: #b7b5b4;
+    --color-secondary-fixed: #e5e2e1;
+    --color-secondary-fixed-dim: #c8c6c5;
+    --color-on-secondary-fixed: #1b1c1c;
+    --color-on-secondary-fixed-variant: #474746;
+
+    --color-tertiary: #aecaff;
+    --color-on-tertiary: #0c305d;
+    --color-tertiary-container: #92afe4;
+    --color-on-tertiary-container: #234270;
+    --color-tertiary-fixed: #d6e3ff;
+    --color-tertiary-fixed-dim: #aac7fe;
+    --color-on-tertiary-fixed: #001b3d;
+    --color-on-tertiary-fixed-variant: #284775;
+
+    --color-error: #ffb4ab;
+    --color-on-error: #690005;
+    --color-error-container: #93000a;
+    --color-on-error-container: #ffdad6;
+    
+    --color-inverse-surface: #e5e2e1;
+    --color-inverse-on-surface: #313030;
+    --color-inverse-primary: #7a5911;
+    
+    --color-surface-tint: #ecc06f;
+    /* Layout tokens inherit unchanged in dark mode */
+  }
+}
+
+/* ─── Base Reset ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Manrope', sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100dvh;
+}
+
+/* ─── Scrollbar Hide ─────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Material Symbols ───────────────────────────────────── */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+}
+
+.material-symbols-outlined.filled {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ─── Typography Helpers ─────────────────────────────────── */
+.noto { font-family: 'Noto Serif', serif; }
+
+/* ─── Luxury Shadows ─────────────────────────────────────── */
+.luxury-shadow {
+  box-shadow: 0 10px 30px -15px rgba(0, 0, 0, 0.05);
+}
+
+.luxury-shadow-md {
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08);
+}
+
+.glass-nav-dark {
+  background: rgba(250, 249, 246, 0.8) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(209, 205, 199, 0.3);
+}
+
+.dark .glass-nav-dark {
+  background: rgba(19, 19, 19, 0.8) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ─── Admin Layout ───────────────────────────────────────── */
+.admin-layout {
+  display: flex;
+  min-height: 100dvh;
+  position: relative;
+}
+
+/* Sidebar hidden by default on mobile — shown via JS class toggle */
+.admin-sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  flex-shrink: 0;
+  /* Mobile: off-canvas */
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100dvh;
+  z-index: 100;
+  transform: translateX(-100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Desktop: always visible inline */
+@media (min-width: 1024px) {
+  .admin-sidebar {
+    position: sticky;
+    transform: translateX(0) !important;
+    height: 100dvh;
+    top: 0;
+  }
+}
+
+/* Toggle class applied by hamburger button */
+.admin-sidebar.open {
+  transform: translateX(0);
+}
+
+.admin-sidebar-wide {
+  width: calc(var(--sidebar-width) + 32px);
+  min-width: calc(var(--sidebar-width) + 32px);
+  flex-shrink: 0;
+}
+
+.admin-content {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+  /* On mobile, full width since sidebar is off-canvas */
+  width: 100%;
+}
+
+/* Overlay behind off-canvas sidebar on mobile */
+.admin-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+  backdrop-filter: blur(2px);
+}
+.admin-overlay.open {
+  display: block;
+}
+
+/* ─── Focus Bar Animation (Input Fields) ─────────────────── */
+.focus-bar {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  background: var(--color-primary);
+  transition: width 0.3s ease;
+}
+
+.input-line-focus:focus-within .focus-bar {
+  width: 100%;
+}
+
+/* ─── AR Reticle Corners ─────────────────────────────────── */
+.ar-reticle-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: var(--color-primary);
+  border-style: solid;
+}
+.ar-reticle-tl { top: 16px; left: 16px;   border-width: 2px 0 0 2px; }
+.ar-reticle-tr { top: 16px; right: 16px;  border-width: 2px 2px 0 0; }
+.ar-reticle-bl { bottom: 16px; left: 16px; border-width: 0 0 2px 2px; }
+.ar-reticle-br { bottom: 16px; right: 16px; border-width: 0 2px 2px 0; }
+
+/* ─── KDS Order Card Urgency Borders ─────────────────────── */
+.order-card-border-new    { border-top: 8px solid var(--color-tertiary-container); }
+.order-card-border-prep   { border-top: 8px solid var(--color-primary); }
+.order-card-border-ready  { border-top: 8px solid var(--color-primary-container); }
+.order-card-border-served { border-top: 8px solid var(--color-secondary-container); }
+.order-card-border-urgent { border-top: 8px solid var(--color-error); }
+
+/* ─── KDS Grid ───────────────────────────────────────────── */
+/* Targets wall-mounted landscape tablets. Cards are min var(--kds-card-min) */
+.kds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--kds-card-min), 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* Responsive overrides for KDS columns */
+@media (min-width: 1024px) {
+  .kds-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 1440px) {
+  .kds-grid { grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
+}
+
+/* KDS typography helpers */
+.kds-table-num {
+  font-size: var(--font-kds-table);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.kds-body-text {
+  font-size: var(--font-kds-body);
+  line-height: 1.5;
+}
+.kds-label-text {
+  font-size: var(--font-kds-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* ─── Processing Log Terminal ────────────────────────────── */
+.log-terminal {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.8;
+  padding: 16px;
+  overflow-y: auto;
+  max-height: 200px;
+}
+.log-terminal::-webkit-scrollbar { width: 4px; }
+.log-terminal::-webkit-scrollbar-track { background: transparent; }
+.log-terminal::-webkit-scrollbar-thumb { background: var(--color-outline-variant); border-radius: 2px; }
+
+/* ─── Bar Chart Bars ─────────────────────────────────────── */
+.bar-chart-bar { transition: height 0.5s ease, opacity 0.3s ease; }
+
+/* ─── Smooth Theme Transitions ───────────────────────────── */
+.transition-theme {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* ─── Custom scrollbar for admin panels ──────────────────── */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: var(--color-surface-container-highest); border-radius: 2px; }

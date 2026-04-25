@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // Keeping sqlite for local development as per .env
+  url      = env("DATABASE_URL")
+}
+
+model Restaurant {
+  id            String   @id @default(uuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  logo_url      String?
+  primary_color String?  @default("#B8860B")
+  font_family   String?  @default("serif")
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  users       User[]
+  tables      Table[]
+  categories  MenuCategory[]
+  items       MenuItem[]
+  orders      Order[]
+  modifier_groups ModifierGroup[]
+}
+
+model User {
+  id             String     @id @default(uuid())
+  restaurant_id  String
+  email          String     @unique
+  password_hash  String
+  role           String     // owner, manager, staff, super_admin
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+}
+
+model Table {
+  id             String     @id @default(uuid())
+  restaurant_id  String
+  number         String
+  section        String
+  capacity       Int
+  status         String     @default("available") // available, occupied, awaiting_payment, closed
+  qr_code_url    String?
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  orders         Order[]
+}
+
+model MenuCategory {
+  id             String     @id @default(uuid())
+  restaurant_id  String
+  name           String
+  display_order  Int        @default(0)
+  archived       Boolean    @default(false)
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  items          MenuItem[]
+}
+
+model MenuItem {
+  id             String     @id @default(uuid())
+  restaurant_id  String
+  category_id    String
+  name           String
+  description    String?
+  price          Float
+  dietary_flag   String?    // veg, non-veg, vegan
+  available      Boolean    @default(true)
+  display_order  Int        @default(0)
+  image_url      String?
+  tags_json      String?    // Stringified JSON array e.g. ["popular", "spicy"]
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+
+  restaurant     Restaurant   @relation(fields: [restaurant_id], references: [id])
+  category       MenuCategory @relation(fields: [category_id], references: [id])
+  order_items    OrderItem[]
+  modifier_groups ModifierGroup[]
+}
+
+model ModifierGroup {
+  id             String     @id @default(uuid())
+  restaurant_id  String
+  menu_item_id   String
+  name           String     // e.g. "Spice Level"
+  required       Boolean    @default(false)
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  menu_item      MenuItem   @relation(fields: [menu_item_id], references: [id])
+  options        ModifierOption[]
+}
+
+model ModifierOption {
+  id               String        @id @default(uuid())
+  group_id         String
+  name             String
+  price_delta      Float         @default(0)
+
+  group            ModifierGroup @relation(fields: [group_id], references: [id])
+}
+
+model Order {
+  id                   String      @id // Format: SF-YYYYMMDD-XXXX
+  restaurant_id        String
+  table_id             String
+  status               String      @default("pending") // pending, accepted, preparing, ready, served, completed, cancelled
+  total_amount         Float
+  special_instructions String?
+  idempotency_key      String?     @unique
+  cancel_reason        String?
+  created_at           DateTime    @default(now())
+  updated_at           DateTime    @updatedAt
+
+  restaurant           Restaurant  @relation(fields: [restaurant_id], references: [id])
+  table                Table       @relation(fields: [table_id], references: [id])
+  items                OrderItem[]
+  payments             Payment[]
+}
+
+model OrderItem {
+  id             String   @id @default(uuid())
+  order_id       String
+  menu_item_id   String
+  name           String
+  quantity       Int      @default(1)
+  price          Float
+  modifiers_json String?  // Stringified JSON
+  
+  order          Order    @relation(fields: [order_id], references: [id])
+  menu_item      MenuItem @relation(fields: [menu_item_id], references: [id])
+}
+
+model Payment {
+  id                  String   @id @default(uuid())
+  order_id            String
+  razorpay_order_id   String
+  razorpay_payment_id String?
+  status              String   @default("initiated")
+  amount              Float
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  order               Order    @relation(fields: [order_id], references: [id])
+}
