@@ -19,12 +19,22 @@ export default function MenuHome() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [dietFilter, setDietFilter] = useState([]); // 'veg', 'vegan', 'non-veg'
+  const [upsellModal, setUpsellModal] = useState({ isOpen: false, addedItemName: '' });
+  const [upsellCandidates, setUpsellCandidates] = useState([]);
 
   useEffect(() => {
     fetchMenu(slug)
       .then(data => {
         setRestaurant(data.restaurant);
         setCategories(data.categories || []);
+        
+        // Prepare upsell candidates
+        const candidates = (data.categories || []).filter(cat => {
+          const name = cat.name.toLowerCase();
+          return name.includes('sweet') || name.includes('liquid') || name.includes('beverage') || name.includes('dessert');
+        }).flatMap(cat => cat.items);
+        setUpsellCandidates(candidates);
+
         setLoading(false);
 
         // Seed context if missing (legacy route /menu)
@@ -71,6 +81,18 @@ export default function MenuHome() {
   };
 
   const getDishPath = (dishId) => restaurantSlug ? `/r/${restaurantSlug}/dish/${dishId}` : `/dish/${dishId}`;
+
+  const handleAddWithUpsell = (dish) => {
+    addItem(dish);
+    
+    // Only show upsell if adding a main course (not a drink/dessert already)
+    const catName = categories.find(c => c.id === dish.category_id)?.name.toLowerCase() || '';
+    const isMain = !catName.includes('sweet') && !catName.includes('liquid') && !catName.includes('beverage') && !catName.includes('dessert');
+    
+    if (isMain && upsellCandidates.length > 0) {
+      setUpsellModal({ isOpen: true, addedItemName: dish.name });
+    }
+  };
 
   if (loading) return (
     <div className="min-h-dvh bg-background flex items-center justify-center">
@@ -205,7 +227,7 @@ export default function MenuHome() {
                   <div className="mt-auto pt-4 flex items-center justify-between border-t border-outline-variant/30">
                     <span className="text-primary font-headline text-lg font-bold">₹{dish.price}</span>
                     <button
-                      onClick={e => { e.stopPropagation(); addItem(dish); }}
+                      onClick={e => { e.stopPropagation(); handleAddWithUpsell(dish); }}
                       className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-primary hover:bg-primary hover:text-on-primary transition-colors cursor-pointer shadow-sm"
                     >
                       <span className="material-symbols-outlined text-xl">add</span>
@@ -226,6 +248,68 @@ export default function MenuHome() {
       <div className="lg:hidden">
         <BottomNav />
       </div>
+
+      {/* Upsell Bottom Sheet */}
+      {upsellModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6">
+          <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={() => setUpsellModal({ ...upsellModal, isOpen: false })} />
+          <div className="relative w-full max-w-xl bg-surface-container-low rounded-t-[2.5rem] sm:rounded-[2.5rem] border border-outline-variant/10 shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500">
+            <div className="p-8">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="material-symbols-outlined text-primary text-lg">check_circle</span>
+                    <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant">Added to Cart</span>
+                  </div>
+                  <h3 className="font-headline text-2xl font-bold text-on-surface tracking-tight">{upsellModal.addedItemName}</h3>
+                </div>
+                <button 
+                  onClick={() => setUpsellModal({ ...upsellModal, isOpen: false })}
+                  className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface cursor-pointer"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              <div className="bg-primary/5 rounded-2xl p-4 mb-6 border border-primary/10">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="material-symbols-outlined text-primary text-xl">auto_awesome</span>
+                  <p className="text-xs font-bold uppercase tracking-widest text-primary">Pairs perfectly with</p>
+                </div>
+                
+                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                  {upsellCandidates.slice(0, 6).map(item => (
+                    <div key={item.id} className="flex-none w-32 bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 shadow-sm flex flex-col">
+                      <div className="h-20 overflow-hidden">
+                        <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="p-3 flex flex-col flex-grow">
+                        <h4 className="text-[11px] font-bold text-on-surface line-clamp-1 mb-1">{item.name}</h4>
+                        <div className="mt-auto flex items-center justify-between">
+                          <span className="text-primary font-bold text-[10px]">₹{item.price}</span>
+                          <button 
+                            onClick={() => { addItem(item); setUpsellModal({ ...upsellModal, isOpen: false }); }}
+                            className="w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center hover:bg-primary-fixed-dim transition-colors cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-xs">add</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setUpsellModal({ ...upsellModal, isOpen: false })}
+                className="w-full py-4 bg-surface-container-highest text-on-surface font-bold uppercase tracking-widest text-xs rounded-xl hover:bg-outline-variant/20 transition-colors cursor-pointer"
+              >
+                Continue to Menu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

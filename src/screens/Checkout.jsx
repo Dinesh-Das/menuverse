@@ -2,20 +2,53 @@ import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import BottomNav from '../components/BottomNav';
-import { placeOrder } from '../lib/api';
+import { placeOrder, fetchMenu } from '../lib/api';
 import { useTheme } from '../context/ThemeContext';
 
 export default function Checkout() {
   const { restaurantSlug } = useParams();
-  const { items, subtotal, tax, total, removeItem, updateQty, clearCart, tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug } = useCart();
+  const { items, allItems, subtotal, tax, total, removeItem, updateQty, clearCart, tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [upsellItems, setUpsellItems] = useState([]);
 
-  const handleCheckout = async () => {
-    if (items.length === 0) return;
+  const currentSlug = restaurantSlug || sessionSlug || 'zaika-zindagi';
+
+  React.useEffect(() => {
+    if (!currentSlug) return;
+    fetchMenu(currentSlug).then(data => {
+      let candidates = [];
+      data.categories.forEach(cat => {
+        const name = cat.name.toLowerCase();
+        if (
+          name.includes('beverage') || name.includes('drink') || 
+          name.includes('dessert') || name.includes('sides') ||
+          name.includes('sweet') || name.includes('liquid')
+        ) {
+          candidates = [...candidates, ...cat.items];
+        }
+      });
+      console.log("Upsell candidates found:", candidates.length, candidates.map(c => c.name));
+      setUpsellItems(candidates);
+    }).catch(err => console.error("Upsell fetch error:", err));
+  }, [currentSlug]);
+
+  const handleCheckout = async (isPaid = false) => {
+    if (allItems.length === 0) return;
+    
+    // Anti-spam: 60-second cooldown
+    const lastOrderTime = localStorage.getItem('mv_last_order_time');
+    if (lastOrderTime) {
+      const diff = Date.now() - parseInt(lastOrderTime, 10);
+      if (diff < 60000) {
+        setError(`Please wait ${Math.ceil((60000 - diff) / 1000)} seconds before placing another order.`);
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
 
@@ -27,7 +60,7 @@ export default function Checkout() {
         total_amount: total,
         special_instructions: note,
         idempotency_key: idempotencyKey,
-        items: items.map(item => ({
+        items: allItems.map(item => ({
           menu_item_id: item.id,
           name: item.name,
           quantity: item.qty,
@@ -37,6 +70,7 @@ export default function Checkout() {
       };
 
       const result = await placeOrder(payload);
+      localStorage.setItem('mv_last_order_time', Date.now().toString());
       clearCart();
 
       const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
@@ -76,7 +110,7 @@ export default function Checkout() {
       </header>
 
       <main className="pt-24 px-6 max-w-lg md:max-w-6xl mx-auto">
-        {items.length === 0 ? (
+        {allItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center md:py-32">
             <span className="material-symbols-outlined text-6xl text-surface-container-highest mb-4">restaurant</span>
             <p className="text-on-surface-variant font-medium">Your selection is empty.</p>
@@ -91,19 +125,24 @@ export default function Checkout() {
             <div className="md:col-span-2">
               {/* Order Items */}
               <div className="space-y-4 mb-8">
-                {items.map((item) => {
+                {allItems.map((item, idx) => {
                   const modsPrice = (item.selectedModifiers || []).reduce((sum, mod) => sum + (mod.price_delta || 0), 0);
                   const itemTotal = (item.price + modsPrice) * item.qty;
 
                   return (
-                  <div key={item.id} className="bg-surface-container-low p-4 rounded-xl flex gap-4 border border-outline-variant/10 hover:shadow-md transition-shadow">
+                  <div key={`${item.id}-${idx}`} className="bg-surface-container-low p-4 rounded-xl flex gap-4 border border-outline-variant/10 hover:shadow-md transition-shadow">
                     <div className="w-20 h-20 md:w-28 md:h-28 rounded-lg overflow-hidden shrink-0 bg-surface-container">
                       {item.image_url && <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />}
                     </div>
                     <div className="flex-1 flex flex-col justify-center">
                       <div className="flex justify-between items-start mb-1">
-                        <h3 className="font-headline font-bold text-on-surface text-base md:text-lg">{item.name}</h3>
-                        <button onClick={() => removeItem(item.id)} className="material-symbols-outlined text-on-surface-variant hover:text-error transition-colors text-sm cursor-pointer p-1">close</button>
+                        <div className="flex flex-col">
+                          <h3 className="font-headline font-bold text-on-surface text-base md:text-lg">{item.name}</h3>
+                          {item.isRemote && <span className="text-[9px] text-amber-500 uppercase tracking-widest font-bold mt-0.5">Added by table</span>}
+                        </div>
+                        {!item.isRemote && (
+                          <button onClick={() => removeItem(item.id)} className="material-symbols-outlined text-on-surface-variant hover:text-error transition-colors text-sm cursor-pointer p-1">close</button>
+                        )}
                       </div>
                       <div className="text-primary font-headline font-bold mb-1 md:mb-2">₹{itemTotal.toFixed(2)}</div>
                       {(item.selectedModifiers || []).length > 0 && (
@@ -117,19 +156,59 @@ export default function Checkout() {
                         </div>
                       )}
 
-                      <div className="flex items-center gap-3 bg-surface-container rounded-full px-2 py-1 w-max border border-outline-variant/20 mt-auto">
-                        <button onClick={() => updateQty(item.id, item.qty - 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
-                          <span className="material-symbols-outlined text-sm">remove</span>
-                        </button>
-                        <span className="font-bold text-sm md:text-base text-on-surface w-4 md:w-6 text-center">{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, item.qty + 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
-                          <span className="material-symbols-outlined text-sm">add</span>
-                        </button>
-                      </div>
+                      {!item.isRemote ? (
+                        <div className="flex items-center gap-3 bg-surface-container rounded-full px-2 py-1 w-max border border-outline-variant/20 mt-auto">
+                          <button onClick={() => updateQty(item.id, item.qty - 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
+                            <span className="material-symbols-outlined text-sm">remove</span>
+                          </button>
+                          <span className="font-bold text-sm md:text-base text-on-surface w-4 md:w-6 text-center">{item.qty}</span>
+                          <button onClick={() => updateQty(item.id, item.qty + 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
+                            <span className="material-symbols-outlined text-sm">add</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-auto text-xs text-on-surface-variant/50 font-medium">Qty: {item.qty}</div>
+                      )}
                     </div>
                   </div>
                 )})}
               </div>
+
+              {/* Upselling Carousel */}
+              {upsellItems.filter(ui => !allItems.some(ai => ai.id === ui.id)).length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-4 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sm text-primary">auto_awesome</span>
+                    Complete Your Meal
+                  </h3>
+                  <div className="flex overflow-x-auto pb-4 gap-4 snap-x hide-scrollbar">
+                    {upsellItems
+                      .filter(ui => !allItems.some(ai => ai.id === ui.id))
+                      .slice(0, 5)
+                      .map(item => (
+                      <div key={item.id} className="snap-start shrink-0 w-36 md:w-44 bg-surface-container border border-outline-variant/10 rounded-2xl overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+                        <div className="h-24 md:h-28 bg-surface-container-high relative">
+                          {item.image_url ? (
+                            <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-on-surface-variant/30 material-symbols-outlined text-3xl">restaurant</div>
+                          )}
+                        </div>
+                        <div className="p-3 flex flex-col flex-1">
+                          <h4 className="font-headline font-bold text-xs md:text-sm text-on-surface line-clamp-1 mb-1">{item.name}</h4>
+                          <div className="text-primary font-bold text-xs mb-3">₹{item.price}</div>
+                          <button
+                            onClick={() => addItem(item, 1, [])}
+                            className="mt-auto w-full py-1.5 rounded-lg bg-primary/10 text-primary font-bold text-[10px] uppercase tracking-widest hover:bg-primary hover:text-on-primary transition-colors cursor-pointer"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Special Instructions */}
               <div className="mb-8">
@@ -179,7 +258,7 @@ export default function Checkout() {
 
               {/* CTA */}
               <button
-                onClick={handleCheckout}
+                onClick={() => handleCheckout()}
                 disabled={loading || !tableId}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-8"
               >

@@ -1,62 +1,89 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
-/**
- * Decodes a JWT payload without verifying the signature.
- * Used only to check the `exp` claim for UI gating — real
- * verification always happens server-side.
- */
-function decodeJwtPayload(token) {
-  try {
-    const payload = token.split('.')[1];
-    return JSON.parse(atob(payload));
-  } catch {
-    return null;
-  }
-}
-
-function isTokenExpired(token) {
-  const decoded = decodeJwtPayload(token);
-  if (!decoded?.exp) return true;
-  return Date.now() >= decoded.exp * 1000;
-}
-
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => {
-    const stored = localStorage.getItem('mv_admin_token');
-    if (!stored || isTokenExpired(stored)) {
-      // Clear stale tokens immediately on load — prevents flash of protected content
-      localStorage.removeItem('mv_admin_token');
-      localStorage.removeItem('mv_admin_user');
-      return null;
+  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) fetchUserProfile(session.user);
+      else setLoading(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) {
+        fetchUserProfile(session.user);
+      } else {
+        setUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchUserProfile = async (authUser) => {
+    try {
+      // Query by id — matches RLS policy (auth.uid()::text = id)
+      // Fallback to email match if id lookup fails (handles legacy records)
+      let { data, error } = await supabase
+        .from('User')
+        .select('*, restaurant:Restaurant(*)')
+        .eq('id', authUser.id)
+        .maybeSingle();
+
+      // Fallback: try by email (for accounts where id wasn't synced)
+      if ((error || !data) && authUser.email) {
+        const fallback = await supabase
+          .from('User')
+          .select('*, restaurant:Restaurant(*)')
+          .eq('email', authUser.email)
+          .maybeSingle();
+        data = fallback.data;
+        error = fallback.error;
+      }
+
+      if (!error && data) {
+        setUser({
+          id: data.id,
+          email: data.email,
+          role: data.role,
+          restaurantId: data.restaurant_id,
+          restaurant: data.restaurant,
+        });
+      } else {
+        console.warn('[Auth] Profile not found for', authUser.email, '— role: unlinked');
+        setUser({ id: authUser.id, email: authUser.email, role: 'unlinked' });
+      }
+    } catch (err) {
+      console.error('[Auth] Error fetching user profile:', err);
+      setUser({ id: authUser.id, email: authUser.email, role: 'unlinked' });
+    } finally {
+      setLoading(false);
     }
-    return stored;
-  });
-
-  const [user, setUser] = useState(() => {
-    const stored = localStorage.getItem('mv_admin_token');
-    if (!stored || isTokenExpired(stored)) return null;
-    return JSON.parse(localStorage.getItem('mv_admin_user') || 'null');
-  });
-
-  const login = (newToken, newUser) => {
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem('mv_admin_token', newToken);
-    localStorage.setItem('mv_admin_user', JSON.stringify(newUser));
   };
 
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('mv_admin_token');
-    localStorage.removeItem('mv_admin_user');
+  const login = async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
+    return data;
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
   };
 
   return (
-    <AuthContext.Provider value={{ token, user, login, logout }}>
-      {children}
+    <AuthContext.Provider value={{ token: session?.access_token, user, login, logout, loading }}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 }

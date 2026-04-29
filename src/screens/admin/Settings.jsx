@@ -41,7 +41,7 @@ export default function Settings() {
     if (!restaurantName.trim()) return;
     setSaving(true);
     try {
-      await adminUpdateRestaurant({ 
+      await adminUpdateRestaurant(user.restaurantId, { 
         name: restaurantName,
         description,
         primary_color: primaryColor,

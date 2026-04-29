@@ -16,12 +16,6 @@ export default function QRLanding() {
   useEffect(() => {
     async function init() {
       try {
-        // Seed only once per browser session — not on every QR scan
-        if (!sessionStorage.getItem('mv_seeded')) {
-          await fetch('/api/seed', { method: 'POST' });
-          sessionStorage.setItem('mv_seeded', '1');
-        }
-
         const tableData = await fetchTableInfo(tableId);
         setTable(tableData);
 

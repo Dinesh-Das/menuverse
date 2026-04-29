@@ -115,7 +115,7 @@ export default function OrderMonitor() {
                       <h3 className="font-headline text-xl font-bold text-on-surface">{order.id}</h3>
                       <p className="text-[10px] uppercase tracking-widest mt-1 text-on-surface-variant">
                         Table {order.table?.number || order.table_id?.slice(-4)} &nbsp;·&nbsp;
-                        {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
                     <span className={`text-[10px] font-bold px-3 py-1.5 rounded-full uppercase tracking-widest ${STATUS_COLORS[order.status] || ''}`}>

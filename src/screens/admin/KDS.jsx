@@ -6,9 +6,10 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 
 const formatTime = (ms) => {
-  if (ms < 0) return '0:00';
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const isNegative = ms < 0;
+  const absS = Math.floor(Math.abs(ms) / 1000);
+  const sign = isNegative ? '-' : '';
+  return `${sign}${Math.floor(absS / 60)}:${String(absS % 60).padStart(2, '0')}`;
 };
 
 export default function KDS() {
@@ -131,8 +132,9 @@ export default function KDS() {
           ) : (
             <div className="kds-grid">
               {orders.map(order => {
-                const elapsedMs = now - new Date(order.created_at).getTime();
-                const isUrgent = elapsedMs > 1200000;
+                const targetTime = new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).getTime() + (30 * 60 * 1000);
+                const remainingMs = targetTime - now;
+                const isUrgent = remainingMs < 600000; // Less than 10 mins remaining
                 let borderClass = 'order-card-border-new';
                 if (order.status === 'accepted')  borderClass = 'order-card-border-new';
                 if (order.status === 'preparing') borderClass = 'order-card-border-prep';
@@ -152,7 +154,7 @@ export default function KDS() {
                       <div className="text-right">
                         <div className={`font-headline font-bold mb-1 ${isUrgent ? 'text-error animate-pulse' : 'text-primary'}`}
                           style={{ fontSize: 'var(--font-kds-table)' }}>
-                          {formatTime(elapsedMs)}
+                          {formatTime(remainingMs)}
                         </div>
                         <span className={`kds-label-text px-2 py-1 rounded ${
                           order.status === 'pending'   ? 'bg-secondary/20 text-secondary' :

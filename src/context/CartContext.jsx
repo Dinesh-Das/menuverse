@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabase';
 
 const CartContext = createContext(null);
 const STORAGE_KEY = 'mv_cart';
@@ -14,15 +15,60 @@ function loadFromStorage() {
 
 export function CartProvider({ children }) {
   const [items, setItems] = useState(loadFromStorage);
+  const [remoteCarts, setRemoteCarts] = useState({});
   const [tableId, setTableId] = useState(localStorage.getItem('mv_table_id') || null);
   const [tableNumber, setTableNumber] = useState(localStorage.getItem('mv_table_num') || null);
   const [restaurantId, setRestaurantId] = useState(localStorage.getItem('mv_restaurant_id') || null);
   const [restaurantSlug, setRestaurantSlug] = useState(localStorage.getItem('mv_restaurant_slug') || null);
 
-  // Persist cart to localStorage
+  const deviceIdRef = useRef(localStorage.getItem('mv_device_id') || crypto.randomUUID());
+  const channelRef = useRef(null);
+
+  // Persist cart and device id
   useEffect(() => {
+    localStorage.setItem('mv_device_id', deviceIdRef.current);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
+
+  // Broadcast logic
+  useEffect(() => {
+    if (!tableId) return;
+
+    const channel = supabase.channel(`cart:${tableId}`, {
+      config: { broadcast: { self: false } }
+    });
+
+    channel
+      .on('broadcast', { event: 'cart_sync' }, ({ payload }) => {
+        setRemoteCarts(prev => ({ ...prev, [payload.deviceId]: payload.items }));
+      })
+      .on('broadcast', { event: 'request_sync' }, () => {
+        // Someone joined, send them our current cart
+        channel.send({
+          type: 'broadcast',
+          event: 'cart_sync',
+          payload: { deviceId: deviceIdRef.current, items }
+        });
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          // Ask for others' carts
+          channel.send({ type: 'broadcast', event: 'request_sync' });
+          // Send our cart initially
+          channel.send({
+            type: 'broadcast',
+            event: 'cart_sync',
+            payload: { deviceId: deviceIdRef.current, items }
+          });
+        }
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [tableId, items]);
 
   const setSession = useCallback((sessionData) => {
     const { tableId: tid, tableNumber: tnum, restaurantId: rid, restaurantSlug: slug } = sessionData;
@@ -74,10 +120,20 @@ export function CartProvider({ children }) {
   const clearCart = useCallback(() => {
     setItems([]);
     localStorage.removeItem(STORAGE_KEY);
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'cart_sync',
+        payload: { deviceId: deviceIdRef.current, items: [] }
+      });
+    }
   }, []);
 
-  const count = items.reduce((sum, i) => sum + i.qty, 0);
-  const subtotal = items.reduce((sum, i) => {
+  const remoteItems = Object.values(remoteCarts).flat().map(i => ({ ...i, isRemote: true }));
+  const allItems = [...items, ...remoteItems];
+
+  const count = allItems.reduce((sum, i) => sum + i.qty, 0);
+  const subtotal = allItems.reduce((sum, i) => {
     const modsPrice = (i.selectedModifiers || []).reduce((mSum, mod) => mSum + (mod.price_delta || 0), 0);
     return sum + (i.price + modsPrice) * i.qty;
   }, 0);
@@ -86,7 +142,7 @@ export function CartProvider({ children }) {
 
   return (
     <CartContext.Provider value={{
-      items, count, subtotal, tax, total,
+      items, remoteItems, allItems, count, subtotal, tax, total,
       tableId, tableNumber, restaurantId, restaurantSlug,
       addItem, removeItem, updateQty, clearCart, setSession
     }}>

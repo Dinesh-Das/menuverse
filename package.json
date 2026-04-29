@@ -4,28 +4,21 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"vite\"",
-    "server": "nodemon server/index.js",
+    "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@google/model-viewer": "^3.0.0",
-    "@prisma/client": "^5.22.0",
-    "aws-sdk": "^2.1693.0",
-    "bcrypt": "^6.0.0",
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
+    "@supabase/supabase-js": "^2.39.0",
     "framer-motion": "^11.0.0",
-    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.300.0",
+    "pg": "^8.20.0",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.14.0",
-    "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "react-router-dom": "^7.14.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
@@ -41,6 +34,6 @@
     "postcss": "^8.4.38",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.1",
-    "vite": "^8.0.8"
+    "vite": "^6.4.2"
   }
 }

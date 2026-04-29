@@ -3,7 +3,9 @@ import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchMenuItems, adminFetchCategories, adminCreateMenuItem, adminUpdateMenuItem } from '../../lib/api';
 
+import { useAuth } from '../../context/AuthContext';
 export default function MenuInventory() {
+  const { user } = useAuth();
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem]';
   const rowBg = 'hover:bg-surface-container border-outline-variant/10';
 
@@ -68,9 +70,9 @@ export default function MenuInventory() {
       };
       
       if (editingItem.id) {
-        await adminUpdateMenuItem(editingItem.id, payload);
+        await adminUpdateMenuItem(editingItem.id, { ...payload, restaurant_id: user.restaurantId });
       } else {
-        await adminCreateMenuItem(payload);
+        await adminCreateMenuItem({ ...payload, restaurant_id: user.restaurantId });
       }
       closeModal();
       loadData();

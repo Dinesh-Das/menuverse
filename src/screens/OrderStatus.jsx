@@ -36,7 +36,7 @@ export default function OrderStatus() {
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [socketConnected, setSocketConnected] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(true); // Supabase Realtime is always connected
   const pollIntervalRef = useRef(null);
 
   const loadOrder = useCallback(async () => {
@@ -55,7 +55,7 @@ export default function OrderStatus() {
     loadOrder();
   }, [loadOrder]);
 
-  // Socket.io real-time updates
+  // Supabase Realtime updates via socket.js
   useEffect(() => {
     if (!orderId) return;
     const socket = getSocket();
@@ -64,19 +64,13 @@ export default function OrderStatus() {
     const handleStatusUpdate = ({ orderId: id, status }) => {
       if (id === orderId) {
         setOrder(prev => prev ? { ...prev, status } : prev);
+        setSocketConnected(true);
       }
     };
-    const handleConnect = () => {
-      setSocketConnected(true);
-      // Clear polling fallback when socket reconnects
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
+    const handleConnect = () => setSocketConnected(true);
     const handleDisconnect = () => {
       setSocketConnected(false);
-      // Start polling fallback every 30s when socket is down
+      // Start polling fallback every 30s
       if (!pollIntervalRef.current) {
         pollIntervalRef.current = setInterval(loadOrder, 30000);
       }
@@ -86,7 +80,7 @@ export default function OrderStatus() {
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
 
-    // Set initial connection state
+    // Supabase Realtime is always connected (no handshake delay like socket.io)
     setSocketConnected(socket.connected);
 
     return () => {
@@ -156,7 +150,7 @@ export default function OrderStatus() {
           <p className="text-[10px] uppercase font-bold tracking-[0.25em] text-primary mb-1">Order Reference</p>
           <h2 className="font-headline text-3xl font-bold text-on-surface tracking-tight">{order.id}</h2>
           <p className="text-on-surface-variant text-sm mt-2">
-            {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </p>
           <button 
             onClick={() => navigate(restaurantSlug ? `/r/${restaurantSlug}/table` : '/order')}
@@ -249,7 +243,7 @@ export default function OrderStatus() {
         {['pending', 'accepted', 'preparing'].includes(order.status) && (
           <div className="text-center text-on-surface-variant text-sm mt-4">
             <span className="material-symbols-outlined text-sm align-middle mr-1">schedule</span>
-            Estimated time: {Math.max(5, 30 - Math.floor((Date.now() - new Date(order.created_at)) / 60000))} min remaining
+            Estimated time: {Math.max(5, 30 - Math.floor((Date.now() - new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z'))) / 60000))} min remaining
           </div>
         )}
 

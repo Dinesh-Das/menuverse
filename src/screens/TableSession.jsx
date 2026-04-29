@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { fetchTableOrders } from '../lib/api';
+import { fetchTableOrders, createPayment } from '../lib/api';
 import BottomNav from '../components/BottomNav';
 import { useTheme } from '../context/ThemeContext';
 
@@ -13,6 +13,7 @@ export default function TableSession() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [paymentState, setPaymentState] = useState({ isOpen: false, status: 'idle' }); // idle, processing, success
 
   useEffect(() => {
     if (!tableId) {
@@ -39,6 +40,27 @@ export default function TableSession() {
 
   const totalBill = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
+
+  const simulatePayment = () => {
+    setPaymentState({ isOpen: true, status: 'processing' });
+    setTimeout(async () => {
+      try {
+        if (orders.length > 0) {
+          // Record payment against the latest order for the total amount
+          await createPayment({ order_id: orders[0].id, amount: totalBill, status: 'success' });
+        }
+        setPaymentState({ isOpen: true, status: 'success' });
+        setTimeout(() => {
+          setPaymentState({ isOpen: false, status: 'idle' });
+          // Optionally refresh orders here if needed
+        }, 2000);
+      } catch (e) {
+        console.error(e);
+        setPaymentState({ isOpen: false, status: 'idle' });
+        setError(e.message);
+      }
+    }, 2000);
+  };
 
   return (
     <div className="min-h-dvh bg-background text-on-surface pb-32">
@@ -89,12 +111,21 @@ export default function TableSession() {
             {/* Cumulative Summary */}
             <div className="bg-surface-container-low p-6 rounded-2xl border border-outline-variant/10 mb-8 shadow-luxury text-center">
               <p className="text-[10px] uppercase font-bold tracking-[0.25em] text-on-surface-variant mb-2">Total Amount to Pay</p>
-              <h2 className="font-headline text-4xl font-bold text-primary tracking-tight mb-4">₹{totalBill.toFixed(2)}</h2>
-              <div className="flex justify-center gap-2">
-                <span className="inline-flex items-center px-3 py-1 bg-amber-500/10 text-amber-500 text-[10px] font-bold uppercase tracking-wider rounded-full border border-amber-500/20">
-                  <span className="material-symbols-outlined text-xs mr-1">payments</span>
+              <h2 className="font-headline text-4xl font-bold text-primary tracking-tight mb-6">₹{totalBill.toFixed(2)}</h2>
+              
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={simulatePayment}
+                  className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                >
+                  Pay Now
+                  <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
+                </button>
+                <button
+                  className="w-full bg-surface-container-high border border-outline-variant/20 text-on-surface py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform hover:bg-surface-container-highest active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                >
                   Pay at Counter
-                </span>
+                </button>
               </div>
             </div>
 
@@ -106,7 +137,7 @@ export default function TableSession() {
                   <div className="p-4 flex justify-between items-center bg-surface-container/30">
                     <div>
                       <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-                        {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
                       <p className="text-xs font-bold text-on-surface">Ref: {order.id.slice(0, 8)}</p>
                     </div>
@@ -153,6 +184,30 @@ export default function TableSession() {
           </div>
         )}
       </main>
+
+      {/* Simulated Payment Modal */}
+      {paymentState.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
+          <div className="relative w-full max-w-sm p-10 bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] flex flex-col items-center text-center animate-in zoom-in duration-300">
+            {paymentState.status === 'processing' ? (
+              <>
+                <span className="material-symbols-outlined text-primary text-6xl animate-spin mb-4">progress_activity</span>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Processing Payment</h3>
+                <p className="text-sm text-on-surface-variant mt-2">Connecting to secure gateway...</p>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 bg-green-500/20 text-green-500 rounded-full flex items-center justify-center mb-4">
+                  <span className="material-symbols-outlined text-4xl">check</span>
+                </div>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Payment Successful!</h3>
+                <p className="text-sm text-on-surface-variant mt-2">Your bill has been settled.</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <BottomNav activeTab="status" />
     </div>

@@ -33,7 +33,7 @@ export default function Dashboard() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  const todayOrders = orders.filter(o => new Date(o.created_at) >= today);
+  const todayOrders = orders.filter(o => new Date(o.created_at + (o.created_at.endsWith('Z') ? '' : 'Z')) >= today);
   const netRevenue = todayOrders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.total_amount : 0), 0);
 
   // Group by day for the chart (last 7 days)
@@ -46,7 +46,7 @@ export default function Dashboard() {
   const chartData = last7Days.map(date => {
     const dayStr = date.toLocaleDateString('en-US', { weekday: 'short' });
     const dayOrders = orders.filter(o => {
-      const oDate = new Date(o.created_at);
+      const oDate = new Date(o.created_at + (o.created_at.endsWith('Z') ? '' : 'Z'));
       return oDate.getDate() === date.getDate() && oDate.getMonth() === date.getMonth();
     });
     const rev = dayOrders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.total_amount : 0), 0);
