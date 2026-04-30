@@ -8,7 +8,7 @@ import { useToast } from '../../components/Toast';
 
 // ── Build the URL a customer will land on when they scan ───────
 function buildQrUrl(table, restaurant) {
-  const base = window.location.origin;
+  const base = import.meta.env.VITE_CUSTOMER_APP_URL || window.location.origin;
   const slug = restaurant?.slug || 'zaika-zindagi';
   return `${base}/r/${slug}/t/${table.id}`;
 }
@@ -85,9 +85,9 @@ export default function QRFactory() {
   const { user } = useAuth();
   const { addToast } = useToast();
 
-  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem]';
-  const tableCardBg = 'bg-surface-container border border-outline-variant/10 rounded-2xl';
-  const inputClass = `w-full px-4 py-3 rounded-xl border focus:outline-none focus:border-primary transition-colors bg-surface-container-low border-outline-variant text-on-surface placeholder-secondary/50`;
+  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
+  const tableCardBg = 'bg-surface-container border border-outline-variant/10 rounded-2xl transition-theme';
+  const inputClass = `w-full px-4 py-3 rounded-xl border focus:outline-none focus:border-primary transition-all bg-surface-container-low border-outline-variant text-on-surface placeholder-secondary/50`;
 
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -145,7 +145,7 @@ export default function QRFactory() {
 
   return (
     <AdminLayout>
-      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12">
+      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
         <AdminTopNav
           title="QR Factory"
           subtitle="Generate scannable QR codes for each table. Customers scan to open the menu."

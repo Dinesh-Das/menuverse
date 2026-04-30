@@ -13,13 +13,13 @@ export default function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="admin-layout">
+    <div className="admin-layout bg-surface text-on-surface transition-theme">
       <AdminSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       {/* Main content area */}
-      <div className="admin-content flex flex-col min-h-dvh">
+      <div className="admin-content flex flex-col min-h-dvh transition-theme bg-surface">
         {/* Mobile topbar with hamburger */}
-        <div className="lg:hidden flex items-center gap-4 px-4 py-3 border-b border-outline-variant/20 bg-surface-container-low sticky top-0 z-50">
+        <div className="lg:hidden flex items-center gap-4 px-4 py-3 border-b border-outline-variant/20 bg-surface-container-low sticky top-0 z-50 transition-theme">
           <button
             onClick={() => setSidebarOpen(true)}
             className="flex items-center justify-center rounded-lg text-on-surface hover:bg-surface-container-high transition-colors cursor-pointer"

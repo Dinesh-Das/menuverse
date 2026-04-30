@@ -6,16 +6,16 @@ import { adminFetchOrders } from '../../lib/api';
 
 const STATUS_COLORS = {
   'preparing': 'bg-primary/10 text-primary border border-primary/20',
-  'ready': 'bg-tertiary/10 text-tertiary border border-tertiary/20',
-  'served': 'bg-green-800/10 text-green-700 border border-green-800/20',
-  'completed': 'bg-green-800/10 text-green-700 border border-green-800/20',
+  'ready':     'bg-tertiary/10 text-tertiary border border-tertiary/20',
+  'served':    'bg-green-600/10 text-green-600 dark:text-green-400 border border-green-600/20',
+  'completed': 'bg-green-600/10 text-green-600 dark:text-green-400 border border-green-600/20',
   'cancelled': 'bg-error/10 text-error border border-error/20',
 };
 
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem]';
+  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
   useEffect(() => {
     adminFetchOrders()
@@ -58,7 +58,7 @@ export default function Dashboard() {
 
   return (
     <AdminLayout>
-      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12">
+      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
         <AdminTopNav
           title="Daily Summary"
           subtitle="Refining the digital experience, one plate at a time."

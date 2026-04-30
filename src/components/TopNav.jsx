@@ -96,7 +96,7 @@ export function AdminTopNav({ title, subtitle }) {
   const { isDark, toggleTheme } = useTheme();
 
   return (
-    <div className="flex items-center justify-between mb-16">
+    <div className="flex items-center justify-between mb-16 transition-theme">
       <div>
         <h2 className="font-headline text-4xl font-bold tracking-tight text-on-surface">
           {title}
@@ -110,7 +110,7 @@ export function AdminTopNav({ title, subtitle }) {
 
       <div className="flex items-center gap-6">
         {/* Clock */}
-        <div className="flex flex-col items-end hidden lg:flex">
+        <div className="flex flex-col items-end hidden lg:flex transition-theme">
           <span className="text-[9px] uppercase tracking-[0.2em] font-bold text-on-surface-variant">
             Local Time
           </span>
@@ -120,23 +120,23 @@ export function AdminTopNav({ title, subtitle }) {
         </div>
 
         {/* Divider */}
-        <div className="h-12 w-px hidden lg:block bg-outline-variant/20" />
+        <div className="h-12 w-px hidden lg:block bg-outline-variant/30" />
 
         <button
           onClick={toggleTheme}
-          className="w-12 h-12 flex items-center justify-center rounded-full border transition-colors relative cursor-pointer border-outline-variant/30 hover:bg-surface-container-high"
+          className="w-12 h-12 flex items-center justify-center rounded-full border transition-all relative cursor-pointer border-outline-variant/30 bg-surface-container-low hover:bg-surface-container-high text-on-surface"
           aria-label="Toggle Theme"
         >
-          <span className="material-symbols-outlined text-on-surface">{isDark ? 'light_mode' : 'dark_mode'}</span>
+          <span className="material-symbols-outlined">{isDark ? 'light_mode' : 'dark_mode'}</span>
         </button>
 
         {/* Notification bell */}
         <button
-          className="w-12 h-12 flex items-center justify-center rounded-full border transition-colors relative cursor-pointer border-outline-variant/30 hover:bg-surface-container-high"
+          className="w-12 h-12 flex items-center justify-center rounded-full border transition-all relative cursor-pointer border-outline-variant/30 bg-surface-container-low hover:bg-surface-container-high text-on-surface"
           aria-label="Notifications"
         >
-          <span className="material-symbols-outlined text-on-surface">notifications</span>
-          <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-primary" />
+          <span className="material-symbols-outlined">notifications</span>
+          <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-primary animate-pulse" />
         </button>
       </div>
     </div>

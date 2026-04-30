@@ -15,8 +15,8 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem]';
-  const inputClass = `w-full px-4 py-3 rounded-xl border focus:outline-none focus:border-primary transition-colors bg-surface-container-low border-outline-variant text-on-surface placeholder-secondary/50`;
+  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
+  const inputClass = `w-full px-4 py-3 rounded-xl border focus:outline-none focus:border-primary transition-all bg-surface-container-low border-outline-variant text-on-surface placeholder-secondary/50`;
 
   const loadData = () => {
     setLoading(true);
@@ -61,7 +61,7 @@ export default function Settings() {
 
   return (
     <AdminLayout>
-      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12">
+      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
         <AdminTopNav
           title="Brand Settings"
           subtitle="Configure your digital restaurant's identity and aesthetic."

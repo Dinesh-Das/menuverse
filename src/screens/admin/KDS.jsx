@@ -88,9 +88,9 @@ export default function KDS() {
 
   return (
     <AdminLayout>
-      <main className="flex-1 flex flex-col h-screen overflow-hidden bg-background text-on-surface">
+      <main className="flex-1 flex flex-col h-screen overflow-hidden bg-surface text-on-surface transition-theme">
         {/* Header */}
-        <header className="flex justify-between items-center px-6 md:px-12 py-5 bg-surface border-b border-outline-variant/20 shrink-0">
+        <header className="flex justify-between items-center px-6 md:px-12 py-5 bg-surface-container-low border-b border-outline-variant/20 shrink-0 transition-theme">
           <div>
             <h1 className="font-headline font-bold text-on-surface tracking-tight flex items-center gap-4" style={{ fontSize: 'var(--text-3xl)' }}>
               Kitchen Display
@@ -118,7 +118,7 @@ export default function KDS() {
         </header>
 
         {/* Workspace */}
-        <div className="flex-1 overflow-auto p-4 md:p-8 bg-background">
+        <div className="flex-1 overflow-auto p-4 md:p-8 bg-surface transition-theme">
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <span className="material-symbols-outlined animate-spin text-primary" style={{ fontSize: '48px' }}>progress_activity</span>

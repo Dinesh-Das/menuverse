@@ -6,7 +6,7 @@ import { adminFetchMenuItems, adminFetchCategories, adminCreateMenuItem, adminUp
 import { useAuth } from '../../context/AuthContext';
 export default function MenuInventory() {
   const { user } = useAuth();
-  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem]';
+  const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
   const rowBg = 'hover:bg-surface-container border-outline-variant/10';
 
   const [items, setItems] = useState([]);
@@ -87,7 +87,7 @@ export default function MenuInventory() {
 
   return (
     <AdminLayout>
-      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12">
+      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
         <AdminTopNav
           title="Menu Assets"
           subtitle="Manage digital catalog and 3D AR pipelines."
