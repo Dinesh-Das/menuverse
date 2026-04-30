@@ -5,7 +5,7 @@ export default function Directory() {
   const navigate = useNavigate();
 
   const customerScreens = [
-    { name: 'QR Landing', path: '/r/zaika-zindagi/t/table-01', desc: 'Entry point (requires /api/seed)' },
+    { name: 'QR Landing', path: '/r/zaika-zindagi/t/207525d6-cc04-4d9d-8b12-91a267f5152b', desc: 'Entry point (requires /api/seed)' },
     { name: 'Menu Home', path: '/r/zaika-zindagi/menu', desc: 'Main category and dish grid' },
     { name: 'Checkout', path: '/r/zaika-zindagi/checkout', desc: 'Cart and payment summary' },
     { name: 'Order Status', path: '/order/SF-EXAMPLE-1234', desc: 'Live tracker (requires active orderId)' },
