@@ -4,6 +4,7 @@ import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchOrders } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 
 const STATUS_COLORS = {
   'preparing': 'bg-primary/10 text-primary border border-primary/20',
@@ -21,15 +22,30 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!user?.restaurantId) return;
-    adminFetchOrders(null, user.restaurantId)
-      .then(data => {
+    
+    let channel;
+    const fetchAndSubscribe = async () => {
+      try {
+        const data = await adminFetchOrders(null, user.restaurantId);
         setOrders(data);
         setLoading(false);
-      })
-      .catch(err => {
+
+        channel = supabase.channel('dashboard_orders')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'Order', filter: `restaurant_id=eq.${user.restaurantId}` }, () => {
+            adminFetchOrders(null, user.restaurantId).then(setOrders).catch(console.error);
+          })
+          .subscribe();
+      } catch (err) {
         console.error(err);
         setLoading(false);
-      });
+      }
+    };
+
+    fetchAndSubscribe();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
   }, [user]);
 
   // Simple aggregations

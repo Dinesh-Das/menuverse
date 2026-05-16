@@ -4,9 +4,8 @@ import { useCart } from '../context/CartContext';
 
 const TABS = [
   { id: 'menu',   label: 'Discover', icon: 'explore',       pathKey: 'menu'     },
-  { id: 'ar',     label: 'AR View',  icon: 'view_in_ar',    pathKey: 'dish'     },
+  { id: 'orders', label: 'My Orders',icon: 'receipt_long',  pathKey: 'table'    },
   { id: 'cart',   label: 'Cart',     icon: 'shopping_bag',  pathKey: 'checkout' },
-  { id: 'status', label: 'Orders',   icon: 'receipt_long', pathKey: 'table'    },
 ];
 
 export default function BottomNav() {
@@ -51,7 +50,9 @@ export default function BottomNav() {
               </span>
               {/* Cart badge */}
               {tab.id === 'cart' && count > 0 && !isActive && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full" />
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-primary text-on-primary text-[9px] font-extrabold rounded-full flex items-center justify-center px-1 shadow-md">
+                  {count > 99 ? '99+' : count}
+                </span>
               )}
             </button>
           );

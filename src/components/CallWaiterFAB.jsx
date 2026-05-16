@@ -1,0 +1,38 @@
+import React, { useState } from 'react';
+import { useCart } from '../context/CartContext';
+
+export default function CallWaiterFAB({ className = 'bottom-24 right-6' }) {
+  const { tableNumber } = useCart();
+  const [requestState, setRequestState] = useState('idle'); // idle, requesting, success
+
+  const handleCallWaiter = () => {
+    setRequestState('requesting');
+    
+    // Simulate API call (requires StaffRequest table in DB eventually)
+    setTimeout(() => {
+      setRequestState('success');
+      setTimeout(() => setRequestState('idle'), 3000);
+    }, 1000);
+  };
+
+  if (!tableNumber) return null; // Don't show if no table is selected
+
+  return (
+    <div className={`fixed z-40 ${className}`}>
+      <button
+        onClick={handleCallWaiter}
+        disabled={requestState !== 'idle'}
+        className={`w-14 h-14 rounded-full shadow-luxury flex items-center justify-center transition-all duration-300 ${
+          requestState === 'success' 
+            ? 'bg-green-500 text-white scale-110' 
+            : 'bg-surface-container-highest text-on-surface hover:bg-primary hover:text-on-primary'
+        }`}
+        aria-label="Call Waiter"
+      >
+        <span className="material-symbols-outlined text-2xl">
+          {requestState === 'success' ? 'check' : requestState === 'requesting' ? 'hourglass_empty' : 'room_service'}
+        </span>
+      </button>
+    </div>
+  );
+}

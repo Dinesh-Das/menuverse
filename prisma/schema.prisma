@@ -25,6 +25,8 @@ model Restaurant {
   items       MenuItem[]
   orders      Order[]
   modifier_groups ModifierGroup[]
+  feedbacks   OrderFeedback[]
+  staff_reqs  StaffRequest[]
 }
 
 model User {
@@ -52,6 +54,7 @@ model Table {
 
   restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
   orders         Order[]
+  staff_reqs     StaffRequest[]
 
   // LF-08: Prevent duplicate table numbers within same restaurant
   @@unique([restaurant_id, number])
@@ -130,6 +133,7 @@ model Order {
   table                Table       @relation(fields: [table_id], references: [id])
   items                OrderItem[]
   payments             Payment[]
+  feedback             OrderFeedback?
 }
 
 model OrderItem {
@@ -156,4 +160,28 @@ model Payment {
   updated_at          DateTime @updatedAt
 
   order               Order    @relation(fields: [order_id], references: [id])
+}
+
+model OrderFeedback {
+  id             String   @id @default(uuid())
+  restaurant_id  String
+  order_id       String   @unique
+  rating         Int
+  comment        String?
+  created_at     DateTime @default(now())
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  order          Order      @relation(fields: [order_id], references: [id])
+}
+
+model StaffRequest {
+  id             String   @id @default(uuid())
+  restaurant_id  String
+  table_id       String
+  status         String   @default("pending") // pending, resolved
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  table          Table      @relation(fields: [table_id], references: [id])
 }

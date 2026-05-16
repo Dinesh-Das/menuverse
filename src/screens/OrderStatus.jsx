@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { fetchOrderStatus } from '../lib/api';
 import { getSocket, joinOrderRoom } from '../lib/socket';
 import { useTheme } from '../context/ThemeContext';
+import CallWaiterFAB from '../components/CallWaiterFAB';
 
 const STATUS_STEPS = ['pending', 'accepted', 'preparing', 'ready', 'served'];
 const STATUS_LABELS = {
@@ -37,6 +38,8 @@ export default function OrderStatus() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(true); // Supabase Realtime is always connected
+  const [rating, setRating] = useState(0);
+  const [feedbackGiven, setFeedbackGiven] = useState(false);
   const pollIntervalRef = useRef(null);
 
   const loadOrder = useCallback(async () => {
@@ -93,6 +96,15 @@ export default function OrderStatus() {
       }
     };
   }, [orderId, loadOrder]);
+
+  const handleRating = async (val) => {
+    setRating(val);
+    setFeedbackGiven(true);
+    // Simulate saving feedback to OrderFeedback table
+    try {
+      console.log('Feedback saved:', { order_id: order.id, rating: val });
+    } catch(e) { }
+  };
 
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
 
@@ -276,7 +288,35 @@ export default function OrderStatus() {
             Order More
           </button>
         )}
+
+        {/* Post-meal Feedback */}
+        {(order.status === 'served' || order.status === 'completed') && !feedbackGiven && (
+          <div className="mt-8 p-6 bg-surface-container-low border border-outline-variant/10 rounded-2xl text-center">
+            <h3 className="font-headline text-lg font-bold text-on-surface mb-2">How was your meal?</h3>
+            <p className="text-sm text-on-surface-variant mb-4">Rate your experience</p>
+            <div className="flex justify-center gap-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onClick={() => handleRating(star)}
+                  className={`text-4xl transition-transform hover:scale-110 active:scale-95 ${rating >= star ? '' : 'grayscale opacity-50'}`}
+                >
+                  {star === 1 ? '😡' : star === 2 ? '😕' : star === 3 ? '😐' : star === 4 ? '🙂' : '😍'}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {(order.status === 'served' || order.status === 'completed') && feedbackGiven && (
+          <div className="mt-8 p-6 bg-green-500/10 border border-green-500/20 rounded-2xl text-center animate-in fade-in zoom-in duration-300">
+             <span className="text-4xl mb-2 block">🎉</span>
+            <h3 className="font-headline text-lg font-bold text-green-500 mb-1">Thank you!</h3>
+            <p className="text-xs text-green-600/80 uppercase tracking-widest font-bold">Your feedback is appreciated</p>
+          </div>
+        )}
       </main>
+
+      <CallWaiterFAB />
     </div>
   );
 }

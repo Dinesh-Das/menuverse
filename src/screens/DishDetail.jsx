@@ -15,6 +15,7 @@ export default function DishDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedModifiers, setSelectedModifiers] = useState({});
+  const [addedFeedback, setAddedFeedback] = useState(false);
 
   useEffect(() => {
     fetchMenuItem(dishId)
@@ -64,8 +65,8 @@ export default function DishDetail() {
   const handleAdd = () => {
     if (!allRequiredSelected) return;
     addItem(dish, qty, modifiersForCart);
-    const checkoutPath = restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout';
-    navigate(checkoutPath);
+    setAddedFeedback(true);
+    setTimeout(() => setAddedFeedback(false), 2000);
   };
 
   if (loading) return (
@@ -215,15 +216,25 @@ export default function DishDetail() {
 
             <button
               onClick={handleAdd}
-              disabled={!allRequiredSelected}
-              className={`flex-1 md:flex-none md:px-12 md:py-5 py-4 rounded-full font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform active:scale-95 flex justify-center items-center gap-2 cursor-pointer ${
-                allRequiredSelected
-                  ? 'bg-primary text-on-primary hover:bg-primary-fixed-dim'
-                  : 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed opacity-60'
+              disabled={!allRequiredSelected || addedFeedback}
+              className={`flex-1 md:flex-none md:px-12 md:py-5 py-4 rounded-full font-bold uppercase tracking-widest text-sm shadow-luxury transition-all duration-300 flex justify-center items-center gap-2 ${
+                addedFeedback 
+                  ? 'bg-green-500 text-white shadow-green-500/30'
+                  : allRequiredSelected
+                    ? 'bg-primary text-on-primary hover:bg-primary-fixed-dim active:scale-95 cursor-pointer'
+                    : 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed opacity-60'
               }`}
             >
-              {allRequiredSelected ? 'Add to Order' : 'Select Options'}
-              <span className="text-xs opacity-70 ml-2 font-headline italic">₹{(unitPrice * qty).toFixed(2)}</span>
+              {addedFeedback ? (
+                <>
+                  <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  Added to Order!
+                </>
+              ) : allRequiredSelected ? (
+                <>Add to Order <span className="text-xs opacity-70 ml-2 font-headline italic">₹{(unitPrice * qty).toFixed(2)}</span></>
+              ) : (
+                'Select Options'
+              )}
             </button>
           </div>
         </main>

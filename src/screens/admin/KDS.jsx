@@ -198,7 +198,13 @@ export default function KDS() {
             </div>
           ) : (
             <div className="kds-grid">
-              {orders.map(order => {
+              {[...orders].sort((a, b) => {
+                const pMap = { pending: 1, accepted: 2, preparing: 3, ready: 4 };
+                if (pMap[a.status] !== pMap[b.status]) {
+                  return pMap[a.status] - pMap[b.status];
+                }
+                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+              }).map(order => {
                 const targetTime = new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).getTime() + (30 * 60 * 1000);
                 const remainingMs = targetTime - now;
                 const isUrgent = remainingMs < 600000; // Less than 10 mins remaining
@@ -261,9 +267,9 @@ export default function KDS() {
                         );
                       })}
                       {order.special_instructions && (
-                        <div className="mt-4 p-3 bg-surface-container-high rounded-lg border border-outline-variant/20">
-                          <strong className="kds-label-text text-on-surface-variant block mb-1">Note:</strong>
-                          <span className="kds-body-text text-on-surface">{order.special_instructions}</span>
+                        <div className="mt-4 p-3 bg-error/10 rounded-lg border border-error/30 animate-pulse">
+                          <strong className="kds-label-text text-error block mb-1">ALLERGY / SPECIAL NOTE:</strong>
+                          <span className="kds-body-text text-error font-bold">{order.special_instructions}</span>
                         </div>
                       )}
                     </div>

@@ -111,11 +111,21 @@ export default function Checkout() {
 
       <main className="pt-24 px-6 max-w-lg md:max-w-6xl mx-auto">
         {allItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center md:py-32">
-            <span className="material-symbols-outlined text-6xl text-surface-container-highest mb-4">restaurant</span>
-            <p className="text-on-surface-variant font-medium">Your selection is empty.</p>
-            <button onClick={() => navigate(menuPath)} className="mt-6 text-primary font-bold uppercase tracking-widest border-b border-primary/30 pb-1 cursor-pointer hover:border-primary transition-colors">
-              Return to Menu
+          <div className="flex flex-col items-center justify-center py-24 text-center md:py-32">
+            {/* Animated illustration */}
+            <div className="relative w-32 h-32 mb-8">
+              <div className="w-32 h-32 rounded-full bg-primary/5 border border-primary/10 flex items-center justify-center mx-auto">
+                <span className="material-symbols-outlined text-6xl text-primary/30">shopping_bag</span>
+              </div>
+              <div className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-primary/10 animate-ping" />
+            </div>
+            <h3 className="font-headline text-2xl font-bold text-on-surface mb-2">Your cart is empty</h3>
+            <p className="text-on-surface-variant text-sm mb-8 max-w-xs mx-auto">
+              Explore our menu and add something delicious to get started.
+            </p>
+            <button onClick={() => navigate(menuPath)} className="bg-primary text-on-primary px-8 py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury flex items-center gap-2 transition-transform hover:scale-105 active:scale-95 cursor-pointer mx-auto">
+              <span className="material-symbols-outlined">restaurant_menu</span>
+              Explore Menu
             </button>
           </div>
         ) : (
@@ -260,16 +270,35 @@ export default function Checkout() {
               <button
                 onClick={() => handleCheckout()}
                 disabled={loading || !tableId}
-                className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-8"
+                className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >
                 {loading ? 'Placing Order...' : `Place Order · ₹${total.toFixed(2)}`}
                 <span className="material-symbols-outlined text-lg ml-1">arrow_forward</span>
               </button>
+              <div className="flex items-center justify-center gap-3 text-on-surface-variant/40 mt-2 mb-8">
+                <span className="material-symbols-outlined text-sm">lock</span>
+                <span className="text-[10px] uppercase tracking-widest font-bold">Secure Order</span>
+                <span className="material-symbols-outlined text-sm">verified_user</span>
+              </div>
             </div>
 
           </div>
         )}
       </main>
+
+      {/* Celebration Overlay */}
+      {celebration && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-6 bg-primary text-on-primary animate-in fade-in duration-500">
+          <div className="w-32 h-32 mb-8 relative">
+            <div className="absolute inset-0 bg-white/20 rounded-full animate-ping" />
+            <div className="relative w-full h-full bg-white text-primary rounded-full flex items-center justify-center shadow-2xl">
+              <span className="material-symbols-outlined text-6xl">restaurant</span>
+            </div>
+          </div>
+          <h2 className="font-headline text-4xl font-bold mb-4 text-center">Order Received!</h2>
+          <p className="text-on-primary/80 text-lg font-medium text-center">The kitchen is preparing your masterpiece.</p>
+        </div>
+      )}
 
       <BottomNav activeTab="cart" />
     </div>

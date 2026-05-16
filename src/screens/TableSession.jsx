@@ -4,10 +4,11 @@ import { useCart } from '../context/CartContext';
 import { fetchTableOrders, createPayment } from '../lib/api';
 import BottomNav from '../components/BottomNav';
 import { useTheme } from '../context/ThemeContext';
+import CallWaiterFAB from '../components/CallWaiterFAB';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber, clearCart } = useCart();
+  const { tableId, tableNumber, clearCart, addItem } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
@@ -16,6 +17,7 @@ export default function TableSession() {
   const [paymentState, setPaymentState] = useState({ isOpen: false, status: 'idle' }); // idle, processing, success
   // LF-06: "Pay at Counter" informational dialog state
   const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
+  const [sessionTab, setSessionTab] = useState('active'); // 'active', 'history'
 
   useEffect(() => {
     if (!tableId) {
@@ -40,8 +42,21 @@ export default function TableSession() {
     return () => clearInterval(interval);
   }, [tableId]);
 
+  const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
+  const historyOrders = orders.filter(o => ['completed', 'cancelled'].includes(o.status));
+
   const totalBill = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
+
+  const handleReorder = (order) => {
+    order.items.forEach(item => {
+      if (item.menu_item) {
+        const modifiers = item.modifiers_json ? JSON.parse(item.modifiers_json) : [];
+        addItem(item.menu_item, item.quantity, modifiers);
+      }
+    });
+    navigate(restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout');
+  };
 
   const simulatePayment = () => {
     setPaymentState({ isOpen: true, status: 'processing' });
@@ -134,45 +149,81 @@ export default function TableSession() {
               </div>
             </div>
 
-            {/* Order History */}
-            <h3 className="text-[10px] uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-4 px-1">Order History</h3>
+            {/* Tabs */}
+            <div className="flex gap-2 mb-6 border-b border-outline-variant/10 pb-2">
+              <button
+                onClick={() => setSessionTab('active')}
+                className={`text-xs font-bold uppercase tracking-widest pb-2 px-2 transition-colors ${
+                  sessionTab === 'active' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                Active Orders ({activeOrders.length})
+              </button>
+              <button
+                onClick={() => setSessionTab('history')}
+                className={`text-xs font-bold uppercase tracking-widest pb-2 px-2 transition-colors ${
+                  sessionTab === 'history' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                History ({historyOrders.length})
+              </button>
+            </div>
+
+            {/* Order List */}
             <div className="space-y-4">
-              {orders.map((order) => (
-                <div key={order.id} className="bg-surface-container-low rounded-xl border border-outline-variant/5 overflow-hidden">
-                  <div className="p-4 flex justify-between items-center bg-surface-container/30">
-                    <div>
-                      <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-                        {new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                      <p className="text-xs font-bold text-on-surface">Ref: {order.id.slice(0, 8)}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
-                        order.status === 'served' ? 'bg-green-500/10 text-green-500' : 
-                        order.status === 'cancelled' ? 'bg-error/10 text-error' : 
-                        'bg-primary/10 text-primary'
-                      }`}>
-                        {order.status}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-4 space-y-2">
-                    {order.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between text-sm">
-                        <span className="text-on-surface-variant">
-                          <span className="font-bold text-on-surface mr-2">{item.quantity}x</span>
-                          {item.name}
-                        </span>
-                        <span className="font-medium text-on-surface">₹{(item.price * item.quantity).toFixed(2)}</span>
-                      </div>
-                    ))}
-                    <div className="pt-2 mt-2 border-t border-outline-variant/10 flex justify-between items-center">
-                      <span className="text-xs font-bold text-on-surface-variant">Order Total</span>
-                      <span className="font-bold text-primary">₹{order.total_amount.toFixed(2)}</span>
-                    </div>
-                  </div>
+              {(sessionTab === 'active' ? activeOrders : historyOrders).length === 0 ? (
+                <div className="text-center py-8 text-on-surface-variant text-sm">
+                  No {sessionTab} orders.
                 </div>
-              ))}
+              ) : (
+                (sessionTab === 'active' ? activeOrders : historyOrders).map((order) => (
+                  <div key={order.id} className="bg-surface-container-low rounded-xl border border-outline-variant/5 overflow-hidden">
+                    <div className="p-4 flex justify-between items-center bg-surface-container/30">
+                      <div>
+                        <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
+                          {new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                        <p className="text-xs font-bold text-on-surface">Ref: {order.id.slice(0, 8)}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                          order.status === 'served' || order.status === 'completed' ? 'bg-green-500/10 text-green-500' : 
+                          order.status === 'cancelled' ? 'bg-error/10 text-error' : 
+                          'bg-primary/10 text-primary'
+                        }`}>
+                          {order.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-4 space-y-2">
+                      {order.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between text-sm">
+                          <span className="text-on-surface-variant">
+                            <span className="font-bold text-on-surface mr-2">{item.quantity}x</span>
+                            {item.name}
+                          </span>
+                          <span className="font-medium text-on-surface">₹{(item.price * item.quantity).toFixed(2)}</span>
+                        </div>
+                      ))}
+                      <div className="pt-2 mt-2 border-t border-outline-variant/10 flex justify-between items-center">
+                        <span className="text-xs font-bold text-on-surface-variant">Order Total</span>
+                        <span className="font-bold text-primary">₹{order.total_amount.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    {sessionTab === 'history' && order.status === 'completed' && (
+                      <div className="p-3 border-t border-outline-variant/5 bg-surface-container/10">
+                        <button
+                          onClick={() => handleReorder(order)}
+                          className="w-full py-2 bg-primary/10 text-primary rounded-lg font-bold uppercase tracking-widest text-[10px] hover:bg-primary/20 transition-colors flex justify-center items-center gap-2 cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-sm">replay</span>
+                          Reorder Items
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
 
             {/* CTA */}
@@ -213,6 +264,8 @@ export default function TableSession() {
           </div>
         </div>
       )}
+
+      <CallWaiterFAB />
 
       <BottomNav activeTab="status" />
 

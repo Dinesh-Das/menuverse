@@ -39,6 +39,9 @@ export function CartProvider({ children }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
 
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+
   // Broadcast logic
   useEffect(() => {
     if (!tableId) return;
@@ -56,7 +59,7 @@ export function CartProvider({ children }) {
         channel.send({
           type: 'broadcast',
           event: 'cart_sync',
-          payload: { deviceId: deviceIdRef.current, items }
+          payload: { deviceId: deviceIdRef.current, items: itemsRef.current }
         });
       })
       .subscribe((status) => {
@@ -67,7 +70,7 @@ export function CartProvider({ children }) {
           channel.send({
             type: 'broadcast',
             event: 'cart_sync',
-            payload: { deviceId: deviceIdRef.current, items }
+            payload: { deviceId: deviceIdRef.current, items: itemsRef.current }
           });
         }
       });
@@ -77,7 +80,17 @@ export function CartProvider({ children }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [tableId, items]);
+  }, [tableId]);
+
+  // Separate effect to broadcast on item changes
+  useEffect(() => {
+    if (!channelRef.current || !tableId) return;
+    channelRef.current.send({
+      type: 'broadcast',
+      event: 'cart_sync',
+      payload: { deviceId: deviceIdRef.current, items }
+    });
+  }, [items, tableId]);
 
   const setSession = useCallback((sessionData) => {
     const { tableId: tid, tableNumber: tnum, restaurantId: rid, restaurantSlug: slug } = sessionData;
