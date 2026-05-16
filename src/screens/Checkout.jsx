@@ -35,7 +35,7 @@ export default function Checkout() {
           name.includes('dessert') || name.includes('sides') ||
           name.includes('sweet') || name.includes('liquid')
         ) {
-          candidates = [...candidates, ...cat.items];
+          candidates = [...candidates, ...(cat.items || []).filter(item => item.available)];
         }
       });
       setUpsellItems(candidates);

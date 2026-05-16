@@ -41,12 +41,12 @@ export async function fetchMenu(restaurantSlug) {
 
   if (catErr) throw new Error(catErr.message);
 
-  const filteredCategories = categories?.map(cat => ({
+  const visibleCategories = categories?.map(cat => ({
     ...cat,
-    items: (cat.items || []).filter(i => i.available)
+    items: cat.items || []
   })) || [];
 
-  return { restaurant, categories: filteredCategories };
+  return { restaurant, categories: visibleCategories };
 }
 
 export async function fetchTableInfo(tableId) {
@@ -100,13 +100,16 @@ export async function placeOrder(payload) {
   if (itemIds.length > 0) {
     const { data: dbItems, error: dbErr } = await supabase
       .from('MenuItem')
-      .select('id, price')
+      .select('id, price, available')
       .in('id', itemIds);
     if (dbErr) throw new Error(`Price verification failed: ${dbErr.message}`);
 
     for (const item of payload.items) {
       const dbItem = dbItems.find(i => i.id === item.menu_item_id);
       if (!dbItem) throw new Error(`Item ${item.name} not found`);
+      if (!dbItem.available) {
+        throw new Error(`${item.name} is currently unavailable`);
+      }
       if (Math.abs(dbItem.price - item.price) > 1) {
         throw new Error(`Price mismatch for ${item.name}: expected ₹${dbItem.price}, got ₹${item.price}`);
       }

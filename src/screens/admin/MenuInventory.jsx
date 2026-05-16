@@ -167,7 +167,7 @@ export default function MenuInventory() {
               <div className="col-span-5">Item</div>
               <div className="col-span-3">Category</div>
               <div className="col-span-2">Price</div>
-              <div className="col-span-2 text-right">AR Status</div>
+              <div className="col-span-2 text-right">Status</div>
             </div>
 
             {/* Table Rows */}
@@ -176,7 +176,7 @@ export default function MenuInventory() {
             ) : (
               <div className="flex flex-col min-w-[800px]">
                 {filtered.map(item => (
-                  <div key={item.id} onClick={() => openEditModal(item)} className={`grid grid-cols-12 gap-4 px-8 py-5 items-center border-b last:border-0 transition-colors cursor-pointer ${rowBg}`}>
+                  <div key={item.id} onClick={() => openEditModal(item)} className={`grid grid-cols-12 gap-4 px-8 py-5 items-center border-b last:border-0 transition-colors cursor-pointer ${rowBg} ${!item.available ? 'opacity-60 grayscale' : ''}`}>
                     <div className="col-span-5 flex items-center gap-4">
                       {item.image_url ? (
                         <img src={item.image_url} alt={item.name} className="w-12 h-12 rounded-lg object-cover shadow-sm" />
@@ -200,9 +200,13 @@ export default function MenuInventory() {
                     </div>
                     
                     <div className="col-span-2 text-right">
-                      {/* For now, just show None since AR is out of scope */}
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] uppercase font-bold tracking-widest border bg-surface-container text-on-surface-variant border-outline-variant/30">
-                        <span className="material-symbols-outlined text-[12px]">block</span> None
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] uppercase font-bold tracking-widest border ${
+                        item.available
+                          ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                          : 'bg-surface-container text-on-surface-variant border-outline-variant/30'
+                      }`}>
+                        <span className="material-symbols-outlined text-[12px]">{item.available ? 'check_circle' : 'block'}</span>
+                        {item.available ? 'Available' : 'Unavailable'}
                       </span>
                     </div>
                   </div>
@@ -303,7 +307,7 @@ export default function MenuInventory() {
 
                   <div className="flex items-center gap-3 pt-6">
                     <input type="checkbox" id="available" checked={formData.available} onChange={e => setFormData({...formData, available: e.target.checked})} className="w-5 h-5 accent-primary cursor-pointer" />
-                    <label htmlFor="available" className="text-sm font-bold text-on-surface cursor-pointer">Available in Menu</label>
+                    <label htmlFor="available" className="text-sm font-bold text-on-surface cursor-pointer">Available to Order</label>
                   </div>
                 </div>
 

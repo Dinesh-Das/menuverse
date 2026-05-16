@@ -40,7 +40,7 @@ export default function MenuHome() {
         const candidates = (data.categories || []).filter(cat => {
           const name = cat.name.toLowerCase();
           return name.includes('sweet') || name.includes('liquid') || name.includes('beverage') || name.includes('dessert');
-        }).flatMap(cat => cat.items);
+        }).flatMap(cat => cat.items || []).filter(item => item.available);
         setUpsellCandidates(candidates);
 
         setLoading(false);
@@ -100,6 +100,8 @@ export default function MenuHome() {
   const getDishPath = (dishId) => restaurantSlug ? `/r/${restaurantSlug}/dish/${dishId}` : `/dish/${dishId}`;
 
   const handleAddWithUpsell = (dish) => {
+    if (!dish.available) return;
+
     // MF-12: If dish has required modifier groups, navigate to detail to let user configure
     const hasModifiers = dish.modifier_groups && dish.modifier_groups.length > 0;
     if (hasModifiers) {
@@ -134,7 +136,11 @@ export default function MenuHome() {
 
     return (
       <div
-        className={`bg-surface-container-low rounded-xl overflow-hidden flex flex-col cursor-pointer transition-all hover:shadow-xl hover:-translate-y-1 group ${isSoldOut ? 'opacity-60 grayscale-[0.5]' : ''}`}
+        className={`bg-surface-container-low rounded-xl overflow-hidden flex flex-col transition-all group ${
+          isSoldOut
+            ? 'opacity-60 grayscale cursor-not-allowed'
+            : 'cursor-pointer hover:shadow-xl hover:-translate-y-1'
+        }`}
         onClick={() => !isSoldOut && navigate(getDishPath(dish.id))}
       >
         <div className="h-48 overflow-hidden relative">
@@ -150,7 +156,7 @@ export default function MenuHome() {
           
           {isSoldOut && (
             <div className="absolute inset-0 bg-background/50 flex items-center justify-center backdrop-blur-[2px] z-10">
-               <span className="bg-error text-on-error px-4 py-2 rounded-full font-bold uppercase tracking-widest text-sm shadow-lg rotate-12">Sold Out</span>
+               <span className="bg-surface-container-highest text-on-surface-variant px-4 py-2 rounded-full font-bold uppercase tracking-widest text-sm shadow-lg rotate-12 border border-outline-variant/30">Unavailable</span>
             </div>
           )}
 
@@ -180,7 +186,7 @@ export default function MenuHome() {
             <span className="text-primary font-headline text-lg font-bold">₹{dish.price}</span>
             
             {isSoldOut ? (
-               <span className="text-on-surface-variant text-xs font-bold uppercase tracking-widest">Unavailable</span>
+               <span className="text-on-surface-variant text-xs font-bold uppercase tracking-widest">Not orderable</span>
             ) : totalQty > 0 ? (
               <div className="flex items-center bg-primary text-on-primary rounded-full overflow-hidden shadow-md">
                 <button 
@@ -429,7 +435,7 @@ export default function MenuHome() {
                 </div>
                 
                 <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                  {upsellCandidates.slice(0, 6).map(item => (
+                  {upsellCandidates.filter(item => item.available).slice(0, 6).map(item => (
                     <div key={item.id} className="flex-none w-32 bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 shadow-sm flex flex-col">
                       <div className="h-20 overflow-hidden">
                         <img 

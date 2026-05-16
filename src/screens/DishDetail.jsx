@@ -63,6 +63,7 @@ export default function DishDetail() {
   };
 
   const handleAdd = () => {
+    if (!dish?.available) return;
     if (!allRequiredSelected) return;
     addItem(dish, qty, modifiersForCart);
     setAddedFeedback(true);
@@ -82,6 +83,7 @@ export default function DishDetail() {
   );
 
   const hasModifiers = (dish.modifier_groups || []).length > 0;
+  const isUnavailable = !dish.available;
   const unitPrice = dish.price + modsPrice;
 
   return (
@@ -90,13 +92,20 @@ export default function DishDetail() {
 
       <div className="flex flex-col md:flex-row md:items-start md:gap-12 max-w-7xl mx-auto md:px-12 md:pt-24">
         {/* ── Image/AR Section ────────────────────────── */}
-        <div className="relative w-full aspect-square md:aspect-[4/3] md:w-1/2 md:rounded-3xl overflow-hidden md:shadow-2xl pt-16 md:pt-0">
+        <div className={`relative w-full aspect-square md:aspect-[4/3] md:w-1/2 md:rounded-3xl overflow-hidden md:shadow-2xl pt-16 md:pt-0 ${isUnavailable ? 'grayscale opacity-70' : ''}`}>
           <img
             src={dish.image_url}
             alt={dish.name}
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent opacity-90 md:from-black/60 md:via-black/20" />
+          {isUnavailable && (
+            <div className="absolute inset-0 bg-background/40 flex items-center justify-center z-20">
+              <span className="bg-surface-container-highest text-on-surface-variant px-5 py-2 rounded-full font-bold uppercase tracking-widest text-xs shadow-lg border border-outline-variant/30">
+                Unavailable
+              </span>
+            </div>
+          )}
           
           {/* AR Overlay Button — Coming Soon */}
           <button
@@ -169,7 +178,8 @@ export default function DishDetail() {
                         <button
                           key={option.id}
                           onClick={() => handleSelectModifier(group.id, option)}
-                          className={`px-4 py-2.5 rounded-full text-sm font-bold transition-all cursor-pointer border ${
+                          disabled={isUnavailable}
+                          className={`px-4 py-2.5 rounded-full text-sm font-bold transition-all cursor-pointer border disabled:cursor-not-allowed disabled:opacity-50 ${
                             isSelected
                               ? 'bg-primary text-on-primary border-primary shadow-md scale-105'
                               : 'bg-surface-container-high text-on-surface-variant border-outline-variant/20 hover:border-primary/50 hover:bg-surface-container-highest'
@@ -201,14 +211,16 @@ export default function DishDetail() {
             <div className="flex items-center gap-4 bg-surface-container-high md:bg-surface-container-low rounded-full px-2 py-1.5 border border-outline-variant/20 md:border-outline-variant md:scale-110 md:origin-left">
               <button
                 onClick={() => setQty(Math.max(1, qty - 1))}
-                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest active:bg-surface-container-highest transition-colors cursor-pointer"
+                disabled={isUnavailable}
+                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest active:bg-surface-container-highest transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined">remove</span>
               </button>
               <span className="font-bold text-lg text-on-surface w-4 text-center">{qty}</span>
               <button
                 onClick={() => setQty(Math.min(MAX_QTY, qty + 1))}
-                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest active:bg-surface-container-highest transition-colors cursor-pointer"
+                disabled={isUnavailable}
+                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest active:bg-surface-container-highest transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined">add</span>
               </button>
@@ -216,10 +228,12 @@ export default function DishDetail() {
 
             <button
               onClick={handleAdd}
-              disabled={!allRequiredSelected || addedFeedback}
+              disabled={isUnavailable || !allRequiredSelected || addedFeedback}
               className={`flex-1 md:flex-none md:px-12 md:py-5 py-4 rounded-full font-bold uppercase tracking-widest text-sm shadow-luxury transition-all duration-300 flex justify-center items-center gap-2 ${
                 addedFeedback 
                   ? 'bg-green-500 text-white shadow-green-500/30'
+                  : isUnavailable
+                    ? 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed opacity-60'
                   : allRequiredSelected
                     ? 'bg-primary text-on-primary hover:bg-primary-fixed-dim active:scale-95 cursor-pointer'
                     : 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed opacity-60'
@@ -230,6 +244,8 @@ export default function DishDetail() {
                   <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
                   Added to Order!
                 </>
+              ) : isUnavailable ? (
+                'Unavailable'
               ) : allRequiredSelected ? (
                 <>Add to Order <span className="text-xs opacity-70 ml-2 font-headline italic">₹{(unitPrice * qty).toFixed(2)}</span></>
               ) : (
