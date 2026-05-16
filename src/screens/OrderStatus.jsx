@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
+import { safeParseModifiers } from '../lib/businessRules';
 
 const STATUS_STEPS = ['pending', 'accepted', 'preparing', 'ready', 'served'];
 const STATUS_LABELS = {
@@ -241,7 +242,7 @@ export default function OrderStatus() {
             <div className="space-y-3">
               {order.items.map((item, i) => {
                 // LF-04: Include modifier price deltas in line-item total
-                const mods = item.modifiers_json ? (() => { try { return JSON.parse(item.modifiers_json); } catch { return []; } })() : [];
+                const mods = safeParseModifiers(item.modifiers_json);
                 const modTotal = mods.reduce((s, m) => s + (m.price_delta || 0), 0);
                 const lineTotal = (item.price + modTotal) * item.quantity;
                 return (

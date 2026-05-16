@@ -1,237 +1,185 @@
--- ═══════════════════════════════════════════════════════════════════════════
--- Menuverse (Zaika Zindagi) — Supabase Row Level Security Policies
--- ═══════════════════════════════════════════════════════════════════════════
--- Run this in your Supabase SQL Editor (Dashboard → SQL Editor → New Query)
--- IMPORTANT: This enables RLS and creates policies for ALL tables.
--- ═══════════════════════════════════════════════════════════════════════════
+-- Menuverse Supabase Row Level Security Policies
+-- Run after all migrations. Public customers can read catalog data, but orders,
+-- payments, sessions, and staff requests must go through RPC/Edge Functions.
 
--- ── 1. Enable RLS on all tables ───────────────────────────────────────────
-ALTER TABLE "Restaurant" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "User" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "Table" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "MenuCategory" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "MenuItem" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "ModifierGroup" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "ModifierOption" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "Order" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "OrderItem" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "Payment" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "OrderFeedback" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "StaffRequest" ENABLE ROW LEVEL SECURITY;
+alter table "Restaurant" enable row level security;
+alter table "User" enable row level security;
+alter table "Table" enable row level security;
+alter table "MenuCategory" enable row level security;
+alter table "MenuItem" enable row level security;
+alter table "ModifierGroup" enable row level security;
+alter table "ModifierOption" enable row level security;
+alter table "Order" enable row level security;
+alter table "OrderItem" enable row level security;
+alter table "Payment" enable row level security;
+alter table "OrderFeedback" enable row level security;
+alter table "StaffRequest" enable row level security;
+alter table if exists "TableSession" enable row level security;
+alter table if exists "SessionBill" enable row level security;
 
--- ── 2. Restaurant ─────────────────────────────────────────────────────────
--- Public read (menu display)
-CREATE POLICY "restaurant_public_read" ON "Restaurant"
-  FOR SELECT USING (true);
+drop policy if exists "restaurant_public_read" on "Restaurant";
+drop policy if exists "restaurant_owner_update" on "Restaurant";
+drop policy if exists "user_self_read" on "User";
+drop policy if exists "user_self_update" on "User";
+drop policy if exists "table_public_read" on "Table";
+drop policy if exists "table_staff_update" on "Table";
+drop policy if exists "table_admin_insert" on "Table";
+drop policy if exists "table_owner_delete" on "Table";
+drop policy if exists "category_public_read" on "MenuCategory";
+drop policy if exists "category_admin_manage" on "MenuCategory";
+drop policy if exists "menuitem_public_read" on "MenuItem";
+drop policy if exists "menuitem_admin_manage" on "MenuItem";
+drop policy if exists "modgroup_public_read" on "ModifierGroup";
+drop policy if exists "modgroup_admin_manage" on "ModifierGroup";
+drop policy if exists "modoption_public_read" on "ModifierOption";
+drop policy if exists "modoption_admin_manage" on "ModifierOption";
+drop policy if exists "order_anon_insert" on "Order";
+drop policy if exists "order_table_read" on "Order";
+drop policy if exists "order_staff_update" on "Order";
+drop policy if exists "orderitem_anon_insert" on "OrderItem";
+drop policy if exists "orderitem_public_read" on "OrderItem";
+drop policy if exists "payment_anon_insert" on "Payment";
+drop policy if exists "payment_staff_read" on "Payment";
+drop policy if exists "feedback_anon_insert" on "OrderFeedback";
+drop policy if exists "feedback_staff_read" on "OrderFeedback";
+drop policy if exists "staffreq_anon_insert" on "StaffRequest";
+drop policy if exists "staffreq_staff_read" on "StaffRequest";
+drop policy if exists "staffreq_staff_update" on "StaffRequest";
 
--- Only authenticated owners can update
-CREATE POLICY "restaurant_owner_update" ON "Restaurant"
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "Restaurant".id
-        AND "User".role = 'owner'
+create policy "restaurant_public_read" on "Restaurant"
+  for select using (true);
+
+create policy "restaurant_owner_update" on "Restaurant"
+  for update using (app_admin_can_access("Restaurant".id))
+  with check (app_admin_can_access("Restaurant".id));
+
+create policy "user_self_read" on "User"
+  for select using (id = auth.uid()::text);
+
+create policy "user_admin_same_restaurant_read" on "User"
+  for select using (app_admin_can_access("User".restaurant_id));
+
+create policy "user_self_update" on "User"
+  for update using (id = auth.uid()::text)
+  with check (id = auth.uid()::text);
+
+create policy "table_public_qr_read" on "Table"
+  for select using (coalesce(qr_enabled, true) = true);
+
+create policy "table_staff_manage" on "Table"
+  for all using (app_admin_can_access("Table".restaurant_id))
+  with check (app_admin_can_access("Table".restaurant_id));
+
+create policy "category_public_read" on "MenuCategory"
+  for select using (archived = false);
+
+create policy "category_admin_manage" on "MenuCategory"
+  for all using (app_admin_can_access("MenuCategory".restaurant_id))
+  with check (app_admin_can_access("MenuCategory".restaurant_id));
+
+create policy "menuitem_public_read" on "MenuItem"
+  for select using (
+    available = true
+    and exists (
+      select 1 from "MenuCategory" c
+      where c.id = "MenuItem".category_id
+        and c.archived = false
     )
   );
 
--- ── 3. User ───────────────────────────────────────────────────────────────
--- Users can only read their own record
-CREATE POLICY "user_self_read" ON "User"
-  FOR SELECT USING (id = auth.uid()::text);
+create policy "menuitem_admin_manage" on "MenuItem"
+  for all using (app_admin_can_access("MenuItem".restaurant_id))
+  with check (app_admin_can_access("MenuItem".restaurant_id));
 
--- Users can only update their own record
-CREATE POLICY "user_self_update" ON "User"
-  FOR UPDATE USING (id = auth.uid()::text);
-
--- ── 4. Table ──────────────────────────────────────────────────────────────
--- Public read (QR code lookup, table status display)
-CREATE POLICY "table_public_read" ON "Table"
-  FOR SELECT USING (true);
-
--- Only staff/managers/owners can update table status
-CREATE POLICY "table_staff_update" ON "Table"
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "Table".restaurant_id
-        AND "User".role IN ('owner', 'manager', 'staff')
+create policy "modgroup_public_read" on "ModifierGroup"
+  for select using (
+    exists (
+      select 1 from "MenuItem" mi
+      join "MenuCategory" c on c.id = mi.category_id
+      where mi.id = "ModifierGroup".menu_item_id
+        and mi.available = true
+        and c.archived = false
     )
   );
 
--- Only owner/manager can create tables
-CREATE POLICY "table_admin_insert" ON "Table"
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "Table".restaurant_id
-        AND "User".role IN ('owner', 'manager')
+create policy "modgroup_admin_manage" on "ModifierGroup"
+  for all using (app_admin_can_access("ModifierGroup".restaurant_id))
+  with check (app_admin_can_access("ModifierGroup".restaurant_id));
+
+create policy "modoption_public_read" on "ModifierOption"
+  for select using (
+    exists (
+      select 1
+      from "ModifierGroup" mg
+      join "MenuItem" mi on mi.id = mg.menu_item_id
+      join "MenuCategory" c on c.id = mi.category_id
+      where mg.id = "ModifierOption".group_id
+        and mi.available = true
+        and c.archived = false
     )
   );
 
--- Only owner/manager can delete tables
-CREATE POLICY "table_owner_delete" ON "Table"
-  FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "Table".restaurant_id
-        AND "User".role IN ('owner', 'manager')
+create policy "modoption_admin_manage" on "ModifierOption"
+  for all using (
+    exists (
+      select 1
+      from "ModifierGroup" mg
+      where mg.id = "ModifierOption".group_id
+        and app_admin_can_access(mg.restaurant_id)
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from "ModifierGroup" mg
+      where mg.id = "ModifierOption".group_id
+        and app_admin_can_access(mg.restaurant_id)
     )
   );
 
--- ── 5. Menu Categories ───────────────────────────────────────────────────
--- Public read (menu display)
-CREATE POLICY "category_public_read" ON "MenuCategory"
-  FOR SELECT USING (true);
+create policy "order_staff_read" on "Order"
+  for select using (app_staff_can_access("Order".restaurant_id));
 
--- Only owner/manager can manage categories
-CREATE POLICY "category_admin_manage" ON "MenuCategory"
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "MenuCategory".restaurant_id
-        AND "User".role IN ('owner', 'manager')
+create policy "order_staff_update" on "Order"
+  for update using (app_staff_can_access("Order".restaurant_id))
+  with check (app_staff_can_access("Order".restaurant_id));
+
+create policy "orderitem_staff_read" on "OrderItem"
+  for select using (
+    exists (
+      select 1 from "Order" o
+      where o.id = "OrderItem".order_id
+        and app_staff_can_access(o.restaurant_id)
     )
   );
 
--- ── 6. Menu Items ─────────────────────────────────────────────────────────
--- Public read (menu display)
-CREATE POLICY "menuitem_public_read" ON "MenuItem"
-  FOR SELECT USING (true);
-
--- Only owner/manager can manage items
-CREATE POLICY "menuitem_admin_manage" ON "MenuItem"
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "MenuItem".restaurant_id
-        AND "User".role IN ('owner', 'manager')
+create policy "payment_staff_read" on "Payment"
+  for select using (
+    exists (
+      select 1 from "Order" o
+      where o.id = "Payment".order_id
+        and app_admin_can_access(o.restaurant_id)
     )
   );
 
--- ── 7. Modifier Groups ───────────────────────────────────────────────────
--- Public read (menu display)
-CREATE POLICY "modgroup_public_read" ON "ModifierGroup"
-  FOR SELECT USING (true);
+create policy "feedback_staff_read" on "OrderFeedback"
+  for select using (app_admin_can_access("OrderFeedback".restaurant_id));
 
--- Admin manage via parent MenuItem
-CREATE POLICY "modgroup_admin_manage" ON "ModifierGroup"
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM "MenuItem"
-      JOIN "User" ON "User".restaurant_id = "MenuItem".restaurant_id
-      WHERE "MenuItem".id = "ModifierGroup".menu_item_id
-        AND "User".id = auth.uid()::text
-        AND "User".role IN ('owner', 'manager')
-    )
-  );
+create policy "staffreq_staff_read" on "StaffRequest"
+  for select using (app_staff_can_access("StaffRequest".restaurant_id));
 
--- ── 8. Modifier Options ──────────────────────────────────────────────────
--- Public read
-CREATE POLICY "modoption_public_read" ON "ModifierOption"
-  FOR SELECT USING (true);
+create policy "staffreq_staff_update" on "StaffRequest"
+  for update using (app_staff_can_access("StaffRequest".restaurant_id))
+  with check (app_staff_can_access("StaffRequest".restaurant_id));
 
--- Admin manage via parent ModifierGroup -> MenuItem
-CREATE POLICY "modoption_admin_manage" ON "ModifierOption"
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM "ModifierGroup"
-      JOIN "MenuItem" ON "MenuItem".id = "ModifierGroup".menu_item_id
-      JOIN "User" ON "User".restaurant_id = "MenuItem".restaurant_id
-      WHERE "ModifierGroup".id = "ModifierOption".modifier_group_id
-        AND "User".id = auth.uid()::text
-        AND "User".role IN ('owner', 'manager')
-    )
-  );
+create policy "tablesession_staff_read" on "TableSession"
+  for select using (app_staff_can_access("TableSession".restaurant_id));
 
--- ── 9. Orders ─────────────────────────────────────────────────────────────
--- Anon/public can INSERT (customers placing orders via QR)
-CREATE POLICY "order_anon_insert" ON "Order"
-  FOR INSERT WITH CHECK (true);
-
--- Anon can read their own orders (by table_id, scoped to device session)
-CREATE POLICY "order_table_read" ON "Order"
-  FOR SELECT USING (true);
-
--- Only staff can update order status
-CREATE POLICY "order_staff_update" ON "Order"
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "Order".restaurant_id
-        AND "User".role IN ('owner', 'manager', 'staff')
-    )
-  );
-
--- ── 10. Order Items ──────────────────────────────────────────────────────
--- Anon can INSERT (as part of order placement)
-CREATE POLICY "orderitem_anon_insert" ON "OrderItem"
-  FOR INSERT WITH CHECK (true);
-
--- Public can read (for order status display)
-CREATE POLICY "orderitem_public_read" ON "OrderItem"
-  FOR SELECT USING (true);
-
--- ── 11. Payments ─────────────────────────────────────────────────────────
--- Anon can INSERT (payment recording)
-CREATE POLICY "payment_anon_insert" ON "Payment"
-  FOR INSERT WITH CHECK (true);
-
--- Only staff can read payments
-CREATE POLICY "payment_staff_read" ON "Payment"
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".role IN ('owner', 'manager')
-    )
-  );
-
--- ── 12. Order Feedback ─────────────────────────────────────────
--- Anon can INSERT (customer rating)
-CREATE POLICY "feedback_anon_insert" ON "OrderFeedback"
-  FOR INSERT WITH CHECK (true);
-
--- Staff can read feedback for their restaurant
-CREATE POLICY "feedback_staff_read" ON "OrderFeedback"
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "OrderFeedback".restaurant_id
-        AND "User".role IN ('owner', 'manager')
-    )
-  );
-
--- ── 13. Staff Requests ─────────────────────────────────────────
--- Anon can INSERT (customer calling waiter)
-CREATE POLICY "staffreq_anon_insert" ON "StaffRequest"
-  FOR INSERT WITH CHECK (true);
-
--- Staff can read requests for their restaurant
-CREATE POLICY "staffreq_staff_read" ON "StaffRequest"
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "StaffRequest".restaurant_id
-        AND "User".role IN ('owner', 'manager', 'staff')
-    )
-  );
-
--- Staff can update requests for their restaurant
-CREATE POLICY "staffreq_staff_update" ON "StaffRequest"
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM "User"
-      WHERE "User".id = auth.uid()::text
-        AND "User".restaurant_id = "StaffRequest".restaurant_id
-        AND "User".role IN ('owner', 'manager', 'staff')
+create policy "sessionbill_staff_read" on "SessionBill"
+  for select using (
+    exists (
+      select 1 from "TableSession" ts
+      where ts.id = "SessionBill".table_session_id
+        and app_staff_can_access(ts.restaurant_id)
     )
   );

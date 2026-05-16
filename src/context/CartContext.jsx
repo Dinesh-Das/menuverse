@@ -29,6 +29,8 @@ export function CartProvider({ children }) {
   const [tableNumber, setTableNumber] = useState(localStorage.getItem('mv_table_num') || null);
   const [restaurantId, setRestaurantId] = useState(localStorage.getItem('mv_restaurant_id') || null);
   const [restaurantSlug, setRestaurantSlug] = useState(localStorage.getItem('mv_restaurant_slug') || null);
+  const [tableSessionToken, setTableSessionToken] = useState(localStorage.getItem('mv_table_session_token') || null);
+  const [tableSessionId, setTableSessionId] = useState(localStorage.getItem('mv_table_session_id') || null);
   const [gstRateState, setGstRateState] = useState(localStorage.getItem('mv_gst_rate') || '0.05');
 
   const deviceIdRef = useRef(localStorage.getItem('mv_device_id') || crypto.randomUUID());
@@ -116,6 +118,16 @@ export function CartProvider({ children }) {
       if (slug) localStorage.setItem('mv_restaurant_slug', slug);
       else localStorage.removeItem('mv_restaurant_slug');
     }
+    if (sessionData.tableSessionToken !== undefined) {
+      setTableSessionToken(sessionData.tableSessionToken);
+      if (sessionData.tableSessionToken) localStorage.setItem('mv_table_session_token', sessionData.tableSessionToken);
+      else localStorage.removeItem('mv_table_session_token');
+    }
+    if (sessionData.tableSessionId !== undefined) {
+      setTableSessionId(sessionData.tableSessionId);
+      if (sessionData.tableSessionId) localStorage.setItem('mv_table_session_id', sessionData.tableSessionId);
+      else localStorage.removeItem('mv_table_session_id');
+    }
     if (sessionData.gstRate !== undefined) {
       setGstRateState(sessionData.gstRate);
       if (sessionData.gstRate) localStorage.setItem('mv_gst_rate', sessionData.gstRate);
@@ -174,7 +186,7 @@ export function CartProvider({ children }) {
   return (
     <CartContext.Provider value={{
       items, remoteItems, allItems, count, subtotal, tax, total,
-      tableId, tableNumber, restaurantId, restaurantSlug,
+      tableId, tableNumber, restaurantId, restaurantSlug, tableSessionToken, tableSessionId,
       addItem, removeItem, updateQty, clearCart, setSession
     }}>
       {children}

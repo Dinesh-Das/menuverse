@@ -1,111 +1,71 @@
-# Menuverse — Zaika Zindagi
-### Premium Digital Dining & Kitchen Orchestration System
+# Menuverse
 
-Zaika Zindagi is a high-fidelity, QR-based Progressive Web Application (PWA) and Administrative Suite designed for premium Indian culinary establishments. It reimagines the dining experience through a "Gourmet Tech Editorial" design lens, blending immersive visual storytelling with industrial-grade kitchen management.
+QR-based restaurant ordering for table service, kitchen display, and restaurant-owner operations.
 
----
+## Current Architecture
 
-## 🌟 Key Experiences
+Menuverse is a React 18 + Vite single-page app backed by Supabase:
 
-### 1. Customer PWA (The Digital Menu)
-*   **Immersive Editorial UI**: A high-end landing page and menu experience that feels like a luxury food magazine.
-*   **Dynamic Cart System**: Seamless addition of gourmet dishes with real-time modifier selection (e.g., Spice Levels).
-*   **Table-Aware Ordering**: Integrated QR-linkage that automatically routes orders to specific tables (Main Hall, Terrace, Bar).
-*   **Live Order Tracking**: Real-time status updates from the kitchen via WebSocket integration.
+- Supabase Auth for owner, manager, and staff login
+- PostgreSQL with Row Level Security for restaurant-scoped data access
+- Supabase RPC functions for trusted order/session logic
+- Supabase Edge Functions for payment and staff-invite integration boundaries
+- Supabase Realtime through `src/lib/socket.js`, which keeps a socket-like interface for existing screens
 
-### 2. Kitchen Command Portal (Admin Suite)
-*   **KDS (Kitchen Display System)**: A high-throughput interface for chefs to manage order states (Accepted → Preparing → Ready → Served).
-*   **Order Monitor**: A centralized dashboard for floor managers to track all active table sessions and revenue.
-*   **Menu & Inventory Control**: Real-time management of dish availability, pricing, and premium imagery.
-*   **AR Menu Studio**: (In-Development) Advanced 3D/AR previewing of signature dishes.
+The old `server/` Express and `prisma/` code is legacy reference material. It is not used by the active Vite app or production deployment.
 
----
+## Local Setup
 
-## 🛠 Tech Stack
-
-### Frontend
-*   **React 18 + Vite**: Lightning-fast UI with modern component architecture.
-*   **Tailwind CSS**: Custom "Gourmet Tech" design system with glassmorphism, editorial typography, and ambient lighting.
-*   **Socket.io Client**: Real-time bidirectional communication for order updates.
-*   **Framer Motion**: Smooth, cinematic transitions and micro-animations.
-
-### Backend
-*   **Node.js & Express**: Robust RESTful API architecture.
-*   **Prisma ORM**: Type-safe database access and schema management.
-*   **Socket.io**: Real-time event broadcasting to KDS and Customer PWAs.
-*   **JWT Authentication**: Secure, role-based access control for administrative staff.
-
-### Database
-*   **SQLite**: Lightweight, file-based relational storage for local deployment and rapid prototyping.
-
----
-
-## 🚀 Getting Started
-
-### 1. Prerequisites
-*   Node.js (v18+)
-*   npm or yarn
-
-### 2. Installation
 ```bash
-# Clone the repository
-git clone <repository-url>
-
-# Install dependencies
 npm install
-```
-
-### 3. Database Setup
-```bash
-# Initialize Prisma and generate client
-npx prisma generate
-npx prisma db push
-
-# Seed the database with premium dishes and admin user
-node scratch/seed_admin.cjs
-```
-
-### 4. Running the Project
-```bash
-# Start both Frontend and Backend concurrently
+cp .env.example .env
 npm run dev
 ```
-*   **Frontend**: `http://localhost:5173`
-*   **Backend**: `http://localhost:3001`
 
----
+Required client env:
 
-## 📁 Project Structure
-
-```text
-├── server/             # Express server and WebSocket logic
-├── prisma/             # Database schema and migrations
-├── src/
-│   ├── components/     # Reusable UI components (TopNav, BottomNav, etc.)
-│   ├── context/        # Global state (Auth, Cart, Theme)
-│   ├── screens/        # Primary page components
-│   │   ├── admin/      # Administrative & KDS screens
-│   │   └── customer/   # PWA & Menu screens
-│   └── lib/            # Shared utilities (API, Socket config)
-├── public/
-│   └── images/         # Premium dish and brand assets
-└── scratch/            # Utility scripts (Seeding, DB maintenance)
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-public-anon-key
+VITE_APP_TYPE=all
 ```
 
----
+For local demos only, you may set `VITE_ALLOW_CLIENT_ORDER_FALLBACK=true`. Do not enable it in production.
 
-## 🎨 Design Philosophy
-Zaika Zindagi adheres to the **Gourmet Tech Editorial** standard:
-*   **Typography**: Mix of high-contrast Serif (Headline) and clean Sans-Serif (Body).
-*   **Color Palette**: Deep matte blacks, creamy surfaces (#FAF9F6), and Royal Saffron gold (#B8860B).
-*   **Interactions**: Intentional, low-latency micro-interactions that emphasize quality and precision.
+## Supabase Setup
 
----
+Run migrations in order, then apply `supabase/rls-policies.sql`.
 
-## 🔐 Admin Credentials
-*   **Email**: `admin@zaikazindagi.com`
-*   **Password**: `password123`
+Important production functions:
 
----
+- `start_table_session`
+- `create_order_secure`
+- `get_order_status_secure`
+- `get_table_session_orders`
+- `create_staff_request_secure`
+- `close_table_session`
 
-© 2026 Zaika Zindagi. Reimagining the rich heritage of Indian royal cuisines.
+Deploy Edge Functions:
+
+```bash
+supabase functions deploy create-payment-order
+supabase functions deploy verify-payment-webhook
+```
+
+## Development Commands
+
+```bash
+npm run lint
+npm run test:unit
+npm run build
+npm audit --omit=dev
+```
+
+## Production Checklist
+
+- Apply migrations and RLS policies before enabling public QR ordering.
+- Verify owners, managers, and staff have `User.restaurant_id` set correctly.
+- Keep service role keys only in Supabase Edge Function secrets.
+- Configure Razorpay credentials only in Edge Function secrets.
+- Confirm storage policies restrict writes by restaurant folder.
+- Keep `VITE_ALLOW_CLIENT_ORDER_FALLBACK` unset in production.

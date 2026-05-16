@@ -9,8 +9,8 @@ import { useToast } from '../../components/Toast';
 
 const VALID_TRANSITIONS = {
   pending:   ['accepted', 'cancelled'],
-  accepted:  ['preparing'],
-  preparing: ['ready'],
+  accepted:  ['preparing', 'cancelled'],
+  preparing: ['ready', 'cancelled'],
   ready:     ['served'],
   served:    ['completed'],
   completed: [],
@@ -86,7 +86,7 @@ export default function OrderMonitor() {
     setOrders(prevOrders => prevOrders.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     
     try {
-      await adminUpdateOrderStatus(orderId, newStatus, cancelReason || undefined);
+      await adminUpdateOrderStatus(orderId, newStatus, cancelReason || undefined, user.restaurantId);
     } catch (err) {
       console.error('Rollback:', err.message);
       addToast(`Failed to update order: ${err.message}`, 'error');

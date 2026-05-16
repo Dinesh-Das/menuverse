@@ -5,16 +5,17 @@ import { fetchTableOrders, createPayment } from '../lib/api';
 import BottomNav from '../components/BottomNav';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
+import { safeParseModifiers } from '../lib/businessRules';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber, clearCart, addItem } = useCart();
+  const { tableId, tableNumber, clearCart, addItem, tableSessionToken } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [paymentState, setPaymentState] = useState({ isOpen: false, status: 'idle' }); // idle, processing, success
+  const [paymentState, setPaymentState] = useState({ isOpen: false, status: 'idle', message: '' });
   // LF-06: "Pay at Counter" informational dialog state
   const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
   const [sessionTab, setSessionTab] = useState('active'); // 'active', 'history'
@@ -45,38 +46,40 @@ export default function TableSession() {
   const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
   const historyOrders = orders.filter(o => ['completed', 'cancelled'].includes(o.status));
 
-  const totalBill = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+  const billableOrders = orders.filter(order => order.status !== 'cancelled');
+  const totalBill = billableOrders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
 
   const handleReorder = (order) => {
     order.items.forEach(item => {
       if (item.menu_item) {
-        const modifiers = item.modifiers_json ? JSON.parse(item.modifiers_json) : [];
+        const modifiers = safeParseModifiers(item.modifiers_json);
         addItem(item.menu_item, item.quantity, modifiers);
       }
     });
     navigate(restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout');
   };
 
-  const simulatePayment = () => {
-    setPaymentState({ isOpen: true, status: 'processing' });
-    setTimeout(async () => {
-      try {
-        if (orders.length > 0) {
-          // Record payment against the latest order for the total amount
-          await createPayment({ order_id: orders[0].id, amount: totalBill, status: 'success' });
-        }
-        setPaymentState({ isOpen: true, status: 'success' });
-        setTimeout(() => {
-          setPaymentState({ isOpen: false, status: 'idle' });
-          // Optionally refresh orders here if needed
-        }, 2000);
-      } catch (e) {
-        console.error(e);
-        setPaymentState({ isOpen: false, status: 'idle' });
-        setError(e.message);
-      }
-    }, 2000);
+  const requestPaymentLink = async () => {
+    setPaymentState({ isOpen: true, status: 'processing', message: 'Creating a secure payment request...' });
+    try {
+      await createPayment({
+        table_session_token: tableSessionToken,
+        amount: totalBill,
+      });
+      setPaymentState({
+        isOpen: true,
+        status: 'requested',
+        message: 'Payment request created. Staff will share the verified payment link shortly.',
+      });
+    } catch (e) {
+      console.error(e);
+      setPaymentState({
+        isOpen: true,
+        status: 'requested',
+        message: 'Digital payment is not configured yet. Please pay at the counter or ask staff for help.',
+      });
+    }
   };
 
   return (
@@ -115,6 +118,14 @@ export default function TableSession() {
               Go to Directory
             </button>
           </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <span className="material-symbols-outlined text-6xl text-error mb-4">error</span>
+            <p className="text-error font-medium">{error}</p>
+            <button onClick={() => navigate(menuPath)} className="mt-6 text-primary font-bold uppercase tracking-widest border-b border-primary/30 pb-1 cursor-pointer">
+              Back to Menu
+            </button>
+          </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <span className="material-symbols-outlined text-6xl text-surface-container-highest mb-4">restaurant</span>
@@ -125,6 +136,11 @@ export default function TableSession() {
           </div>
         ) : (
           <div>
+            {error && (
+              <div className="mb-4 p-4 bg-error/10 border border-error/30 rounded-xl text-error text-sm font-medium">
+                {error}
+              </div>
+            )}
             {/* Cumulative Summary */}
             <div className="bg-surface-container-low p-6 rounded-2xl border border-outline-variant/10 mb-8 shadow-luxury text-center">
               <p className="text-[10px] uppercase font-bold tracking-[0.25em] text-on-surface-variant mb-2">Total Amount to Pay</p>
@@ -132,10 +148,10 @@ export default function TableSession() {
               
               <div className="flex flex-col gap-3">
                 <button
-                  onClick={simulatePayment}
+                  onClick={requestPaymentLink}
                   className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
                 >
-                  Pay Now
+                  Request Payment Link
                   <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
                 </button>
                 {/* LF-06: Pay at Counter — opens informational dialog instead of doing nothing */}
@@ -241,7 +257,7 @@ export default function TableSession() {
         )}
       </main>
 
-      {/* Simulated Payment Modal */}
+      {/* Payment Request Modal */}
       {paymentState.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
@@ -249,16 +265,22 @@ export default function TableSession() {
             {paymentState.status === 'processing' ? (
               <>
                 <span className="material-symbols-outlined text-primary text-6xl animate-spin mb-4">progress_activity</span>
-                <h3 className="font-headline text-xl font-bold text-on-surface">Processing Payment</h3>
-                <p className="text-sm text-on-surface-variant mt-2">Connecting to secure gateway...</p>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Preparing Payment</h3>
+                <p className="text-sm text-on-surface-variant mt-2">{paymentState.message}</p>
               </>
             ) : (
               <>
-                <div className="w-16 h-16 bg-green-500/20 text-green-500 rounded-full flex items-center justify-center mb-4">
-                  <span className="material-symbols-outlined text-4xl">check</span>
+                <div className="w-16 h-16 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-4">
+                  <span className="material-symbols-outlined text-4xl">verified_user</span>
                 </div>
-                <h3 className="font-headline text-xl font-bold text-on-surface">Payment Successful!</h3>
-                <p className="text-sm text-on-surface-variant mt-2">Your bill has been settled.</p>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Payment Verification Required</h3>
+                <p className="text-sm text-on-surface-variant mt-2">{paymentState.message}</p>
+                <button
+                  onClick={() => setPaymentState({ isOpen: false, status: 'idle', message: '' })}
+                  className="mt-6 w-full bg-primary text-on-primary py-3 rounded-xl font-bold uppercase tracking-widest text-xs"
+                >
+                  Got it
+                </button>
               </>
             )}
           </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { fetchMenuItem } from '../lib/api';
 import { CustomerTopNav } from '../components/TopNav';
@@ -7,8 +7,7 @@ import { CustomerTopNav } from '../components/TopNav';
 const MAX_QTY = 20;
 
 export default function DishDetail() {
-  const { dishId, restaurantSlug } = useParams();
-  const navigate = useNavigate();
+  const { dishId } = useParams();
   const { addItem } = useCart();
   const [qty, setQty] = useState(1);
   const [dish, setDish] = useState(null);

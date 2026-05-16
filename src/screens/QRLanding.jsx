@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchTableInfo } from '../lib/api';
+import { fetchTableInfo, startOrResumeTableSession } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -24,13 +24,27 @@ export default function QRLanding() {
           localStorage.setItem('mv_restaurant_name', tableData.restaurant.name.split(' - ')[0]);
         }
 
-        setSession({
+        const sessionPayload = {
           tableId,
           tableNumber: tableData.number,
           restaurantId: tableData.restaurant_id,
           restaurantSlug,
-          gstRate: tableData.restaurant?.gst_rate
-        });
+          gstRate: tableData.restaurant?.gst_rate,
+        };
+
+        try {
+          const tableSession = await startOrResumeTableSession({
+            restaurantId: tableData.restaurant_id,
+            tableId,
+            existingToken: localStorage.getItem('mv_table_session_token'),
+          });
+          sessionPayload.tableSessionId = tableSession?.id;
+          sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
+        } catch (sessionErr) {
+          console.warn('[Menuverse] Table session RPC unavailable:', sessionErr.message);
+        }
+
+        setSession(sessionPayload);
       } catch (err) {
         setError(err.message);
       } finally {

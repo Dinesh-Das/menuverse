@@ -16,7 +16,7 @@ const TAG_CONFIG = {
 
 export default function MenuHome() {
   const { restaurantSlug } = useParams();
-  const { addItem, items, count, total, restaurantSlug: sessionSlug, setSession } = useCart();
+  const { addItem, items, count, total, restaurantSlug: sessionSlug, setSession, updateQty } = useCart();
   const navigate = useNavigate();
   const slug = restaurantSlug || sessionSlug || 'zaika-zindagi';
 
@@ -133,6 +133,8 @@ export default function MenuHome() {
     const tag = getPrimaryTag(dish.tags_json);
     const cartItems = items.filter(i => i.id === dish.id);
     const totalQty = cartItems.reduce((sum, i) => sum + i.qty, 0);
+    const hasModifiers = dish.modifier_groups && dish.modifier_groups.length > 0;
+    const firstCartItem = cartItems[0];
 
     return (
       <div
@@ -187,10 +189,21 @@ export default function MenuHome() {
             
             {isSoldOut ? (
                <span className="text-on-surface-variant text-xs font-bold uppercase tracking-widest">Not orderable</span>
+            ) : totalQty > 0 && hasModifiers ? (
+              <button
+                onClick={e => { e.stopPropagation(); navigate(getDishPath(dish.id)); }}
+                className="h-9 px-3 rounded-full bg-primary text-on-primary flex items-center gap-1.5 hover:bg-primary-fixed-dim transition-colors text-[10px] font-bold uppercase tracking-widest"
+              >
+                <span className="material-symbols-outlined text-sm">edit</span>
+                Edit
+              </button>
             ) : totalQty > 0 ? (
               <div className="flex items-center bg-primary text-on-primary rounded-full overflow-hidden shadow-md">
                 <button 
-                  onClick={e => { e.stopPropagation(); navigate(getDishPath(dish.id)); }} 
+                  onClick={e => {
+                    e.stopPropagation();
+                    if (firstCartItem) updateQty(firstCartItem._cartKey || firstCartItem.id, firstCartItem.qty - 1);
+                  }}
                   className="w-8 h-8 flex items-center justify-center hover:bg-primary-fixed-dim transition-colors"
                 >
                   <span className="material-symbols-outlined text-sm">remove</span>

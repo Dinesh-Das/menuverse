@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { pendingOrdersBus } from '../../components/TopNav';
 import { useToast } from '../../components/Toast';
+import { safeParseModifiers } from '../../lib/businessRules';
 
 const formatTime = (ms) => {
   const isNegative = ms < 0;
@@ -43,7 +44,9 @@ export default function KDS() {
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
       osc.start();
       osc.stop(ctx.currentTime + 0.2);
-    } catch(e) {}
+    } catch (e) {
+      console.warn('Audio alert unavailable:', e);
+    }
   };
 
   const playAlert = useCallback(() => {
@@ -132,7 +135,7 @@ export default function KDS() {
     // Optimistic update
     setOrders(prevOrders => prevOrders.map(o => o.id === id ? { ...o, status: newStatus } : o));
     try {
-      await adminUpdateOrderStatus(id, newStatus);
+      await adminUpdateOrderStatus(id, newStatus, undefined, user.restaurantId);
     } catch (err) {
       console.error('KDS status rollback:', err.message);
       addToast(`Failed to update order: ${err.message}`, 'error');
@@ -149,7 +152,7 @@ export default function KDS() {
     setUpdatingIds(s => new Set(s).add(`reject-${id}`));
     try {
       // LF-12: Allow kitchen to reject/cancel unavailable or invalid orders
-      await adminUpdateOrderStatus(id, 'cancelled', 'Item unavailable — rejected by kitchen');
+      await adminUpdateOrderStatus(id, 'cancelled', 'Item unavailable - rejected by kitchen', user.restaurantId);
       setOrders(prev => prev.filter(o => o.id !== id));
     } catch (err) {
       console.error('KDS reject failed:', err.message);
@@ -274,7 +277,7 @@ export default function KDS() {
                     {/* Items */}
                     <div className="p-5 flex-1 space-y-4">
                       {order.items?.map((item, idx) => {
-                        const mods = item.modifiers_json ? JSON.parse(item.modifiers_json) : [];
+                        const mods = safeParseModifiers(item.modifiers_json);
                         return (
                           <div key={idx} className="flex gap-4 items-start">
                             <div className="kds-table-num w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-on-surface shrink-0"

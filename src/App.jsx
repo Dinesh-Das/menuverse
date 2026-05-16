@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { CartProvider } from './context/CartContext';
@@ -16,15 +16,22 @@ import OrderStatus   from './screens/OrderStatus';
 import TableSession from './screens/TableSession';
 import Directory     from './screens/Directory';
 
-// Admin screens
-import AdminLogin    from './screens/admin/AdminLogin';
-import Dashboard     from './screens/admin/Dashboard';
-import Settings      from './screens/admin/Settings';
-import MenuInventory from './screens/admin/MenuInventory';
-import ARStudio      from './screens/admin/ARStudio';
-import QRFactory     from './screens/admin/QRFactory';
-import KDS           from './screens/admin/KDS';
-import OrderMonitor  from './screens/admin/OrderMonitor';
+const AdminLogin = lazy(() => import('./screens/admin/AdminLogin'));
+const Dashboard = lazy(() => import('./screens/admin/Dashboard'));
+const Settings = lazy(() => import('./screens/admin/Settings'));
+const MenuInventory = lazy(() => import('./screens/admin/MenuInventory'));
+const ARStudio = lazy(() => import('./screens/admin/ARStudio'));
+const QRFactory = lazy(() => import('./screens/admin/QRFactory'));
+const KDS = lazy(() => import('./screens/admin/KDS'));
+const OrderMonitor = lazy(() => import('./screens/admin/OrderMonitor'));
+
+function RouteFallback() {
+  return (
+    <div className="min-h-dvh bg-background text-on-surface flex items-center justify-center">
+      <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
+    </div>
+  );
+}
 
 export default function App() {
   const appType = import.meta.env.VITE_APP_TYPE || 'all'; // 'admin', 'user', or 'all'
@@ -37,6 +44,7 @@ export default function App() {
           <AuthProvider>
             <BrowserRouter>
               <ErrorBoundary>
+                <Suspense fallback={<RouteFallback />}>
                 <Routes>
                   {/* ── Admin Routes ─────────────────────────── */}
                   {(appType === 'admin' || appType === 'all') && (
@@ -80,6 +88,7 @@ export default function App() {
                   {appType === 'user' && <Route path="*" element={<Navigate to="/" replace />} />}
                   {appType === 'all' && <Route path="*" element={<Navigate to="/" replace />} />}
                 </Routes>
+                </Suspense>
               </ErrorBoundary>
             </BrowserRouter>
           </AuthProvider>

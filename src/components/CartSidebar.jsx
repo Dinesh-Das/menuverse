@@ -19,7 +19,7 @@ export default function CartSidebar() {
   const {
     items, allItems, subtotal, tax, total,
     removeItem, updateQty, clearCart,
-    tableId, tableNumber, restaurantId,
+    tableId, tableNumber, restaurantId, tableSessionToken, tableSessionId,
   } = useCart();
   const navigate = useNavigate();
   const [note, setNote] = useState('');
@@ -47,7 +47,8 @@ export default function CartSidebar() {
       const payload = {
         restaurant_id: restaurantId,
         table_id: tableId,
-        total_amount: total,
+        table_session_id: tableSessionId,
+        table_session_token: tableSessionToken,
         special_instructions: note,
         idempotency_key: idempotencyKey,
         items: allItems.map(item => ({

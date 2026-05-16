@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchMenuItems, adminFetchCategories, adminCreateMenuItem, adminUpdateMenuItem, adminUpdateItemModifiers } from '../../lib/api';
@@ -26,9 +26,10 @@ export default function MenuInventory() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = React.useRef(null);
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
+    if (!user?.restaurantId) return;
     setLoading(true);
-    Promise.all([adminFetchMenuItems(), adminFetchCategories()])
+    Promise.all([adminFetchMenuItems(user.restaurantId), adminFetchCategories(user.restaurantId)])
       .then(([itemsData, catsData]) => {
         setItems(itemsData);
         setCategories(catsData);
@@ -38,11 +39,11 @@ export default function MenuInventory() {
         console.error(err);
         setLoading(false);
       });
-  };
+  }, [user?.restaurantId]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const openNewModal = () => {
     setFormData({ name: '', description: '', price: '', category_id: categories[0]?.id || '', image_url: '', dietary_flag: 'none', available: true, modifiers: [] });
@@ -80,7 +81,7 @@ export default function MenuInventory() {
       };
       
       if (editingItem.id) {
-        await adminUpdateMenuItem(editingItem.id, { ...payload, restaurant_id: user.restaurantId });
+        await adminUpdateMenuItem(editingItem.id, payload, user.restaurantId);
         await adminUpdateItemModifiers(editingItem.id, user.restaurantId, formData.modifiers);
       } else {
         const newItem = await adminCreateMenuItem({ ...payload, restaurant_id: user.restaurantId });

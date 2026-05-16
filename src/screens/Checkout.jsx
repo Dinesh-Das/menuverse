@@ -8,7 +8,10 @@ import { useToast } from '../components/Toast';
 
 export default function Checkout() {
   const { restaurantSlug } = useParams();
-  const { items, allItems, subtotal, tax, total, removeItem, updateQty, clearCart, addItem, tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug } = useCart();
+  const {
+    allItems, subtotal, tax, total, removeItem, updateQty, clearCart, addItem,
+    tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug, tableSessionToken, tableSessionId,
+  } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const { addToast } = useToast();
   const navigate = useNavigate();
@@ -45,7 +48,7 @@ export default function Checkout() {
     });
   }, [currentSlug, addToast]);
 
-  const handleCheckout = async (isPaid = false) => {
+  const handleCheckout = async () => {
     if (allItems.length === 0) return;
     
     // Anti-spam: 10-second cooldown (prevents double-tap; server-side 5-pending check handles real protection)
@@ -66,7 +69,8 @@ export default function Checkout() {
       const payload = {
         restaurant_id: restaurantId,
         table_id: tableId,
-        total_amount: total,
+        table_session_id: tableSessionId,
+        table_session_token: tableSessionToken,
         special_instructions: note,
         idempotency_key: idempotencyKey,
         items: allItems.map(item => ({

@@ -1,193 +1,98 @@
-# Menuverse — Deployment Guide
+# Menuverse Deployment Guide
 
-> Last updated: May 2026 · Architecture: Supabase-native (no Express required in production)
+Last updated: May 2026. Production architecture is Supabase-native; Express/Prisma is deprecated.
 
----
+## 1. Frontend Hosting
 
-## Architecture Overview
+Deploy the Vite app to Vercel, Netlify, or another static host.
 
-```
-┌─────────────────────────────────────────────────┐
-│  Customer Browser / Kitchen Display              │
-│  React 18 + Vite SPA  (Vercel / Netlify)         │
-└───────────────────┬─────────────────────────────┘
-                    │ HTTPS / Supabase JS client
-         ┌──────────▼──────────────┐
-         │     Supabase Cloud       │
-         │  ┌─────────────────────┐ │
-         │  │   PostgreSQL + RLS  │ │  ← Row Level Security enforced
-         │  │   Realtime          │ │  ← WebSocket (order:new, order:updated)
-         │  │   Auth              │ │  ← Supabase Auth (email/password)
-         │  │   Storage           │ │  ← restaurant-assets bucket (logos)
-         │  └─────────────────────┘ │
-         └─────────────────────────┘
-
-  Express server/index.js  ← DEPRECATED — used only for local dev seed scripts.
-                              Not deployed to production.
+```bash
+npm ci
+npm run build
 ```
 
----
+`vercel.json` already includes an SPA rewrite.
 
-## Pre-Deployment Checklist
+## 2. Environment Variables
 
-### 1. Environment Variables
-
-Set these in your Vercel / Netlify project settings:
+Frontend:
 
 ```env
 VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...           # Supabase anon public key (safe to expose)
-VITE_APP_TYPE=all                       # 'admin', 'user', or 'all'
+VITE_SUPABASE_ANON_KEY=your-public-anon-key
+VITE_APP_TYPE=all
+VITE_CUSTOMER_APP_URL=https://your-domain.com
 ```
 
-> **NEVER** commit `.env` with real keys. `.env` is in `.gitignore`.
+Edge Function secrets:
 
----
-
-### 2. Supabase Project Setup
-
-#### 2a. Run RLS Policies
-
-Execute `supabase/rls-policies.sql` in **Supabase Dashboard → SQL Editor → New Query**.
-This enables Row Level Security on all tables.
-
-#### 2b. Run Schema Unique Constraints
-
-Run the following to enforce data integrity:
-
-```sql
-ALTER TABLE "Table"
-  ADD CONSTRAINT "Table_restaurant_id_number_key" UNIQUE (restaurant_id, number);
-
-ALTER TABLE "Payment"
-  ADD CONSTRAINT "Payment_order_id_key" UNIQUE (order_id);
-```
-
-#### 2c. Create Storage Bucket for Logo Uploads
-
-In **Supabase Dashboard → Storage → New Bucket**:
-- Bucket name: `restaurant-assets`
-- Public: ✅ Yes (logo URLs must be publicly readable for the menu display)
-- File size limit: 5MB
-- Allowed MIME types: `image/png, image/svg+xml, image/jpeg, image/webp`
-
-Then add a storage policy in **Storage → Policies** (or run in SQL Editor):
-
-```sql
--- Allow authenticated restaurant owners to upload to their own folder
-CREATE POLICY "owner_upload_logo"
-ON storage.objects FOR INSERT
-WITH CHECK (
-  bucket_id = 'restaurant-assets'
-  AND auth.role() = 'authenticated'
-  AND (storage.foldername(name))[1] = 'logos'
-);
-
--- Allow public read for all logos
-CREATE POLICY "public_read_logo"
-ON storage.objects FOR SELECT
-USING (bucket_id = 'restaurant-assets');
-```
-
----
-
-### 3. Prisma Schema Sync (if using Express server locally)
-
-The Express server with Prisma is used **only for local development seeding**. In production, the frontend talks directly to Supabase.
-
-If you need to sync the schema to a dev DB:
-
-```bash
-npx prisma db push        # Push schema to dev Supabase (uses DATABASE_URL)
-npx prisma studio         # Browse data in browser
-```
-
-Required `.env` for server:
 ```env
-DATABASE_URL=postgresql://postgres:[password]@db.your-project.supabase.co:5432/postgres
-DIRECT_URL=postgresql://postgres:[password]@db.your-project.supabase.co:5432/postgres
-JWT_SECRET=<at-least-32-char-high-entropy-string>
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=server-only-service-role-key
+RAZORPAY_KEY_ID=rzp_live_xxx
+RAZORPAY_KEY_SECRET=server-only-secret
+RAZORPAY_WEBHOOK_SECRET=server-only-webhook-secret
+WHATSAPP_ACCESS_TOKEN=server-only-token
 ```
 
----
+Never expose service role, payment secret, or webhook secret values to Vite.
 
-### 4. Staff Account Management
+## 3. Database
 
-Supabase Auth invite requires the **service role key** (server-side only — never expose to clients).
-
-To invite staff from the command line or a backend script:
-
-```bash
-curl -X POST 'https://your-project.supabase.co/auth/v1/admin/users' \
-  -H "apikey: YOUR_SERVICE_ROLE_KEY" \
-  -H "Authorization: Bearer YOUR_SERVICE_ROLE_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "staff@restaurant.com",
-    "password": "temporary-password",
-    "email_confirm": true,
-    "user_metadata": { "restaurant_id": "YOUR_RESTAURANT_UUID", "role": "staff" }
-  }'
-```
-
-After creating the auth user, also insert the User table record:
+Run all SQL migrations under `supabase/migrations/`, then run:
 
 ```sql
-INSERT INTO "User" (id, restaurant_id, email, role, password_hash)
-VALUES (
-  'SUPABASE_AUTH_USER_UUID',
-  'YOUR_RESTAURANT_UUID',
-  'staff@restaurant.com',
-  'staff',
-  'managed-by-supabase-auth'
-);
+-- Supabase SQL editor
+\i supabase/rls-policies.sql
 ```
 
----
+If using the dashboard SQL editor, paste the contents of `supabase/rls-policies.sql`.
 
-### 5. Vercel Deployment
+The secure MVP order path depends on these RPC functions:
+
+- `start_table_session`
+- `create_order_secure`
+- `get_order_status_secure`
+- `get_table_session_orders`
+- `create_staff_request_secure`
+- `close_table_session`
+
+## 4. Edge Functions
 
 ```bash
-npm run build       # Verify build locally first
-vercel --prod       # Deploy to production
+supabase functions deploy create-payment-order
+supabase functions deploy verify-payment-webhook
 ```
 
-Ensure `vercel.json` has SPA fallback configured:
+`create-payment-order` is a safe placeholder until Razorpay credentials and provider API calls are added. `verify-payment-webhook` must verify Razorpay signatures before any payment or bill is marked paid.
 
-```json
-{
-  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
-}
+## 5. Storage
+
+Create a public `restaurant-assets` bucket for logos/menu photos. Keep writes authenticated and restaurant-folder scoped:
+
+```sql
+create policy "restaurant_asset_upload"
+on storage.objects for insert
+with check (
+  bucket_id = 'restaurant-assets'
+  and auth.role() = 'authenticated'
+  and (storage.foldername(name))[2] in (
+    select restaurant_id from "User" where id = auth.uid()::text
+  )
+);
+
+create policy "restaurant_asset_public_read"
+on storage.objects for select
+using (bucket_id = 'restaurant-assets');
 ```
 
----
+## 6. Legacy Backend
 
-### 6. First Restaurant Setup
+`server/index.js` and `prisma/schema.prisma` are retained only for reference while migrating historical logic. Do not deploy them for the MVP production app.
 
-After deploying, create the first restaurant record directly in Supabase:
+## Known Production TODOs
 
-1. **Dashboard → Table Editor → Restaurant** → Insert a row
-2. Copy the generated UUID — this is your `restaurant_id`
-3. Create an owner user in Supabase Auth, then insert into `User` table with `role = 'owner'` and the restaurant UUID
-
-Then visit: `https://your-app.vercel.app/admin/login`
-
----
-
-### 7. QR Code Generation
-
-Use the **Admin → QR Factory** screen to generate QR codes for each table. Each QR code encodes:
-```
-https://your-app.vercel.app/r/{restaurant-slug}/t/{table-uuid}
-```
-
----
-
-## Known Limitations & Pending Work
-
-| Item | Status |
-|---|---|
-| Razorpay payment integration | ⚠️ Simulated — replace `simulatePayment()` in `TableSession.jsx` with real Razorpay Checkout |
-| Password recovery email flow | ⚠️ Needs Supabase Auth email template configuration |
-| Offline support | ⚠️ No service worker — requires PWA setup for true offline kitchen display resilience |
-| GST invoice generation | ❌ Not implemented — consider Supabase Edge Function + PDF generation |
+- Complete Razorpay Orders API creation and webhook signature verification.
+- Add a printer/KOT Edge Function or webhook target.
+- Add WhatsApp notification provider calls behind Edge Functions.
+- Add richer analytics materialized views once live order data exists.

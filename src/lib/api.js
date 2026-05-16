@@ -1,24 +1,39 @@
 import { supabase } from './supabase';
+import { canTransitionOrderStatus } from './businessRules';
 
-// ── Helpers ───────────────────────────────────────────────────
 const now = () => new Date().toISOString();
+const allowClientOrderFallback = import.meta.env.DEV && import.meta.env.VITE_ALLOW_CLIENT_ORDER_FALLBACK === 'true';
 
 function genOrderId() {
   const d = new Date();
-  const date = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   const rand = crypto.randomUUID().slice(0, 8).toUpperCase();
   return `SF-${date}-${rand}`;
 }
 
-// ── Public (Customer) API ─────────────────────────────────────
+function requireRestaurantId(restaurantId) {
+  if (!restaurantId) throw new Error('Restaurant context is required for this operation.');
+  return restaurantId;
+}
+
+function normalizeOrderItems(items = []) {
+  return items.map(item => ({
+    menu_item_id: item.menu_item_id || item.id,
+    quantity: Number(item.quantity ?? item.qty ?? 1),
+    modifier_option_ids: (item.modifier_option_ids || item.modifiers || item.selectedModifiers || [])
+      .map(mod => mod.id)
+      .filter(Boolean),
+    notes: item.notes || null,
+  }));
+}
+
+// Public customer API
 
 export async function fetchMenu(restaurantSlug) {
   let restaurantQuery = supabase.from('Restaurant').select('*');
-  if (restaurantSlug) {
-    restaurantQuery = restaurantQuery.eq('slug', restaurantSlug).maybeSingle();
-  } else {
-    restaurantQuery = restaurantQuery.limit(1).maybeSingle();
-  }
+  restaurantQuery = restaurantSlug
+    ? restaurantQuery.eq('slug', restaurantSlug).maybeSingle()
+    : restaurantQuery.limit(1).maybeSingle();
 
   const { data: restaurant, error: restErr } = await restaurantQuery;
   if (restErr || !restaurant) throw new Error('Restaurant not found');
@@ -41,12 +56,10 @@ export async function fetchMenu(restaurantSlug) {
 
   if (catErr) throw new Error(catErr.message);
 
-  const visibleCategories = categories?.map(cat => ({
-    ...cat,
-    items: cat.items || []
-  })) || [];
-
-  return { restaurant, categories: visibleCategories };
+  return {
+    restaurant,
+    categories: categories?.map(cat => ({ ...cat, items: cat.items || [] })) || [],
+  };
 }
 
 export async function fetchTableInfo(tableId) {
@@ -58,6 +71,17 @@ export async function fetchTableInfo(tableId) {
   if (error) throw new Error(error.message);
   if (!data) throw new Error('Table not found');
   return data;
+}
+
+export async function startOrResumeTableSession({ restaurantId, tableId, existingToken }) {
+  const { data, error } = await supabase.rpc('start_table_session', {
+    p_restaurant_id: restaurantId,
+    p_table_id: tableId,
+    p_existing_token: existingToken || null,
+  });
+
+  if (error) throw new Error(error.message);
+  return Array.isArray(data) ? data[0] : data;
 }
 
 export async function fetchMenuItem(dishId) {
@@ -78,50 +102,41 @@ export async function fetchMenuItem(dishId) {
   return data;
 }
 
-export async function placeOrder(payload) {
+async function placeOrderClientFallback(payload) {
   const orderId = genOrderId();
   const ts = now();
 
-  // 0. Anti-Spam check: max 5 pending orders per table (scoped to restaurant)
   const { count, error: countErr } = await supabase
     .from('Order')
     .select('id', { count: 'exact', head: true })
     .eq('table_id', payload.table_id)
-    .eq('restaurant_id', payload.restaurant_id)  // SEC-07: scope to restaurant
+    .eq('restaurant_id', payload.restaurant_id)
     .eq('status', 'pending');
-    
   if (countErr) throw new Error(`Anti-spam check failed: ${countErr.message}`);
-  if (count >= 5) {
-    throw new Error('Kitchen is processing your previous orders. Please wait for them to be accepted before placing a new one.');
-  }
+  if (count >= 5) throw new Error('Kitchen is processing your previous orders. Please wait before placing another order.');
 
-  // 0.5 Price Verification
   const itemIds = payload.items.map(i => i.menu_item_id);
-  if (itemIds.length > 0) {
-    const { data: dbItems, error: dbErr } = await supabase
-      .from('MenuItem')
-      .select('id, price, available')
-      .in('id', itemIds);
-    if (dbErr) throw new Error(`Price verification failed: ${dbErr.message}`);
+  const { data: dbItems, error: dbErr } = await supabase
+    .from('MenuItem')
+    .select('id, name, price, available, restaurant_id')
+    .in('id', itemIds)
+    .eq('restaurant_id', payload.restaurant_id);
+  if (dbErr) throw new Error(`Price verification failed: ${dbErr.message}`);
 
-    for (const item of payload.items) {
-      const dbItem = dbItems.find(i => i.id === item.menu_item_id);
-      if (!dbItem) throw new Error(`Item ${item.name} not found`);
-      if (!dbItem.available) {
-        throw new Error(`${item.name} is currently unavailable`);
-      }
-      if (Math.abs(dbItem.price - item.price) > 1) {
-        throw new Error(`Price mismatch for ${item.name}: expected ₹${dbItem.price}, got ₹${item.price}`);
-      }
-    }
+  let totalAmount = 0;
+  for (const item of payload.items) {
+    const dbItem = dbItems.find(i => i.id === item.menu_item_id);
+    if (!dbItem) throw new Error(`Item ${item.name || item.menu_item_id} not found`);
+    if (!dbItem.available) throw new Error(`${dbItem.name} is currently unavailable`);
+    totalAmount += Number(dbItem.price) * Number(item.quantity || 1);
   }
 
-  // 1. Insert the Order
   const { error: orderError } = await supabase.from('Order').insert({
     id: orderId,
     restaurant_id: payload.restaurant_id,
     table_id: payload.table_id,
-    total_amount: payload.total_amount,
+    table_session_id: payload.table_session_id || null,
+    total_amount: Number(totalAmount.toFixed(2)),
     special_instructions: payload.special_instructions || null,
     idempotency_key: payload.idempotency_key,
     status: 'pending',
@@ -130,45 +145,69 @@ export async function placeOrder(payload) {
   });
   if (orderError) throw new Error(`Order failed: ${orderError.message}`);
 
-  // 2. Insert Order Items (no timestamps — OrderItem has no created_at/updated_at columns)
-  const orderItems = payload.items.map(item => ({
-    id: crypto.randomUUID(),
-    order_id: orderId,
-    menu_item_id: item.menu_item_id,
-    name: item.name,
-    quantity: item.quantity,
-    price: item.price,
-    modifiers_json: item.modifiers?.length ? JSON.stringify(item.modifiers) : null,
-  }));
+  const orderItems = payload.items.map(item => {
+    const dbItem = dbItems.find(i => i.id === item.menu_item_id);
+    return {
+      id: crypto.randomUUID(),
+      order_id: orderId,
+      menu_item_id: item.menu_item_id,
+      name: dbItem.name,
+      quantity: item.quantity,
+      price: dbItem.price,
+      modifiers_json: item.modifiers?.length ? JSON.stringify(item.modifiers) : null,
+    };
+  });
 
   const { error: itemsError } = await supabase.from('OrderItem').insert(orderItems);
   if (itemsError) {
-    await supabase.from('Order').delete().eq('id', orderId);
+    await supabase.from('Order').delete().eq('id', orderId).eq('restaurant_id', payload.restaurant_id);
     throw new Error(`Order items failed: ${itemsError.message}`);
   }
 
-  // 3. Mark table as occupied (Table has updated_at)
-  await supabase.from('Table').update({ status: 'occupied', updated_at: ts }).eq('id', payload.table_id);
+  await supabase
+    .from('Table')
+    .update({ status: 'occupied', updated_at: ts })
+    .eq('id', payload.table_id)
+    .eq('restaurant_id', payload.restaurant_id);
 
-  // 4. Optional: Insert simulated payment
-  if (payload.payment) {
-    const { error: pErr } = await supabase.from('Payment').insert({
-      id: crypto.randomUUID(),
-      order_id: orderId,
-      razorpay_order_id: payload.payment.razorpay_order_id || 'sim_order_' + Date.now(),
-      razorpay_payment_id: payload.payment.razorpay_payment_id || 'sim_pay_' + Date.now(),
-      status: payload.payment.status || 'success',
-      amount: payload.payment.amount,
-      created_at: ts,
-      updated_at: ts
-    });
-    if (pErr) console.warn('Simulated payment failed (table might be missing or RLS blocked):', pErr.message);
+  return { order_ref: orderId, status: 'pending', total_amount: Number(totalAmount.toFixed(2)) };
+}
+
+export async function placeOrder(payload) {
+  const restaurantId = requireRestaurantId(payload.restaurant_id);
+  const tableSessionToken = payload.table_session_token || localStorage.getItem('mv_table_session_token');
+  const rpcPayload = {
+    p_restaurant_id: restaurantId,
+    p_table_id: payload.table_id,
+    p_table_session_token: tableSessionToken || null,
+    p_special_instructions: payload.special_instructions || null,
+    p_idempotency_key: payload.idempotency_key || crypto.randomUUID(),
+    p_items: normalizeOrderItems(payload.items),
+  };
+
+  const { data, error } = await supabase.rpc('create_order_secure', rpcPayload);
+  if (!error) return Array.isArray(data) ? data[0] : data;
+
+  if (allowClientOrderFallback) {
+    console.warn('[Menuverse] create_order_secure RPC unavailable; using opted-in local demo fallback.', error.message);
+    return placeOrderClientFallback(payload);
   }
 
-  return { order_ref: orderId, status: 'pending', total_amount: payload.total_amount };
+  throw new Error(`Secure order creation is not available: ${error.message}`);
 }
 
 export async function fetchOrderStatus(orderId) {
+  const tableSessionToken = localStorage.getItem('mv_table_session_token');
+  if (tableSessionToken) {
+    const { data, error } = await supabase.rpc('get_order_status_secure', {
+      p_order_id: orderId,
+      p_table_session_token: tableSessionToken,
+    });
+    if (!error && data) return Array.isArray(data) ? data[0] : data;
+  }
+
+  if (!allowClientOrderFallback) throw new Error('Order status requires a valid table session.');
+
   const { data, error } = await supabase
     .from('Order')
     .select(`
@@ -185,11 +224,20 @@ export async function fetchOrderStatus(orderId) {
 }
 
 export async function fetchTableOrders(tableId) {
+  const tableSessionToken = localStorage.getItem('mv_table_session_token');
+  if (tableSessionToken) {
+    const { data, error } = await supabase.rpc('get_table_session_orders', {
+      p_table_session_token: tableSessionToken,
+    });
+    if (!error) return data || [];
+  }
+
+  if (!allowClientOrderFallback) throw new Error('Table bill requires a valid table session.');
+
   const { data, error } = await supabase
     .from('Order')
-    .select(`*, items:OrderItem(*, menu_item:MenuItem(*))`)
+    .select('*, items:OrderItem(*, menu_item:MenuItem(*))')
     .eq('table_id', tableId)
-    // BUG-09: Include 'completed' so multi-round bills are never understated
     .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served', 'completed'])
     .order('created_at', { ascending: false });
   if (error) throw new Error('Failed to fetch table orders');
@@ -197,30 +245,38 @@ export async function fetchTableOrders(tableId) {
 }
 
 export async function createPayment(payload) {
-  const { error } = await supabase.from('Payment').insert({
-    id: crypto.randomUUID(),
-    order_id: payload.order_id,
-    razorpay_order_id: payload.razorpay_order_id || 'sim_order_' + Date.now(),
-    razorpay_payment_id: payload.razorpay_payment_id || 'sim_pay_' + Date.now(),
-    status: payload.status || 'success',
-    amount: payload.amount,
-    created_at: now(),
-    updated_at: now()
+  const { data, error } = await supabase.functions.invoke('create-payment-order', {
+    body: {
+      table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
+      order_id: payload.order_id || null,
+      amount: payload.amount,
+    },
   });
-  if (error) throw new Error(`Payment failed: ${error.message}`);
-  return true;
+  if (error) throw new Error(`Payment order failed: ${error.message}`);
+  return data;
 }
 
-// ── Admin API ─────────────────────────────────────────────────
+export async function createStaffRequest({ restaurantId, tableId, tableSessionToken }) {
+  const { data, error } = await supabase.rpc('create_staff_request_secure', {
+    p_restaurant_id: requireRestaurantId(restaurantId),
+    p_table_id: tableId,
+    p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Admin API
 
 export async function adminFetchOrders(status, restaurantId, limit = 100, offset = 0) {
+  requireRestaurantId(restaurantId);
   let query = supabase
     .from('Order')
-    .select(`*, items:OrderItem(*, menu_item:MenuItem(*)), table:Table(*)`, { count: 'exact' })
+    .select('*, items:OrderItem(*, menu_item:MenuItem(*)), table:Table(*)', { count: 'exact' })
+    .eq('restaurant_id', restaurantId)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (restaurantId) query = query.eq('restaurant_id', restaurantId);
   if (status) query = query.eq('status', status);
 
   const { data, error, count } = await query;
@@ -228,12 +284,25 @@ export async function adminFetchOrders(status, restaurantId, limit = 100, offset
   return { data: data || [], count: count || 0 };
 }
 
-export async function adminUpdateOrderStatus(orderId, status, cancelReason) {
-  // Order has updated_at but no DB default — inject it
+export async function adminUpdateOrderStatus(orderId, status, cancelReason, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data: current, error: readError } = await supabase
+    .from('Order')
+    .select('id, status')
+    .eq('id', orderId)
+    .eq('restaurant_id', restaurantId)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+  if (!current) throw new Error('Order not found for this restaurant.');
+  if (!canTransitionOrderStatus(current.status, status)) {
+    throw new Error(`Invalid order status transition: ${current.status} -> ${status}`);
+  }
+
   const { data, error } = await supabase
     .from('Order')
     .update({ status, cancel_reason: cancelReason || null, updated_at: now() })
     .eq('id', orderId)
+    .eq('restaurant_id', restaurantId)
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -241,19 +310,18 @@ export async function adminUpdateOrderStatus(orderId, status, cancelReason) {
 }
 
 export async function adminFetchMenuItems(restaurantId) {
-  let query = supabase
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
     .from('MenuItem')
     .select('*, category:MenuCategory(*), modifier_groups:ModifierGroup(*, options:ModifierOption(*))')
+    .eq('restaurant_id', restaurantId)
     .order('display_order', { ascending: true });
-
-  if (restaurantId) query = query.eq('restaurant_id', restaurantId);
-
-  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
 }
 
 export async function adminCreateMenuItem(payload) {
+  requireRestaurantId(payload.restaurant_id);
   const { data: result, error } = await supabase
     .from('MenuItem')
     .insert({ ...payload, created_at: now(), updated_at: now() })
@@ -263,73 +331,92 @@ export async function adminCreateMenuItem(payload) {
   return result;
 }
 
-export async function adminUpdateMenuItem(id, payload) {
+export async function adminUpdateMenuItem(id, payload, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { restaurant_id: _restaurantId, ...safePayload } = payload;
   const { data: result, error } = await supabase
     .from('MenuItem')
-    .update({ ...payload, updated_at: now() })
+    .update({ ...safePayload, updated_at: now() })
     .eq('id', id)
+    .eq('restaurant_id', restaurantId)
     .select();
   if (error) throw new Error(error.message);
   return { updated: result?.length };
 }
 
 export async function adminUpdateItemModifiers(itemId, restaurantId, groups) {
-  const { data: existingGroups } = await supabase.from('ModifierGroup').select('id').eq('menu_item_id', itemId);
-  if (existingGroups && existingGroups.length > 0) {
+  requireRestaurantId(restaurantId);
+  const { data: existingGroups, error: existingError } = await supabase
+    .from('ModifierGroup')
+    .select('id')
+    .eq('menu_item_id', itemId)
+    .eq('restaurant_id', restaurantId);
+  if (existingError) throw new Error(existingError.message);
+
+  if (existingGroups?.length > 0) {
     const groupIds = existingGroups.map(g => g.id);
-    await supabase.from('ModifierOption').delete().in('group_id', groupIds);
-    await supabase.from('ModifierGroup').delete().in('id', groupIds);
+    const { error: optionDeleteError } = await supabase.from('ModifierOption').delete().in('group_id', groupIds);
+    if (optionDeleteError) throw new Error(optionDeleteError.message);
+    const { error: groupDeleteError } = await supabase
+      .from('ModifierGroup')
+      .delete()
+      .in('id', groupIds)
+      .eq('restaurant_id', restaurantId);
+    if (groupDeleteError) throw new Error(groupDeleteError.message);
   }
 
   if (!groups || groups.length === 0) return;
 
-  for (const g of groups) {
+  for (const group of groups) {
     const groupId = crypto.randomUUID();
-    await supabase.from('ModifierGroup').insert({
+    const { error: groupError } = await supabase.from('ModifierGroup').insert({
       id: groupId,
       restaurant_id: restaurantId,
       menu_item_id: itemId,
-      name: g.name,
-      required: g.required,
+      name: group.name,
+      required: Boolean(group.required),
       created_at: now(),
-      updated_at: now()
+      updated_at: now(),
     });
+    if (groupError) throw new Error(groupError.message);
 
-    if (g.options && g.options.length > 0) {
-      const optionsToInsert = g.options.map(o => ({
+    if (group.options?.length > 0) {
+      const optionsToInsert = group.options.map(option => ({
         id: crypto.randomUUID(),
         group_id: groupId,
-        name: o.name,
-        price_delta: parseFloat(o.price_delta) || 0
+        name: option.name,
+        price_delta: parseFloat(option.price_delta) || 0,
       }));
-      await supabase.from('ModifierOption').insert(optionsToInsert);
+      const { error: optionError } = await supabase.from('ModifierOption').insert(optionsToInsert);
+      if (optionError) throw new Error(optionError.message);
     }
   }
 }
 
-export async function adminFetchCategories() {
+export async function adminFetchCategories(restaurantId) {
+  requireRestaurantId(restaurantId);
   const { data, error } = await supabase
     .from('MenuCategory')
     .select('*')
+    .eq('restaurant_id', restaurantId)
     .order('display_order', { ascending: true });
   if (error) throw new Error(error.message);
   return data || [];
 }
 
 export async function adminFetchTables(restaurantId) {
-  let query = supabase
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
     .from('Table')
     .select('*')
+    .eq('restaurant_id', restaurantId)
     .order('number', { ascending: true });
-    
-  if (restaurantId) query = query.eq('restaurant_id', restaurantId);
-  
-  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
 }
 
 export async function adminCreateTable(payload) {
+  requireRestaurantId(payload.restaurant_id);
   const { data: result, error } = await supabase
     .from('Table')
     .insert({ ...payload, created_at: now(), updated_at: now() })
@@ -339,11 +426,14 @@ export async function adminCreateTable(payload) {
   return result;
 }
 
-export async function adminUpdateTable(id, payload) {
+export async function adminUpdateTable(id, payload, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { restaurant_id: _restaurantId, ...safePayload } = payload;
   const { data: result, error } = await supabase
     .from('Table')
-    .update({ ...payload, updated_at: now() })
+    .update({ ...safePayload, updated_at: now() })
     .eq('id', id)
+    .eq('restaurant_id', restaurantId)
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -351,6 +441,7 @@ export async function adminUpdateTable(id, payload) {
 }
 
 export async function adminDeleteTable(id, restaurantId) {
+  requireRestaurantId(restaurantId);
   const { error } = await supabase
     .from('Table')
     .delete()
@@ -360,26 +451,37 @@ export async function adminDeleteTable(id, restaurantId) {
   return true;
 }
 
-export async function adminClearTable(tableId) {
-  // 1. Mark table as available
+export async function adminClearTable(tableId, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const ts = now();
   const { error: tErr } = await supabase
     .from('Table')
-    .update({ status: 'available', updated_at: now() })
-    .eq('id', tableId);
+    .update({ status: 'available', updated_at: ts })
+    .eq('id', tableId)
+    .eq('restaurant_id', restaurantId);
   if (tErr) throw new Error(tErr.message);
 
-  // 2. Mark all active orders for this table as completed
-  const { error: oErr } = await supabase
-    .from('Order')
-    .update({ status: 'completed', updated_at: now() })
-    .eq('table_id', tableId)
-    .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served']);
-  if (oErr) throw new Error(oErr.message);
-  
+  const { error: sessionErr } = await supabase.rpc('close_table_session', {
+    p_restaurant_id: restaurantId,
+    p_table_id: tableId,
+  });
+  if (sessionErr && !allowClientOrderFallback) throw new Error(sessionErr.message);
+
+  if (sessionErr && allowClientOrderFallback) {
+    const { error: oErr } = await supabase
+      .from('Order')
+      .update({ status: 'completed', updated_at: ts })
+      .eq('table_id', tableId)
+      .eq('restaurant_id', restaurantId)
+      .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served']);
+    if (oErr) throw new Error(oErr.message);
+  }
+
   return true;
 }
 
 export async function adminUpdateRestaurant(id, payload) {
+  requireRestaurantId(id);
   const { data: result, error } = await supabase
     .from('Restaurant')
     .update({ ...payload, updated_at: now() })

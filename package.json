@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:unit": "node src/lib/__tests__/businessRules.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

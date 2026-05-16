@@ -5,6 +5,7 @@ import { adminUpdateRestaurant } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
+import { INTEGRATION_READINESS } from '../../lib/integrations';
 
 const TABS = ['Brand', 'Operations', 'Team'];
 
@@ -25,6 +26,9 @@ export default function Settings() {
 
   // ── Operations state ─────────────────────────────────────────────
   const [gstRate, setGstRate] = useState('5');
+  const [serviceChargeRate, setServiceChargeRate] = useState('0');
+  const [paymentEnabled, setPaymentEnabled] = useState(false);
+  const [paymentProvider, setPaymentProvider] = useState('razorpay');
 
   // ── Team state ────────────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState([]);
@@ -63,6 +67,9 @@ export default function Settings() {
             const local = localStorage.getItem('mv_gst_rate');
             setGstRate(local ? String(parseFloat(local) * 100) : '5');
           }
+          setServiceChargeRate(String((data.service_charge_rate || 0) * 100));
+          setPaymentEnabled(Boolean(data.payment_enabled));
+          setPaymentProvider(data.payment_provider || 'razorpay');
         }
         setLoading(false);
       })
@@ -135,6 +142,7 @@ export default function Settings() {
     setSaving(true);
     try {
       const rate = parseFloat(gstRate);
+      const serviceRate = parseFloat(serviceChargeRate);
       await adminUpdateRestaurant(user.restaurantId, {
         name: restaurantName,
         description,
@@ -142,6 +150,9 @@ export default function Settings() {
         font_family: fontFamily,
         ...(logoUrl ? { logo_url: logoUrl } : {}),
         ...(!isNaN(rate) && rate >= 0 && rate <= 30 ? { gst_rate: rate / 100 } : {}),
+        ...(!isNaN(serviceRate) && serviceRate >= 0 && serviceRate <= 30 ? { service_charge_rate: serviceRate / 100 } : {}),
+        payment_enabled: paymentEnabled,
+        payment_provider: paymentProvider,
       });
       if (!isNaN(rate) && rate >= 0 && rate <= 30) {
         localStorage.setItem('mv_gst_rate', String(rate / 100));
@@ -176,7 +187,11 @@ export default function Settings() {
   const handleRemoveMember = async (memberId) => {
     if (memberId === user.id) { addToast("You can't remove yourself.", 'error'); return; }
     try {
-      const { error } = await supabase.from('User').delete().eq('id', memberId);
+      const { error } = await supabase
+        .from('User')
+        .delete()
+        .eq('id', memberId)
+        .eq('restaurant_id', user.restaurantId);
       if (error) throw new Error(error.message);
       setTeamMembers(prev => prev.filter(m => m.id !== memberId));
       addToast('Member removed.', 'success');
@@ -338,6 +353,21 @@ export default function Settings() {
                     />
                     <span className="text-on-surface-variant font-bold text-xl">%</span>
                   </div>
+                  <label className="block text-[10px] uppercase font-bold tracking-[0.15em] mb-2 mt-6 text-on-surface-variant">
+                    Service Charge (%)
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      step="0.5"
+                      value={serviceChargeRate}
+                      onChange={e => setServiceChargeRate(e.target.value)}
+                      className={`${inputClass} w-32 text-center font-bold text-xl`}
+                    />
+                    <span className="text-on-surface-variant font-bold text-xl">%</span>
+                  </div>
                   <p className="text-[10px] text-on-surface-variant/60 mt-3">
                     Standard CGST+SGST for restaurants in India is 5%. Fine dining may apply 12% or 18%.
                   </p>
@@ -361,6 +391,39 @@ export default function Settings() {
             )}
 
             {/* ── Team Tab ───────────────────────────────────────── */}
+            {activeTab === 'Operations' && (
+              <div className={`p-10 mb-8 ${cardBg}`}>
+                <h3 className="font-headline text-xl font-bold mb-2 text-on-surface">Integrations</h3>
+                <p className="text-sm text-on-surface-variant mb-6">
+                  Keep credentials server-side. These controls show readiness and prevent fake client-side integrations.
+                </p>
+                <div className="grid md:grid-cols-2 gap-4 mb-8">
+                  <label className="flex items-center justify-between gap-4 p-4 rounded-xl bg-surface-container border border-outline-variant/10">
+                    <span className="text-sm font-bold text-on-surface">Enable Digital Payment Button</span>
+                    <input type="checkbox" checked={paymentEnabled} onChange={e => setPaymentEnabled(e.target.checked)} className="w-5 h-5 accent-primary" />
+                  </label>
+                  <select value={paymentProvider} onChange={e => setPaymentProvider(e.target.value)} className={inputClass}>
+                    <option value="razorpay">Razorpay</option>
+                    <option value="manual">Manual payment link</option>
+                  </select>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  {INTEGRATION_READINESS.map(item => (
+                    <div key={item.key} className="p-4 rounded-xl bg-surface-container border border-outline-variant/10">
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="material-symbols-outlined text-primary">{item.icon}</span>
+                        <div>
+                          <p className="text-sm font-bold text-on-surface">{item.label}</p>
+                          <p className="text-[9px] uppercase tracking-widest text-primary font-bold">{item.status.replace(/_/g, ' ')}</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-on-surface-variant leading-relaxed">{item.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {activeTab === 'Team' && (
               <>
                 {/* Invite form */}

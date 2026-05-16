@@ -17,11 +17,15 @@ model Restaurant {
   primary_color String?  @default("#B8860B")
   font_family   String?  @default("serif")
   gst_rate      Float?   @default(0.05)
+  service_charge_rate Float @default(0)
+  payment_provider String? @default("razorpay")
+  payment_enabled Boolean @default(false)
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
   users       User[]
   tables      Table[]
+  table_sessions TableSession[]
   categories  MenuCategory[]
   items       MenuItem[]
   orders      Order[]
@@ -50,15 +54,49 @@ model Table {
   capacity       Int
   status         String     @default("available") // available, occupied, awaiting_payment, closed
   qr_code_url    String?
+  qr_enabled      Boolean    @default(true)
   created_at     DateTime   @default(now())
   updated_at     DateTime   @updatedAt
 
   restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
   orders         Order[]
   staff_reqs     StaffRequest[]
+  sessions       TableSession[]
 
   // LF-08: Prevent duplicate table numbers within same restaurant
   @@unique([restaurant_id, number])
+}
+
+model TableSession {
+  id             String   @id @default(uuid())
+  restaurant_id  String
+  table_id       String
+  token          String   @unique @default(uuid())
+  status         String   @default("active") // active, billing, paid, closed
+  opened_at      DateTime @default(now())
+  closed_at      DateTime?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  table          Table      @relation(fields: [table_id], references: [id])
+  orders         Order[]
+  bill           SessionBill?
+}
+
+model SessionBill {
+  id               String   @id @default(uuid())
+  table_session_id String   @unique
+  subtotal         Float    @default(0)
+  tax_amount       Float    @default(0)
+  service_charge   Float    @default(0)
+  discount_amount  Float    @default(0)
+  total_amount     Float    @default(0)
+  payment_status   String   @default("unpaid") // unpaid, partially_paid, paid, refunded
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  table_session    TableSession @relation(fields: [table_session_id], references: [id])
 }
 
 model MenuCategory {
@@ -122,7 +160,11 @@ model Order {
   id                   String      @id // Format: SF-YYYYMMDD-XXXX
   restaurant_id        String
   table_id             String
+  table_session_id     String?
   status               String      @default("pending") // pending, accepted, preparing, ready, served, completed, cancelled
+  subtotal_amount      Float       @default(0)
+  tax_amount           Float       @default(0)
+  service_charge_amount Float      @default(0)
   total_amount         Float
   special_instructions String?
   idempotency_key      String?     @unique
@@ -132,6 +174,7 @@ model Order {
 
   restaurant           Restaurant  @relation(fields: [restaurant_id], references: [id])
   table                Table       @relation(fields: [table_id], references: [id])
+  table_session        TableSession? @relation(fields: [table_session_id], references: [id])
   items                OrderItem[]
   payments             Payment[]
   feedback             OrderFeedback?

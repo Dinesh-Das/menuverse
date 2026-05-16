@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchTables, adminCreateTable, adminClearTable, adminDeleteTable } from '../../lib/api';
+import { adminFetchTables, adminCreateTable, adminClearTable, adminDeleteTable, adminUpdateTable } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
 
@@ -81,6 +81,51 @@ async function downloadQrPng(table, restaurant) {
   }, 'image/png');
 }
 
+async function downloadStickerPng(table, restaurant) {
+  const url = buildQrUrl(table, restaurant);
+  const canvas = document.createElement('canvas');
+  canvas.width = 900;
+  canvas.height = 1200;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#171717';
+  ctx.fillRect(48, 48, canvas.width - 96, canvas.height - 96);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(78, 78, canvas.width - 156, canvas.height - 156);
+
+  ctx.fillStyle = '#171717';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 54px serif';
+  ctx.fillText(restaurant?.name?.split(' - ')[0] || 'Menuverse', 450, 180);
+  ctx.font = 'bold 34px sans-serif';
+  ctx.fillText(`Table ${table.number}`, 450, 250);
+
+  const qrCanvas = document.createElement('canvas');
+  await QRCode.toCanvas(qrCanvas, url, {
+    width: 560,
+    margin: 2,
+    color: { dark: '#171717', light: '#ffffff' },
+    errorCorrectionLevel: 'H',
+  });
+  ctx.drawImage(qrCanvas, 170, 320, 560, 560);
+
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillText('Scan to order', 450, 940);
+  ctx.font = '22px monospace';
+  ctx.fillStyle = '#555555';
+  ctx.fillText(url.replace(/^https?:\/\//, ''), 450, 1000);
+
+  canvas.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `menuverse-table-${table.number}-sticker.png`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, 'image/png');
+}
+
 export default function QRFactory() {
   const { user } = useAuth();
   const { addToast } = useToast();
@@ -137,7 +182,7 @@ export default function QRFactory() {
     if (!window.confirm(`Are you sure you want to clear Table ${number}? This will mark all active orders as completed.`)) return;
     setTableActionId(`clear-${tableId}`);
     try {
-      await adminClearTable(tableId);
+      await adminClearTable(tableId, user.restaurantId);
       addToast(`Table ${number} cleared!`, 'success');
       loadTables();
     } catch (err) {
@@ -161,6 +206,20 @@ export default function QRFactory() {
       loadTables();
     } catch (err) {
       addToast(`Error deleting table: ${err.message}`, 'error');
+    } finally {
+      setTableActionId(null);
+    }
+  };
+
+  const handleToggleQr = async (table) => {
+    const enabled = table.qr_enabled !== false;
+    setTableActionId(`qr-${table.id}`);
+    try {
+      await adminUpdateTable(table.id, { qr_enabled: !enabled }, user.restaurantId);
+      addToast(`QR ${enabled ? 'disabled' : 'enabled'} for Table ${table.number}.`, 'success');
+      loadTables();
+    } catch (err) {
+      addToast(`QR update failed: ${err.message}`, 'error');
     } finally {
       setTableActionId(null);
     }
@@ -300,11 +359,12 @@ export default function QRFactory() {
 
                   {/* Status chip */}
                   <span className={`text-[9px] uppercase font-bold px-3 py-1 rounded-full mb-6 ${
+                    table.qr_enabled === false ? 'bg-error/10 text-error' :
                     table.status === 'available'  ? 'bg-green-500/10 text-green-500' :
                     table.status === 'occupied'   ? 'bg-amber-500/10 text-amber-500' :
                     'bg-surface-container-high text-on-surface-variant'
                   }`}>
-                    {table.status}
+                    {table.qr_enabled === false ? 'qr disabled' : table.status}
                   </span>
 
                   {/* Actions */}
@@ -325,6 +385,29 @@ export default function QRFactory() {
                       className="py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 bg-primary text-on-primary hover:bg-primary-container active:scale-95"
                     >
                       <span className="material-symbols-outlined text-sm">download</span> PNG
+                    </button>
+                  </div>
+
+                  <div className="w-full grid grid-cols-2 gap-3 mb-3">
+                    <button
+                      onClick={() => downloadStickerPng(table, restaurant)}
+                      className="py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer border flex items-center justify-center gap-2 border-outline-variant/30 hover:bg-surface-container-high text-on-surface"
+                    >
+                      <span className="material-symbols-outlined text-sm">article</span> Sticker
+                    </button>
+                    <button
+                      onClick={() => handleToggleQr(table)}
+                      disabled={tableActionId === `qr-${table.id}`}
+                      className={`py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer border flex items-center justify-center gap-2 disabled:opacity-50 ${
+                        table.qr_enabled === false
+                          ? 'border-green-500/30 text-green-500 hover:bg-green-500/10'
+                          : 'border-error/30 text-error hover:bg-error/10'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-sm">
+                        {table.qr_enabled === false ? 'qr_code' : 'block'}
+                      </span>
+                      {table.qr_enabled === false ? 'Enable QR' : 'Disable QR'}
                     </button>
                   </div>
                   
