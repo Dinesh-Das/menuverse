@@ -41,7 +41,12 @@ export async function fetchMenu(restaurantSlug) {
 
   if (catErr) throw new Error(catErr.message);
 
-  return { restaurant, categories: categories || [] };
+  const filteredCategories = categories?.map(cat => ({
+    ...cat,
+    items: (cat.items || []).filter(i => i.available)
+  })) || [];
+
+  return { restaurant, categories: filteredCategories };
 }
 
 export async function fetchTableInfo(tableId) {
@@ -134,7 +139,10 @@ export async function placeOrder(payload) {
   }));
 
   const { error: itemsError } = await supabase.from('OrderItem').insert(orderItems);
-  if (itemsError) throw new Error(`Order items failed: ${itemsError.message}`);
+  if (itemsError) {
+    await supabase.from('Order').delete().eq('id', orderId);
+    throw new Error(`Order items failed: ${itemsError.message}`);
+  }
 
   // 3. Mark table as occupied (Table has updated_at)
   await supabase.from('Table').update({ status: 'occupied', updated_at: ts }).eq('id', payload.table_id);
@@ -202,18 +210,19 @@ export async function createPayment(payload) {
 
 // ── Admin API ─────────────────────────────────────────────────
 
-export async function adminFetchOrders(status, restaurantId) {
+export async function adminFetchOrders(status, restaurantId, limit = 100, offset = 0) {
   let query = supabase
     .from('Order')
-    .select(`*, items:OrderItem(*, menu_item:MenuItem(*)), table:Table(*)`)
-    .order('created_at', { ascending: false });
+    .select(`*, items:OrderItem(*, menu_item:MenuItem(*)), table:Table(*)`, { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (restaurantId) query = query.eq('restaurant_id', restaurantId);
   if (status) query = query.eq('status', status);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  return data || [];
+  return { data: data || [], count: count || 0 };
 }
 
 export async function adminUpdateOrderStatus(orderId, status, cancelReason) {
@@ -304,11 +313,15 @@ export async function adminFetchCategories() {
   return data || [];
 }
 
-export async function adminFetchTables() {
-  const { data, error } = await supabase
+export async function adminFetchTables(restaurantId) {
+  let query = supabase
     .from('Table')
     .select('*')
     .order('number', { ascending: true });
+    
+  if (restaurantId) query = query.eq('restaurant_id', restaurantId);
+  
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
 }

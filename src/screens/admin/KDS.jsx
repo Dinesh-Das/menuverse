@@ -61,16 +61,17 @@ export default function KDS() {
     if (!user?.restaurantId) return;
     async function load() {
       try {
-        const data = await adminFetchOrders(null, user.restaurantId);
+        const { data } = await adminFetchOrders(null, user.restaurantId);
         setOrders(data.filter(o => !['served', 'completed', 'cancelled'].includes(o.status)));
       } catch (err) {
         console.error(err);
+        addToast(`Failed to load kitchen orders: ${err.message}`, 'error');
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, [user]);
+  }, [user, addToast]);
 
   useEffect(() => {
     if (!user?.restaurantId) return;
@@ -134,6 +135,7 @@ export default function KDS() {
       await adminUpdateOrderStatus(id, newStatus);
     } catch (err) {
       console.error('KDS status rollback:', err.message);
+      addToast(`Failed to update order: ${err.message}`, 'error');
       // Rollback
       setOrders(prevOrders => prevOrders.map(o => o.id === id ? { ...o, status: prev.status } : o));
     } finally {
@@ -151,6 +153,7 @@ export default function KDS() {
       setOrders(prev => prev.filter(o => o.id !== id));
     } catch (err) {
       console.error('KDS reject failed:', err.message);
+      addToast(`Failed to reject order: ${err.message}`, 'error');
     } finally {
       setUpdatingIds(s => { const next = new Set(s); next.delete(`reject-${id}`); return next; });
     }

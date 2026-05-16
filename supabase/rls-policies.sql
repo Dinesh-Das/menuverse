@@ -16,6 +16,8 @@ ALTER TABLE "ModifierOption" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Order" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "OrderItem" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Payment" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "OrderFeedback" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "StaffRequest" ENABLE ROW LEVEL SECURITY;
 
 -- ── 2. Restaurant ─────────────────────────────────────────────────────────
 -- Public read (menu display)
@@ -55,6 +57,28 @@ CREATE POLICY "table_staff_update" ON "Table"
       WHERE "User".id = auth.uid()::text
         AND "User".restaurant_id = "Table".restaurant_id
         AND "User".role IN ('owner', 'manager', 'staff')
+    )
+  );
+
+-- Only owner/manager can create tables
+CREATE POLICY "table_admin_insert" ON "Table"
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM "User"
+      WHERE "User".id = auth.uid()::text
+        AND "User".restaurant_id = "Table".restaurant_id
+        AND "User".role IN ('owner', 'manager')
+    )
+  );
+
+-- Only owner/manager can delete tables
+CREATE POLICY "table_owner_delete" ON "Table"
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM "User"
+      WHERE "User".id = auth.uid()::text
+        AND "User".restaurant_id = "Table".restaurant_id
+        AND "User".role IN ('owner', 'manager')
     )
   );
 
@@ -166,5 +190,48 @@ CREATE POLICY "payment_staff_read" ON "Payment"
       SELECT 1 FROM "User"
       WHERE "User".id = auth.uid()::text
         AND "User".role IN ('owner', 'manager')
+    )
+  );
+
+-- ── 12. Order Feedback ─────────────────────────────────────────
+-- Anon can INSERT (customer rating)
+CREATE POLICY "feedback_anon_insert" ON "OrderFeedback"
+  FOR INSERT WITH CHECK (true);
+
+-- Staff can read feedback for their restaurant
+CREATE POLICY "feedback_staff_read" ON "OrderFeedback"
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM "User"
+      WHERE "User".id = auth.uid()::text
+        AND "User".restaurant_id = "OrderFeedback".restaurant_id
+        AND "User".role IN ('owner', 'manager')
+    )
+  );
+
+-- ── 13. Staff Requests ─────────────────────────────────────────
+-- Anon can INSERT (customer calling waiter)
+CREATE POLICY "staffreq_anon_insert" ON "StaffRequest"
+  FOR INSERT WITH CHECK (true);
+
+-- Staff can read requests for their restaurant
+CREATE POLICY "staffreq_staff_read" ON "StaffRequest"
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM "User"
+      WHERE "User".id = auth.uid()::text
+        AND "User".restaurant_id = "StaffRequest".restaurant_id
+        AND "User".role IN ('owner', 'manager', 'staff')
+    )
+  );
+
+-- Staff can update requests for their restaurant
+CREATE POLICY "staffreq_staff_update" ON "StaffRequest"
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM "User"
+      WHERE "User".id = auth.uid()::text
+        AND "User".restaurant_id = "StaffRequest".restaurant_id
+        AND "User".role IN ('owner', 'manager', 'staff')
     )
   );

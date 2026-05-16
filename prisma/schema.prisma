@@ -16,6 +16,7 @@ model Restaurant {
   logo_url      String?
   primary_color String?  @default("#B8860B")
   font_family   String?  @default("serif")
+  gst_rate      Float?   @default(0.05)
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 

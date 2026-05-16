@@ -5,6 +5,7 @@ import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchOrders } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
+import { useToast } from '../../components/Toast';
 
 const STATUS_COLORS = {
   'preparing': 'bg-primary/10 text-primary border border-primary/20',
@@ -16,6 +17,7 @@ const STATUS_COLORS = {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { addToast } = useToast();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
@@ -26,17 +28,23 @@ export default function Dashboard() {
     let channel;
     const fetchAndSubscribe = async () => {
       try {
-        const data = await adminFetchOrders(null, user.restaurantId);
+        const { data } = await adminFetchOrders(null, user.restaurantId);
         setOrders(data);
         setLoading(false);
 
         channel = supabase.channel('dashboard_orders')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'Order', filter: `restaurant_id=eq.${user.restaurantId}` }, () => {
-            adminFetchOrders(null, user.restaurantId).then(setOrders).catch(console.error);
+            adminFetchOrders(null, user.restaurantId)
+              .then(res => setOrders(res.data))
+              .catch(err => {
+                console.error(err);
+                addToast(`Failed to refresh dashboard orders: ${err.message}`, 'error');
+              });
           })
           .subscribe();
       } catch (err) {
         console.error(err);
+        addToast(`Failed to load dashboard orders: ${err.message}`, 'error');
         setLoading(false);
       }
     };
@@ -46,7 +54,7 @@ export default function Dashboard() {
     return () => {
       if (channel) supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user, addToast]);
 
   // Simple aggregations
   const today = new Date();
@@ -93,7 +101,7 @@ export default function Dashboard() {
     const dayStr = date.toLocaleDateString('en-US', { weekday: 'short' });
     const dayOrders = orders.filter(o => {
       const oDate = new Date(o.created_at + (o.created_at.endsWith('Z') ? '' : 'Z'));
-      return oDate.getDate() === date.getDate() && oDate.getMonth() === date.getMonth();
+      return oDate.toDateString() === date.toDateString();
     });
     const rev = dayOrders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.total_amount : 0), 0);
     return { day: dayStr, value: rev };

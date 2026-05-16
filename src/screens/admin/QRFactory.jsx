@@ -93,20 +93,21 @@ export default function QRFactory() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [tableActionId, setTableActionId] = useState(null);
   const [form, setForm] = useState({ number: '', section: 'Main Hall', capacity: 4, status: 'available' });
 
   const restaurant = user?.restaurant;
 
   const loadTables = useCallback(() => {
     setLoading(true);
-    adminFetchTables()
+    adminFetchTables(user?.restaurantId)
       .then(data => { setTables(data || []); setLoading(false); })
       .catch(err => {
         console.error(err);
         addToast('Failed to load tables', 'error');
         setLoading(false);
       });
-  }, [addToast]);
+  }, [addToast, user?.restaurantId]);
 
   useEffect(() => {
     if (user?.restaurantId) loadTables();
@@ -134,12 +135,15 @@ export default function QRFactory() {
 
   const handleClearTable = async (tableId, number) => {
     if (!window.confirm(`Are you sure you want to clear Table ${number}? This will mark all active orders as completed.`)) return;
+    setTableActionId(`clear-${tableId}`);
     try {
       await adminClearTable(tableId);
       addToast(`Table ${number} cleared!`, 'success');
       loadTables();
     } catch (err) {
       addToast(`Error clearing table: ${err.message}`, 'error');
+    } finally {
+      setTableActionId(null);
     }
   };
 
@@ -150,12 +154,15 @@ export default function QRFactory() {
     }
     if (!window.confirm(`Are you sure you want to delete Table ${number}? This action cannot be undone.`)) return;
     
+    setTableActionId(`delete-${tableId}`);
     try {
       await adminDeleteTable(tableId, user.restaurantId);
       addToast(`Table ${number} deleted!`, 'success');
       loadTables();
     } catch (err) {
       addToast(`Error deleting table: ${err.message}`, 'error');
+    } finally {
+      setTableActionId(null);
     }
   };
 
@@ -324,19 +331,25 @@ export default function QRFactory() {
                   {table.status !== 'available' && (
                     <button
                       onClick={() => handleClearTable(table.id, table.number)}
-                      className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 active:scale-95 mt-auto mb-2"
+                      disabled={tableActionId === `clear-${table.id}`}
+                      className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 active:scale-95 mt-auto mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <span className="material-symbols-outlined text-sm">cleaning_services</span>
-                      Clear Table
+                      <span className={`material-symbols-outlined text-sm ${tableActionId === `clear-${table.id}` ? 'animate-spin' : ''}`}>
+                        {tableActionId === `clear-${table.id}` ? 'progress_activity' : 'cleaning_services'}
+                      </span>
+                      {tableActionId === `clear-${table.id}` ? 'Clearing...' : 'Clear Table'}
                     </button>
                   )}
                   
                   <button
                     onClick={() => handleDeleteTable(table.id, table.number, table.status !== 'available')}
-                    className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-error/30 text-error hover:bg-error/10 active:scale-95 mt-auto"
+                    disabled={tableActionId === `delete-${table.id}`}
+                    className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-error/30 text-error hover:bg-error/10 active:scale-95 mt-auto disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <span className="material-symbols-outlined text-sm">delete</span>
-                    Delete Table
+                    <span className={`material-symbols-outlined text-sm ${tableActionId === `delete-${table.id}` ? 'animate-spin' : ''}`}>
+                      {tableActionId === `delete-${table.id}` ? 'progress_activity' : 'delete'}
+                    </span>
+                    {tableActionId === `delete-${table.id}` ? 'Deleting...' : 'Delete Table'}
                   </button>
                 </div>
               );

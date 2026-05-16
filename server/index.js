@@ -718,7 +718,7 @@ app.patch('/api/admin/orders/:id', requireAuth, async (req, res) => {
     });
 
     // Free table when order completes or is cancelled
-    if (['served', 'completed', 'cancelled'].includes(status)) {
+    if (['completed', 'cancelled'].includes(status)) {
       const table = await prisma.table.update({ where: { id: updated.table_id }, data: { status: 'available' } });
       io.to(`restaurant:${req.user.restaurantId}`).emit('table:updated', table);
     }

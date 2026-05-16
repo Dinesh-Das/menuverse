@@ -5,6 +5,7 @@ import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
 import { useAuth } from '../../context/AuthContext';
 import CancelReasonModal from '../../components/CancelReasonModal';
+import { useToast } from '../../components/Toast';
 
 const VALID_TRANSITIONS = {
   pending:   ['accepted', 'cancelled'],
@@ -37,6 +38,7 @@ const STATUS_BUTTON_LABELS = {
 
 export default function OrderMonitor() {
   const { user } = useAuth();
+  const { addToast } = useToast();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('active');
@@ -47,9 +49,13 @@ export default function OrderMonitor() {
   useEffect(() => {
     if (!user?.restaurantId) return;
     adminFetchOrders(null, user.restaurantId)
-      .then(data => { setOrders(data); setLoading(false); })
-      .catch(err => { console.error(err); setLoading(false); });
-  }, [user]);
+      .then(res => { setOrders(res.data); setLoading(false); })
+      .catch(err => {
+        console.error(err);
+        addToast(`Failed to load orders: ${err.message}`, 'error');
+        setLoading(false);
+      });
+  }, [user, addToast]);
 
   useEffect(() => {
     if (!user?.restaurantId) return;
@@ -83,6 +89,7 @@ export default function OrderMonitor() {
       await adminUpdateOrderStatus(orderId, newStatus, cancelReason || undefined);
     } catch (err) {
       console.error('Rollback:', err.message);
+      addToast(`Failed to update order: ${err.message}`, 'error');
       setOrders(prevOrders => prevOrders.map(o => o.id === orderId ? { ...o, status: prev.status } : o));
     } finally {
       setUpdatingIds(s => { const next = new Set(s); next.delete(orderId); return next; });
@@ -102,7 +109,7 @@ export default function OrderMonitor() {
   const filtered = filter === 'active'
     ? orders.filter(o => !['completed', 'cancelled'].includes(o.status))
     : filter === 'completed'
-    ? orders.filter(o => ['completed', 'served'].includes(o.status))
+    ? orders.filter(o => o.status === 'completed')
     : orders.filter(o => o.status === 'cancelled');
 
   return (

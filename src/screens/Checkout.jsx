@@ -4,11 +4,13 @@ import { useCart } from '../context/CartContext';
 import BottomNav from '../components/BottomNav';
 import { placeOrder, fetchMenu } from '../lib/api';
 import { useTheme } from '../context/ThemeContext';
+import { useToast } from '../components/Toast';
 
 export default function Checkout() {
   const { restaurantSlug } = useParams();
-  const { items, allItems, subtotal, tax, total, removeItem, updateQty, clearCart, tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug } = useCart();
+  const { items, allItems, subtotal, tax, total, removeItem, updateQty, clearCart, addItem, tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug } = useCart();
   const { isDark, toggleTheme } = useTheme();
+  const { addToast } = useToast();
   const navigate = useNavigate();
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,6 +19,10 @@ export default function Checkout() {
   const [celebration, setCelebration] = useState(false);
 
   const currentSlug = restaurantSlug || sessionSlug || 'zaika-zindagi';
+
+  const gstPct = subtotal > 0
+    ? Math.round((tax / subtotal) * 100)
+    : Math.round(parseFloat(localStorage.getItem('mv_gst_rate') || '0.05') * 100);
 
   React.useEffect(() => {
     if (!currentSlug) return;
@@ -33,8 +39,11 @@ export default function Checkout() {
         }
       });
       setUpsellItems(candidates);
-    }).catch(err => console.error("Upsell fetch error:", err));
-  }, [currentSlug]);
+    }).catch(err => {
+      console.error("Upsell fetch error:", err);
+      addToast(`Failed to load meal suggestions: ${err.message}`, 'error');
+    });
+  }, [currentSlug, addToast]);
 
   const handleCheckout = async (isPaid = false) => {
     if (allItems.length === 0) return;
@@ -81,6 +90,7 @@ export default function Checkout() {
       }, 2500);
     } catch (err) {
       setError(err.message);
+      addToast(`Failed to place order: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -247,7 +257,7 @@ export default function Checkout() {
                     <span className="font-headline font-bold text-on-surface">₹{subtotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
-                    <span>GST ({subtotal > 0 ? Math.round((tax/subtotal)*100) : (localStorage.getItem('mv_gst_rate') || 5)}%)</span>
+                    <span>GST ({gstPct}%)</span>
                     <span className="font-headline font-bold text-on-surface">₹{tax.toFixed(2)}</span>
                   </div>
                 </div>

@@ -43,6 +43,7 @@ export default function OrderStatus() {
   const [socketConnected, setSocketConnected] = useState(true); // Supabase Realtime is always connected
   const [rating, setRating] = useState(0);
   const [feedbackGiven, setFeedbackGiven] = useState(false);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
   const pollIntervalRef = useRef(null);
 
   const loadOrder = useCallback(async () => {
@@ -101,8 +102,9 @@ export default function OrderStatus() {
   }, [orderId, loadOrder]);
 
   const handleRating = async (val) => {
+    if (feedbackSaving || feedbackGiven) return;
     setRating(val);
-    setFeedbackGiven(true);
+    setFeedbackSaving(true);
     try {
       const { error } = await supabase.from('OrderFeedback').insert({
         id: crypto.randomUUID(),
@@ -112,9 +114,11 @@ export default function OrderStatus() {
         created_at: new Date().toISOString()
       });
       if (error) throw error;
-      console.log('Feedback saved:', { order_id: order.id, rating: val });
+      setFeedbackGiven(true);
     } catch(e) {
       addToast(`Failed to save feedback: ${e.message}`, 'error');
+    } finally {
+      setFeedbackSaving(false);
     }
   };
 
@@ -311,7 +315,8 @@ export default function OrderStatus() {
                 <button
                   key={star}
                   onClick={() => handleRating(star)}
-                  className={`text-4xl transition-transform hover:scale-110 active:scale-95 ${rating >= star ? '' : 'grayscale opacity-50'}`}
+                  disabled={feedbackSaving}
+                  className={`text-4xl transition-transform hover:scale-110 active:scale-95 disabled:cursor-wait ${rating >= star ? '' : 'grayscale opacity-50'} ${feedbackSaving ? 'opacity-60' : ''}`}
                 >
                   {star === 1 ? '😡' : star === 2 ? '😕' : star === 3 ? '😐' : star === 4 ? '🙂' : '😍'}
                 </button>
