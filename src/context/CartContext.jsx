@@ -147,7 +147,9 @@ export function CartProvider({ children }) {
     const modsPrice = (i.selectedModifiers || []).reduce((mSum, mod) => mSum + (mod.price_delta || 0), 0);
     return sum + (i.price + modsPrice) * i.qty;
   }, 0);
-  const tax = +(subtotal * 0.05).toFixed(2);
+  // MF-09: GST rate configurable — read from localStorage, set by Settings, default 5%
+  const gstRate = parseFloat(localStorage.getItem('mv_gst_rate') || '5') / 100;
+  const tax = +(subtotal * gstRate).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
 
   return (

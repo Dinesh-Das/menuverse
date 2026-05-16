@@ -3,6 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 
+// A17: Lightweight event bus for pending order count — avoids prop drilling or context overhead
+// KDS and OrderMonitor call pendingOrdersBus.emit(count) when they receive order:new events.
+const _listeners = new Set();
+export const pendingOrdersBus = {
+  emit: (count) => _listeners.forEach(fn => fn(count)),
+  subscribe: (fn) => { _listeners.add(fn); return () => _listeners.delete(fn); },
+};
+
 /**
  * CustomerTopNav — fixed glass header for all customer-facing screens.
  * Props:
@@ -16,6 +24,9 @@ export function CustomerTopNav({ showBack = false, title, logo }) {
 
   const cartPath = restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout';
   const homePath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/';
+
+  // AQ-09: Pull restaurant name dynamically; fallback to stored name or brand default
+  const restaurantName = localStorage.getItem('mv_restaurant_name') || 'Zaika Zindagi';
 
   return (
     <header className="fixed top-0 w-full z-50 glass-nav-dark h-[72px] flex items-center shadow-sm">
@@ -48,7 +59,7 @@ export function CustomerTopNav({ showBack = false, title, logo }) {
           )}
           <div className="flex flex-col">
             <span className="font-headline text-2xl font-bold tracking-tight text-on-surface leading-none">
-              Zaika Zindagi
+              {restaurantName}
             </span>
             <span className="text-[9px] uppercase tracking-[0.4em] text-primary font-bold mt-1.5 opacity-80">
               Taste of Life
@@ -94,6 +105,20 @@ export function CustomerTopNav({ showBack = false, title, logo }) {
  */
 export function AdminTopNav({ title, subtitle }) {
   const { isDark, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+  // LF-01: Clock must tick — render at mount time causes a static display
+  const [clockNow, setClockNow] = React.useState(Date.now());
+  // A17: Live pending order count from event bus
+  const [pendingCount, setPendingCount] = React.useState(0);
+
+  React.useEffect(() => {
+    const t = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  React.useEffect(() => {
+    return pendingOrdersBus.subscribe(setPendingCount);
+  }, []);
 
   return (
     <div className="flex items-center justify-between mb-16 transition-theme">
@@ -115,7 +140,7 @@ export function AdminTopNav({ title, subtitle }) {
             Local Time
           </span>
           <span className="text-xl font-headline text-on-surface">
-            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {new Date(clockNow).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
 
@@ -130,13 +155,19 @@ export function AdminTopNav({ title, subtitle }) {
           <span className="material-symbols-outlined">{isDark ? 'light_mode' : 'dark_mode'}</span>
         </button>
 
-        {/* Notification bell */}
+        {/* Notification bell — A17 */}
         <button
+          onClick={() => navigate('/admin/orders')}
           className="w-12 h-12 flex items-center justify-center rounded-full border transition-all relative cursor-pointer border-outline-variant/30 bg-surface-container-low hover:bg-surface-container-high text-on-surface"
-          aria-label="Notifications"
+          aria-label={pendingCount > 0 ? `${pendingCount} pending orders` : 'Orders'}
+          title="View pending orders"
         >
           <span className="material-symbols-outlined">notifications</span>
-          <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-primary animate-pulse" />
+          {pendingCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-on-primary text-[9px] font-extrabold flex items-center justify-center animate-pulse">
+              {pendingCount > 9 ? '9+' : pendingCount}
+            </span>
+          )}
         </button>
       </div>
     </div>

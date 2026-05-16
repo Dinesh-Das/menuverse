@@ -4,6 +4,7 @@ import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { pendingOrdersBus } from '../../components/TopNav';
 
 const formatTime = (ms) => {
   const isNegative = ms < 0;
@@ -56,14 +57,27 @@ export default function KDS() {
     joinRestaurantRoom(user.restaurantId);
 
     const handleNew = (order) => {
-      setOrders(prev => [order, ...prev]);
-      playAlert(); // MF-3: Audio notification
+      setOrders(prev => {
+        const next = [order, ...prev];
+        // A17: emit pending count to notification bell
+        pendingOrdersBus.emit(next.filter(o => o.status === 'pending').length);
+        return next;
+      });
+      playAlert();
     };
     const handleUpdated = (updated) => {
       if (['served', 'completed', 'cancelled'].includes(updated.status)) {
-        setOrders(prev => prev.filter(o => o.id !== updated.id));
+        setOrders(prev => {
+          const next = prev.filter(o => o.id !== updated.id);
+          pendingOrdersBus.emit(next.filter(o => o.status === 'pending').length);
+          return next;
+        });
       } else {
-        setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+        setOrders(prev => {
+          const next = prev.map(o => o.id === updated.id ? updated : o);
+          pendingOrdersBus.emit(next.filter(o => o.status === 'pending').length);
+          return next;
+        });
       }
     };
 
@@ -96,6 +110,21 @@ export default function KDS() {
       setOrders(prevOrders => prevOrders.map(o => o.id === id ? { ...o, status: prev.status } : o));
     } finally {
       setUpdatingIds(s => { const next = new Set(s); next.delete(id); return next; });
+    }
+  };
+
+  const handleReject = async (id) => {
+    const prev = orders.find(o => o.id === id);
+    if (!prev) return;
+    setUpdatingIds(s => new Set(s).add(`reject-${id}`));
+    try {
+      // LF-12: Allow kitchen to reject/cancel unavailable or invalid orders
+      await adminUpdateOrderStatus(id, 'cancelled');
+      setOrders(prev => prev.filter(o => o.id !== id));
+    } catch (err) {
+      console.error('KDS reject failed:', err.message);
+    } finally {
+      setUpdatingIds(s => { const next = new Set(s); next.delete(`reject-${id}`); return next; });
     }
   };
 
@@ -239,7 +268,7 @@ export default function KDS() {
                       )}
                     </div>
 
-                    {/* Actions — includes Accept for pending, K3 fix */}
+                    {/* Actions — includes Accept + Reject for pending, K3 fix */}
                     <div className="p-3 bg-surface-container-low rounded-b-xl border-t border-outline-variant/30 flex gap-2">
                       {actions.map(({ label, next, cls }) => {
                         const isUpdating = updatingIds.has(order.id);
@@ -257,6 +286,22 @@ export default function KDS() {
                           </button>
                         );
                       })}
+                      {/* LF-12: Reject button only for pending orders */}
+                      {order.status === 'pending' && (
+                        <button
+                          onClick={() => handleReject(order.id)}
+                          disabled={updatingIds.has(`reject-${order.id}`)}
+                          className="px-3 rounded-lg kds-body-text font-bold uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed bg-error/10 text-error border border-error/30 hover:bg-error/20"
+                          title="Reject — cancel this order (e.g. item unavailable)"
+                          style={{ minHeight: 'var(--tap-target)', fontSize: 'var(--font-kds-label)' }}
+                        >
+                          {updatingIds.has(`reject-${order.id}`) ? (
+                            <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                          ) : (
+                            <span className="material-symbols-outlined text-sm">close</span>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

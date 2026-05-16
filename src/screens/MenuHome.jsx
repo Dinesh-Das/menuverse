@@ -83,6 +83,13 @@ export default function MenuHome() {
   const getDishPath = (dishId) => restaurantSlug ? `/r/${restaurantSlug}/dish/${dishId}` : `/dish/${dishId}`;
 
   const handleAddWithUpsell = (dish) => {
+    // MF-12: If dish has required modifier groups, navigate to detail to let user configure
+    const hasModifiers = dish.modifier_groups && dish.modifier_groups.length > 0;
+    if (hasModifiers) {
+      navigate(getDishPath(dish.id));
+      return;
+    }
+
     addItem(dish);
     
     // Only show upsell if adding a main course (not a drink/dessert already)

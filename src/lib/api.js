@@ -77,11 +77,12 @@ export async function placeOrder(payload) {
   const orderId = genOrderId();
   const ts = now();
 
-  // 0. Anti-Spam check: max 5 pending orders per table
+  // 0. Anti-Spam check: max 5 pending orders per table (scoped to restaurant)
   const { count, error: countErr } = await supabase
     .from('Order')
     .select('id', { count: 'exact', head: true })
     .eq('table_id', payload.table_id)
+    .eq('restaurant_id', payload.restaurant_id)  // SEC-07: scope to restaurant
     .eq('status', 'pending');
     
   if (countErr) throw new Error(`Anti-spam check failed: ${countErr.message}`);
@@ -159,7 +160,8 @@ export async function fetchTableOrders(tableId) {
     .from('Order')
     .select(`*, items:OrderItem(*, menu_item:MenuItem(*))`)
     .eq('table_id', tableId)
-    .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served'])
+    // BUG-09: Include 'completed' so multi-round bills are never understated
+    .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served', 'completed'])
     .order('created_at', { ascending: false });
   if (error) throw new Error('Failed to fetch table orders');
   return data || [];

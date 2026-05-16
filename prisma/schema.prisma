@@ -52,6 +52,9 @@ model Table {
 
   restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
   orders         Order[]
+
+  // LF-08: Prevent duplicate table numbers within same restaurant
+  @@unique([restaurant_id, number])
 }
 
 model MenuCategory {
@@ -144,7 +147,7 @@ model OrderItem {
 
 model Payment {
   id                  String   @id @default(uuid())
-  order_id            String
+  order_id            String   @unique  // SEC-08: Prevent duplicate payment records for same order
   razorpay_order_id   String
   razorpay_payment_id String?
   status              String   @default("initiated")

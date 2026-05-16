@@ -132,9 +132,13 @@ export default function AdminLogin() {
                     <label className="text-[10px] uppercase font-bold tracking-[0.15em] text-on-surface-variant">
                       Password
                     </label>
-                    <a href="#" className="text-[10px] text-primary hover:text-primary-fixed transition-colors font-bold tracking-wider">
+                    {/* MF-05: Password recovery — no-op with explanatory note */}
+                    <span
+                      title="Contact your restaurant owner or administrator to reset your password."
+                      className="text-[10px] text-on-surface-variant/50 hover:text-primary transition-colors font-bold tracking-wider cursor-help border-b border-dotted border-on-surface-variant/30"
+                    >
                       RECOVERY?
-                    </a>
+                    </span>
                   </div>
                   <div className="flex items-center border-b border-outline-variant/30 pb-2 relative">
                     <span className="material-symbols-outlined text-on-surface-variant mr-3 text-xl">key</span>
@@ -160,23 +164,11 @@ export default function AdminLogin() {
                 </button>
               </form>
 
-              {/* Alternative Auth */}
-              <div className="mt-10">
-                <div className="relative flex items-center py-5">
-                  <div className="flex-grow border-t border-outline-variant/20"></div>
-                  <span className="flex-shrink-0 mx-4 text-on-surface-variant/60 text-[10px] uppercase tracking-widest font-bold">Or Connect With</span>
-                  <div className="flex-grow border-t border-outline-variant/20"></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <button className="py-3 rounded-lg border border-outline-variant/20 hover:bg-surface-container/50 text-on-surface text-xs font-bold transition-colors flex justify-center items-center gap-2 cursor-pointer">
-                    <span className="material-symbols-outlined text-sm">fingerprint</span>
-                    Biometric
-                  </button>
-                  <button className="py-3 rounded-lg border border-outline-variant/20 hover:bg-surface-container/50 text-on-surface text-xs font-bold transition-colors flex justify-center items-center gap-2 cursor-pointer">
-                    <span className="material-symbols-outlined text-sm">shield_person</span>
-                    SSO
-                  </button>
-                </div>
+              {/* MF-13: Removed non-functional Biometric/SSO ghost buttons */}
+              <div className="mt-10 pt-6 border-t border-outline-variant/10 text-center">
+                <p className="text-[10px] text-on-surface-variant/50 uppercase tracking-widest font-bold">
+                  Need access? Contact your restaurant administrator.
+                </p>
               </div>
             </div>
 

@@ -5,12 +5,13 @@ import { useAuth } from '../context/AuthContext';
 export default function RequireAuth({ children, roles }) {
   const { user, token } = useAuth();
 
-  if (!token || !user) {
+  // SEC-05: Treat unlinked as unauthenticated — prevents redirect loop and DB access
+  if (!token || !user || user.role === 'unlinked') {
     return <Navigate to="/admin/login" replace />;
   }
 
   if (roles && roles.length > 0 && !roles.includes(user.role)) {
-    // If the user does not have the required role, redirect them or show an error
+    // Authenticated but wrong role — send back to dashboard
     return <Navigate to="/admin/dashboard" replace />;
   }
 

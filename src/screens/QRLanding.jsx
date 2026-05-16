@@ -19,6 +19,11 @@ export default function QRLanding() {
         const tableData = await fetchTableInfo(tableId);
         setTable(tableData);
 
+        // AQ-09: Persist restaurant name so CustomerTopNav can read it dynamically
+        if (tableData.restaurant?.name) {
+          localStorage.setItem('mv_restaurant_name', tableData.restaurant.name.split(' - ')[0]);
+        }
+
         setSession({
           tableId,
           tableNumber: tableData.number,

@@ -3,14 +3,21 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { placeOrder } from '../lib/api';
 
+const COOLDOWN_MS = 10_000; // 10 seconds — same as Checkout.jsx (LF-10/LF-14)
+
 /**
  * CartSidebar — Desktop-only sticky right-hand cart panel.
  * Hidden on mobile (handled by Checkout.jsx full-screen route).
+ *
+ * Fixes applied:
+ *  - BUG-06: Uses `allItems` (includes remote cart) so displayed total matches submitted total
+ *  - LF-10:  10-second cooldown prevents double-tap spam (previously absent from sidebar)
+ *  - LF-14:  idempotency_key now uses crypto.randomUUID() instead of Date.now()
  */
 export default function CartSidebar() {
   const { restaurantSlug } = useParams();
   const {
-    items, subtotal, tax, total,
+    items, allItems, subtotal, tax, total,
     removeItem, updateQty, clearCart,
     tableId, tableNumber, restaurantId,
   } = useCart();
@@ -20,18 +27,30 @@ export default function CartSidebar() {
   const [error, setError] = useState(null);
 
   const handleCheckout = async () => {
-    if (items.length === 0 || !tableId) return;
+    if (allItems.length === 0 || !tableId) return;
+
+    // LF-10: 10-second anti-double-tap cooldown (same key as Checkout.jsx)
+    const lastOrderTime = localStorage.getItem('mv_last_order_time');
+    if (lastOrderTime && Date.now() - parseInt(lastOrderTime) < COOLDOWN_MS) {
+      const remaining = Math.ceil((COOLDOWN_MS - (Date.now() - parseInt(lastOrderTime))) / 1000);
+      setError(`Please wait ${remaining}s before placing another order.`);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
-      const idempotencyKey = `${tableId}-${Date.now()}`;
+      // LF-14: Use randomUUID — Date.now() has millisecond collisions on rapid taps
+      const idempotencyKey = crypto.randomUUID();
+
+      // BUG-06: Use allItems (includes remote cart items from other devices at same table)
       const payload = {
         restaurant_id: restaurantId,
         table_id: tableId,
         total_amount: total,
         special_instructions: note,
         idempotency_key: idempotencyKey,
-        items: items.map(item => ({
+        items: allItems.map(item => ({
           menu_item_id: item.id,
           name: item.name,
           quantity: item.qty,
@@ -40,6 +59,7 @@ export default function CartSidebar() {
         })),
       };
       const result = await placeOrder(payload);
+      localStorage.setItem('mv_last_order_time', String(Date.now()));
       clearCart();
       const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
       navigate(`${basePath}/order/${result.order_ref}`);
@@ -67,7 +87,7 @@ export default function CartSidebar() {
         </div>
       </div>
 
-      {/* Items */}
+      {/* Items — show local items only in the interactive list; allItems drives the total */}
       <div className="flex-1 px-6 py-4 space-y-3">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-center">
@@ -76,7 +96,7 @@ export default function CartSidebar() {
           </div>
         ) : (
           items.map(item => (
-            <div key={item.id} className="flex gap-3 bg-surface-container rounded-xl p-3 border border-outline-variant/10">
+            <div key={item._cartKey || item.id} className="flex gap-3 bg-surface-container rounded-xl p-3 border border-outline-variant/10">
               {item.image_url && (
                 <div className="w-16 h-16 rounded-lg overflow-hidden shrink-0">
                   <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
@@ -93,6 +113,11 @@ export default function CartSidebar() {
                     close
                   </button>
                 </div>
+                {item.selectedModifiers?.length > 0 && (
+                  <p className="text-[10px] text-on-surface-variant mt-0.5 truncate">
+                    {item.selectedModifiers.map(m => m.name).join(', ')}
+                  </p>
+                )}
                 <p className="text-primary font-bold text-sm mt-0.5">₹{(item.price * item.qty).toFixed(2)}</p>
                 <div className="flex items-center gap-2 mt-2 bg-surface-container-high rounded-full px-1.5 py-0.5 w-max border border-outline-variant/20">
                   <button

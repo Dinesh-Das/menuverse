@@ -7,13 +7,15 @@ import { useTheme } from '../context/ThemeContext';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber } = useCart();
+  const { tableId, tableNumber, clearCart } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [paymentState, setPaymentState] = useState({ isOpen: false, status: 'idle' }); // idle, processing, success
+  // LF-06: "Pay at Counter" informational dialog state
+  const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
 
   useEffect(() => {
     if (!tableId) {
@@ -121,9 +123,12 @@ export default function TableSession() {
                   Pay Now
                   <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
                 </button>
+                {/* LF-06: Pay at Counter — opens informational dialog instead of doing nothing */}
                 <button
+                  onClick={() => setPayAtCounterOpen(true)}
                   className="w-full bg-surface-container-high border border-outline-variant/20 text-on-surface py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform hover:bg-surface-container-highest active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
                 >
+                  <span className="material-symbols-outlined text-lg">storefront</span>
                   Pay at Counter
                 </button>
               </div>
@@ -174,7 +179,7 @@ export default function TableSession() {
             <div className="mt-10 p-6 bg-surface-container-high rounded-2xl border border-outline-variant/10 text-center">
               <p className="text-sm text-on-surface-variant mb-4">Ready to wrap up? You can settle your bill at the counter or request a digital payment link from our staff.</p>
               <button 
-                onClick={() => navigate(menuPath)}
+                onClick={() => { clearCart(); navigate(menuPath); }}
                 className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
               >
                 <span className="material-symbols-outlined">add_shopping_cart</span>
@@ -210,6 +215,31 @@ export default function TableSession() {
       )}
 
       <BottomNav activeTab="status" />
+
+      {/* LF-06: Pay at Counter dialog */}
+      {payAtCounterOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setPayAtCounterOpen(false)} />
+          <div className="relative w-full max-w-sm p-10 bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-6">
+              <span className="material-symbols-outlined text-3xl">storefront</span>
+            </div>
+            <h3 className="font-headline text-xl font-bold text-on-surface mb-3">Pay at Counter</h3>
+            <p className="text-sm text-on-surface-variant leading-relaxed mb-2">
+              A member of our staff will come to your table shortly to process your payment.
+            </p>
+            <p className="text-[10px] uppercase font-bold tracking-widest text-primary bg-primary/10 px-3 py-1 rounded-full mb-8">
+              Table {tableNumber}
+            </p>
+            <button
+              onClick={() => setPayAtCounterOpen(false)}
+              className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform active:scale-95 cursor-pointer"
+            >
+              Got it, thanks!
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

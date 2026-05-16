@@ -211,7 +211,12 @@ export default function OrderStatus() {
           <div className="mb-8">
             <h3 className="text-[10px] uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-4">Items Ordered</h3>
             <div className="space-y-3">
-              {order.items.map((item, i) => (
+              {order.items.map((item, i) => {
+                // LF-04: Include modifier price deltas in line-item total
+                const mods = item.modifiers_json ? (() => { try { return JSON.parse(item.modifiers_json); } catch { return []; } })() : [];
+                const modTotal = mods.reduce((s, m) => s + (m.price_delta || 0), 0);
+                const lineTotal = (item.price + modTotal) * item.quantity;
+                return (
                 <div key={i} className="flex justify-between items-center py-3 border-b border-outline-variant/10">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-lg overflow-hidden bg-surface-container border border-outline-variant/10 shrink-0">
@@ -225,12 +230,16 @@ export default function OrderStatus() {
                     </div>
                     <div className="flex flex-col">
                       <span className="text-on-surface text-sm font-bold">{item.name}</span>
+                      {mods.length > 0 && (
+                        <span className="text-on-surface-variant text-[10px] mt-0.5">{mods.map(m => m.name).join(', ')}</span>
+                      )}
                       <span className="text-on-surface-variant text-[10px] uppercase tracking-widest font-medium">Qty: {item.quantity}</span>
                     </div>
                   </div>
-                  <span className="text-primary font-bold text-sm">₹{(item.price * item.quantity).toFixed(2)}</span>
+                  <span className="text-primary font-bold text-sm">₹{lineTotal.toFixed(2)}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <div className="flex justify-between items-center mt-4 pt-4 border-t border-outline-variant/20">
               <span className="font-bold text-on-surface">Total Paid</span>
