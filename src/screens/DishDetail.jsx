@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { fetchMenuItem } from '../lib/api';
 import { CustomerTopNav } from '../components/TopNav';
+
+const MAX_QTY = 20;
 
 export default function DishDetail() {
   const { dishId, restaurantSlug } = useParams();
@@ -12,11 +14,18 @@ export default function DishDetail() {
   const [dish, setDish] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedModifiers, setSelectedModifiers] = useState({});
 
   useEffect(() => {
     fetchMenuItem(dishId)
       .then(data => {
         setDish(data);
+        // Initialize selected modifiers for required groups
+        const initial = {};
+        (data.modifier_groups || []).forEach(group => {
+          initial[group.id] = null;
+        });
+        setSelectedModifiers(initial);
         setLoading(false);
       })
       .catch(err => {
@@ -25,8 +34,36 @@ export default function DishDetail() {
       });
   }, [dishId]);
 
+  // Check if all required modifier groups have selections
+  const requiredGroups = useMemo(() =>
+    (dish?.modifier_groups || []).filter(g => g.required),
+    [dish]
+  );
+  const allRequiredSelected = useMemo(() =>
+    requiredGroups.every(g => selectedModifiers[g.id] != null),
+    [requiredGroups, selectedModifiers]
+  );
+
+  // Build the modifiers array for the cart
+  const modifiersForCart = useMemo(() => {
+    return Object.values(selectedModifiers)
+      .filter(Boolean)
+      .map(opt => ({ id: opt.id, name: opt.name, price_delta: opt.price_delta || 0 }));
+  }, [selectedModifiers]);
+
+  // Modifier price contribution
+  const modsPrice = modifiersForCart.reduce((sum, m) => sum + (m.price_delta || 0), 0);
+
+  const handleSelectModifier = (groupId, option) => {
+    setSelectedModifiers(prev => ({
+      ...prev,
+      [groupId]: prev[groupId]?.id === option.id ? null : option,
+    }));
+  };
+
   const handleAdd = () => {
-    addItem(dish, qty);
+    if (!allRequiredSelected) return;
+    addItem(dish, qty, modifiersForCart);
     const checkoutPath = restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout';
     navigate(checkoutPath);
   };
@@ -42,6 +79,9 @@ export default function DishDetail() {
       <p className="text-error text-center">{error || 'Dish not found'}</p>
     </div>
   );
+
+  const hasModifiers = (dish.modifier_groups || []).length > 0;
+  const unitPrice = dish.price + modsPrice;
 
   return (
     <div className="min-h-dvh bg-background text-on-surface selection:bg-primary-container/30 pb-32 md:pb-12 relative">
@@ -82,10 +122,11 @@ export default function DishDetail() {
             </h1>
             <div className="text-3xl md:text-4xl font-headline text-primary mt-4 md:mt-6">
               ₹{dish.price}
+              {modsPrice > 0 && <span className="text-base text-on-surface-variant ml-2">(+₹{modsPrice})</span>}
             </div>
           </div>
 
-          <div className="prose prose-invert mb-8 md:text-lg">
+          <div className="prose prose-invert mb-6 md:text-lg">
             <p className="text-on-surface-variant text-base md:text-lg leading-relaxed">
               {dish.description}
             </p>
@@ -95,7 +136,7 @@ export default function DishDetail() {
           {dish.tags_json && (() => {
             const tags = (() => { try { return JSON.parse(dish.tags_json); } catch { return []; } })();
             return tags.length > 0 ? (
-              <div className="flex gap-2 mb-8 flex-wrap">
+              <div className="flex gap-2 mb-6 flex-wrap">
                 {tags.map(tag => (
                   <span key={tag} className="text-[10px] uppercase tracking-widest font-bold px-3 py-1 bg-surface-container-high rounded-full text-on-surface-variant">
                     {tag}
@@ -104,6 +145,55 @@ export default function DishDetail() {
               </div>
             ) : null;
           })()}
+
+          {/* ── Modifier Groups (CB-6) ──────────────────────────── */}
+          {hasModifiers && (
+            <div className="mb-8 space-y-6">
+              {dish.modifier_groups.map(group => (
+                <div key={group.id}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant">
+                      {group.name}
+                    </h3>
+                    {group.required && (
+                      <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-error/10 text-error border border-error/20">
+                        Required
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(group.options || []).map(option => {
+                      const isSelected = selectedModifiers[group.id]?.id === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          onClick={() => handleSelectModifier(group.id, option)}
+                          className={`px-4 py-2.5 rounded-full text-sm font-bold transition-all cursor-pointer border ${
+                            isSelected
+                              ? 'bg-primary text-on-primary border-primary shadow-md scale-105'
+                              : 'bg-surface-container-high text-on-surface-variant border-outline-variant/20 hover:border-primary/50 hover:bg-surface-container-highest'
+                          }`}
+                        >
+                          {option.name}
+                          {option.price_delta > 0 && (
+                            <span className={`ml-1 text-xs ${isSelected ? 'text-on-primary/70' : 'text-primary'}`}>
+                              +₹{option.price_delta}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {group.required && !selectedModifiers[group.id] && (
+                    <p className="text-[10px] text-error mt-2 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-xs">warning</span>
+                      Please select a {group.name.toLowerCase()}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* ── Fixed Bottom Action Bar (Becomes static on desktop) ───────────────────────── */}
           <div className="fixed bottom-0 left-0 w-full p-6 glass-bottom-dark rounded-t-3xl z-50 flex items-center justify-between gap-6 md:static md:bg-transparent md:backdrop-blur-none md:p-0 md:mt-8 md:justify-start md:border-none md:shadow-none">
@@ -116,7 +206,7 @@ export default function DishDetail() {
               </button>
               <span className="font-bold text-lg text-on-surface w-4 text-center">{qty}</span>
               <button
-                onClick={() => setQty(qty + 1)}
+                onClick={() => setQty(Math.min(MAX_QTY, qty + 1))}
                 className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest active:bg-surface-container-highest transition-colors cursor-pointer"
               >
                 <span className="material-symbols-outlined">add</span>
@@ -125,10 +215,15 @@ export default function DishDetail() {
 
             <button
               onClick={handleAdd}
-              className="flex-1 md:flex-none md:px-12 md:py-5 bg-primary text-on-primary py-4 rounded-full font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform active:scale-95 flex justify-center items-center gap-2 cursor-pointer hover:bg-primary-fixed-dim"
+              disabled={!allRequiredSelected}
+              className={`flex-1 md:flex-none md:px-12 md:py-5 py-4 rounded-full font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform active:scale-95 flex justify-center items-center gap-2 cursor-pointer ${
+                allRequiredSelected
+                  ? 'bg-primary text-on-primary hover:bg-primary-fixed-dim'
+                  : 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed opacity-60'
+              }`}
             >
-              Add to Order
-              <span className="text-xs opacity-70 ml-2 font-headline italic">₹{(dish.price * qty).toFixed(2)}</span>
+              {allRequiredSelected ? 'Add to Order' : 'Select Options'}
+              <span className="text-xs opacity-70 ml-2 font-headline italic">₹{(unitPrice * qty).toFixed(2)}</span>
             </button>
           </div>
         </main>

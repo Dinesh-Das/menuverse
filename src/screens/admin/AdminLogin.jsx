@@ -4,6 +4,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 
 export default function AdminLogin() {
+  // const [email, setEmail] = useState('');
+  // const [password, setPassword] = useState('');
   const [email, setEmail] = useState('admin@zaikazindagi.com');
   const [password, setPassword] = useState('password123');
   const [error, setError] = useState(null);
@@ -36,9 +38,9 @@ export default function AdminLogin() {
       <div className="absolute inset-0 bg-background/60 backdrop-blur-[100px] pointer-events-none z-0"></div>
 
       {/* Theme Toggle */}
-      <button 
-        aria-label="Toggle Theme" 
-        onClick={toggleTheme} 
+      <button
+        aria-label="Toggle Theme"
+        onClick={toggleTheme}
         className="absolute top-6 right-6 z-50 cursor-pointer flex items-center justify-center p-2 rounded-full glass-dark border border-outline-variant/20 hover:bg-surface-container transition-colors"
       >
         <span className="material-symbols-outlined text-on-surface">
@@ -49,7 +51,7 @@ export default function AdminLogin() {
       {/* ── 12-Column Grid Layout ──────────────────────────── */}
       <div className="relative z-10 w-full min-h-screen flex items-center justify-center p-6 md:p-12">
         <div className="w-full max-w-7xl grid grid-cols-12 gap-8 md:gap-16">
-          
+
           {/* Left Side: Brand Story & Imagery (Hidden on small screens) */}
           <div className="hidden lg:flex lg:col-span-7 flex-col justify-between">
             <div>
@@ -60,11 +62,11 @@ export default function AdminLogin() {
                 Kitchen Command Portal
               </p>
             </div>
-            
+
             <div className="relative mt-12 w-full max-w-md h-96 rounded-2xl overflow-hidden border border-outline-variant/10 shadow-luxury-dark group">
-              <img 
-                src="/images/interior.png" 
-                alt="Restaurant Interior" 
+              <img
+                src="/images/interior.png"
+                alt="Restaurant Interior"
                 className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110 contrast-[1.1] brightness-75"
               />
               {/* Glass Overlay Card */}
@@ -78,7 +80,7 @@ export default function AdminLogin() {
                 </div>
               </div>
             </div>
-            
+
             <div className="mt-12 text-on-surface-variant font-body text-sm max-w-md leading-relaxed">
               Orchestrate the digital dining experience. Manage AR menus, monitor KDS throughput, and analyze table-turn metrics in real time.
             </div>
@@ -113,8 +115,8 @@ export default function AdminLogin() {
                   </label>
                   <div className="flex items-center border-b border-outline-variant/30 pb-2 relative">
                     <span className="material-symbols-outlined text-on-surface-variant mr-3 text-xl">mail</span>
-                    <input 
-                      type="email" 
+                    <input
+                      type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full bg-transparent text-on-surface font-medium focus:outline-none placeholder-on-surface-variant/40"
@@ -136,8 +138,8 @@ export default function AdminLogin() {
                   </div>
                   <div className="flex items-center border-b border-outline-variant/30 pb-2 relative">
                     <span className="material-symbols-outlined text-on-surface-variant mr-3 text-xl">key</span>
-                    <input 
-                      type="password" 
+                    <input
+                      type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="w-full bg-transparent text-on-surface font-medium focus:outline-none placeholder-on-surface-variant/40 tracking-widest"
@@ -148,8 +150,8 @@ export default function AdminLogin() {
                 </div>
 
                 {/* Login Button */}
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   disabled={loading}
                   className="w-full mt-6 bg-primary-container text-on-primary-container hover:bg-primary disabled:opacity-50 disabled:cursor-not-allowed py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-all active:scale-95 cursor-pointer flex justify-center items-center gap-3 group"
                 >
@@ -187,7 +189,7 @@ export default function AdminLogin() {
               </span>
             </div>
           </div>
-          
+
         </div>
       </div>
     </div>

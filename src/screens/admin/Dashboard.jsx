@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchOrders } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 
 const STATUS_COLORS = {
   'preparing': 'bg-primary/10 text-primary border border-primary/20',
@@ -13,12 +14,14 @@ const STATUS_COLORS = {
 };
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
   useEffect(() => {
-    adminFetchOrders()
+    if (!user?.restaurantId) return;
+    adminFetchOrders(null, user.restaurantId)
       .then(data => {
         setOrders(data);
         setLoading(false);
@@ -27,7 +30,7 @@ export default function Dashboard() {
         console.error(err);
         setLoading(false);
       });
-  }, []);
+  }, [user]);
 
   // Simple aggregations
   const today = new Date();
@@ -35,6 +38,33 @@ export default function Dashboard() {
   
   const todayOrders = orders.filter(o => new Date(o.created_at + (o.created_at.endsWith('Z') ? '' : 'Z')) >= today);
   const netRevenue = todayOrders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.total_amount : 0), 0);
+
+  // Week-over-week delta calculations (LF-4)
+  const thisWeekStart = new Date();
+  thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay());
+  thisWeekStart.setHours(0, 0, 0, 0);
+  const lastWeekStart = new Date(thisWeekStart);
+  lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+
+  const thisWeekOrders = orders.filter(o => new Date(o.created_at + (o.created_at.endsWith('Z') ? '' : 'Z')) >= thisWeekStart);
+  const lastWeekOrders = orders.filter(o => {
+    const d = new Date(o.created_at + (o.created_at.endsWith('Z') ? '' : 'Z'));
+    return d >= lastWeekStart && d < thisWeekStart;
+  });
+
+  const thisWeekCount = thisWeekOrders.length;
+  const lastWeekCount = lastWeekOrders.length;
+  const thisWeekRev = thisWeekOrders.reduce((s, o) => s + (o.status !== 'cancelled' ? o.total_amount : 0), 0);
+  const lastWeekRev = lastWeekOrders.reduce((s, o) => s + (o.status !== 'cancelled' ? o.total_amount : 0), 0);
+
+  const calcDelta = (curr, prev) => {
+    if (prev === 0) return curr > 0 ? '+100%' : 'N/A';
+    const pct = ((curr - prev) / prev) * 100;
+    return `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
+  };
+
+  const ordersDelta = calcDelta(thisWeekCount, lastWeekCount);
+  const revenueDelta = calcDelta(thisWeekRev, lastWeekRev);
 
   // Group by day for the chart (last 7 days)
   const last7Days = Array.from({length: 7}).map((_, i) => {
@@ -67,9 +97,9 @@ export default function Dashboard() {
         {/* ── KPI Cards ──────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
           {[
-            { label: "TODAY'S ORDERS", value: loading ? '-' : todayOrders.length, delta: '+12%', icon: 'shopping_cart' },
-            { label: 'NET REVENUE',    value: loading ? '-' : `₹${netRevenue.toFixed(0)}`,  delta: '+8%', icon: 'attach_money' },
-            { label: 'AR ENGAGEMENT',  value: '—', delta: 'Coming Soon', icon: 'view_in_ar' },
+            { label: "TODAY'S ORDERS", value: loading ? '-' : todayOrders.length, delta: loading ? '—' : ordersDelta, icon: 'shopping_cart', isUp: ordersDelta.startsWith('+') },
+            { label: 'NET REVENUE',    value: loading ? '-' : `₹${netRevenue.toFixed(0)}`,  delta: loading ? '—' : revenueDelta, icon: 'attach_money', isUp: revenueDelta.startsWith('+') },
+            { label: 'AR ENGAGEMENT',  value: '—', delta: 'Coming Soon', icon: 'view_in_ar', isUp: false },
           ].map(kpi => (
             <div key={kpi.label} className={`relative overflow-hidden p-8 ${cardBg}`}>
               <span className="material-symbols-outlined absolute -right-6 -bottom-6 text-[8rem] pointer-events-none select-none text-on-surface opacity-[0.03]">
@@ -81,8 +111,8 @@ export default function Dashboard() {
               <div className="text-5xl font-bold mb-3 font-headline text-on-surface">
                 {kpi.value}
               </div>
-              <div className="text-xs font-bold text-green-600 flex items-center gap-1">
-                <span className="material-symbols-outlined text-sm">trending_up</span>
+              <div className={`text-xs font-bold flex items-center gap-1 ${kpi.isUp ? 'text-green-600' : kpi.delta.startsWith('-') ? 'text-error' : 'text-on-surface-variant'}`}>
+                <span className="material-symbols-outlined text-sm">{kpi.isUp ? 'trending_up' : kpi.delta.startsWith('-') ? 'trending_down' : 'trending_flat'}</span>
                 {kpi.delta} this week
               </div>
             </div>

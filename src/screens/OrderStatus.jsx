@@ -239,11 +239,21 @@ export default function OrderStatus() {
           </div>
         )}
 
-        {/* Estimated time */}
+        {/* Estimated time — status-based (LF-2) */}
         {['pending', 'accepted', 'preparing'].includes(order.status) && (
           <div className="text-center text-on-surface-variant text-sm mt-4">
             <span className="material-symbols-outlined text-sm align-middle mr-1">schedule</span>
-            Estimated time: {Math.max(5, 30 - Math.floor((Date.now() - new Date(order.created_at + (order.created_at.endsWith('Z') ? '' : 'Z'))) / 60000))} min remaining
+            Estimated time: {
+              order.status === 'pending' ? '~20-25 min' :
+              order.status === 'accepted' ? '~15-20 min' :
+              '~5-10 min'
+            }
+          </div>
+        )}
+        {order.status === 'ready' && (
+          <div className="text-center text-primary text-sm font-bold mt-4">
+            <span className="material-symbols-outlined text-sm align-middle mr-1">restaurant</span>
+            Your food is ready! A waiter will bring it shortly.
           </div>
         )}
 

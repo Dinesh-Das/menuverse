@@ -7,11 +7,22 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import QRCode from 'qrcode';
 
+// ── DEPRECATION NOTICE ───────────────────────────────────────────────────
+// This Express server is being phased out in favor of Supabase-native architecture.
+// The frontend now communicates directly with Supabase + Edge Functions.
+// Keeping this file for reference logic (state machine, auth flow).
+// ──────────────────────────────────────────────────────────────────────────
+
 // ── Startup env validation ───────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   console.error('[Zaika Zindagi] FATAL: JWT_SECRET env var is not set. Refusing to start.');
   process.exit(1);
+}
+if (JWT_SECRET.length < 32) {
+  console.error('[Zaika Zindagi] FATAL: JWT_SECRET must be at least 32 characters for production security.');
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+  console.warn('[Zaika Zindagi] WARNING: Running with weak JWT_SECRET in development mode.');
 }
 
 const prisma = new PrismaClient();

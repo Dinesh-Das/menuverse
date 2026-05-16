@@ -13,9 +13,12 @@ function dispatch(event, data) {
 // ── Active Channels ────────────────────────────────────────────
 const activeChannels = {};
 
+// ── Connection state tracking ──────────────────────────────────
+let _realtimeConnected = false;
+
 // ── Socket-compatible object (drop-in for old socket.io code) ──
 export const socket = {
-  connected: true, // Supabase Realtime is always on
+  get connected() { return _realtimeConnected; },
   on(event, cb) {
     if (!listeners[event]) listeners[event] = [];
     if (!listeners[event].includes(cb)) listeners[event].push(cb);
@@ -68,10 +71,10 @@ export function joinOrderRoom(orderId) {
     )
     .subscribe(status => {
       if (status === 'SUBSCRIBED') {
-        socket.connected = true;
+        _realtimeConnected = true;
         dispatch('connect', {});
       } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-        socket.connected = false;
+        _realtimeConnected = false;
         dispatch('disconnect', {});
       }
     });
@@ -101,7 +104,15 @@ export function joinRestaurantRoom(restaurantId) {
         if (fullOrder) dispatch('order:updated', fullOrder);
       }
     )
-    .subscribe();
+    .subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        _realtimeConnected = true;
+        dispatch('connect', {});
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        _realtimeConnected = false;
+        dispatch('disconnect', {});
+      }
+    });
 }
 
 // ── Cleanup a channel (call on component unmount) ─────────────

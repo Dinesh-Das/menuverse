@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
@@ -18,11 +18,28 @@ export default function KDS() {
   const [orders, setOrders] = useState([]);
   const [now, setNow] = useState(Date.now());
   const [loading, setLoading] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [updatingIds, setUpdatingIds] = useState(new Set());
+  const audioRef = useRef(null);
+
+  // MF-3: Initialize audio for new order alerts
+  useEffect(() => {
+    audioRef.current = new Audio('/sounds/new-order.mp3');
+    audioRef.current.volume = 0.7;
+  }, []);
+
+  const playAlert = useCallback(() => {
+    if (!muted && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {}); // Ignore autoplay errors
+    }
+  }, [muted]);
 
   useEffect(() => {
+    if (!user?.restaurantId) return;
     async function load() {
       try {
-        const data = await adminFetchOrders();
+        const data = await adminFetchOrders(null, user.restaurantId);
         setOrders(data.filter(o => !['served', 'completed', 'cancelled'].includes(o.status)));
       } catch (err) {
         console.error(err);
@@ -31,14 +48,17 @@ export default function KDS() {
       }
     }
     load();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!user?.restaurantId) return;
     const socket = getSocket();
     joinRestaurantRoom(user.restaurantId);
 
-    const handleNew = (order) => setOrders(prev => [order, ...prev]);
+    const handleNew = (order) => {
+      setOrders(prev => [order, ...prev]);
+      playAlert(); // MF-3: Audio notification
+    };
     const handleUpdated = (updated) => {
       if (['served', 'completed', 'cancelled'].includes(updated.status)) {
         setOrders(prev => prev.filter(o => o.id !== updated.id));
@@ -53,7 +73,7 @@ export default function KDS() {
       socket.off('order:new', handleNew);
       socket.off('order:updated', handleUpdated);
     };
-  }, [user]);
+  }, [user, playAlert]);
 
   // Tick every second for the elapsed timers
   useEffect(() => {
@@ -64,6 +84,8 @@ export default function KDS() {
   const handleStatusUpdate = async (id, newStatus) => {
     const prev = orders.find(o => o.id === id);
     if (!prev) return;
+    // AQ-6: Disable button during async operation
+    setUpdatingIds(s => new Set(s).add(id));
     // Optimistic update
     setOrders(prevOrders => prevOrders.map(o => o.id === id ? { ...o, status: newStatus } : o));
     try {
@@ -72,6 +94,8 @@ export default function KDS() {
       console.error('KDS status rollback:', err.message);
       // Rollback
       setOrders(prevOrders => prevOrders.map(o => o.id === id ? { ...o, status: prev.status } : o));
+    } finally {
+      setUpdatingIds(s => { const next = new Set(s); next.delete(id); return next; });
     }
   };
 
@@ -97,7 +121,21 @@ export default function KDS() {
               <span className="kds-label-text bg-primary/20 text-primary px-3 py-1 rounded-full border border-primary/30">Live</span>
             </h1>
           </div>
-          <div className="flex items-center gap-8">
+          <div className="flex items-center gap-4 md:gap-8">
+            {/* MF-3: Audio mute/unmute toggle */}
+            <button 
+              aria-label={muted ? 'Unmute Alerts' : 'Mute Alerts'} 
+              onClick={() => setMuted(m => !m)} 
+              className={`cursor-pointer flex items-center justify-center h-10 w-10 rounded-full border transition-colors ${
+                muted 
+                  ? 'border-error/30 bg-error/10 hover:bg-error/20' 
+                  : 'border-outline-variant/30 hover:bg-surface-container'
+              }`}
+            >
+              <span className={`material-symbols-outlined ${muted ? 'text-error' : 'text-on-surface-variant'}`}>
+                {muted ? 'volume_off' : 'volume_up'}
+              </span>
+            </button>
             <button aria-label="Toggle Theme" onClick={toggleTheme} className="cursor-pointer flex items-center justify-center h-10 w-10 rounded-full border border-outline-variant/30 hover:bg-surface-container transition-colors">
               <span className="material-symbols-outlined text-on-surface-variant">
                 {isDark ? 'light_mode' : 'dark_mode'}
@@ -203,16 +241,22 @@ export default function KDS() {
 
                     {/* Actions — includes Accept for pending, K3 fix */}
                     <div className="p-3 bg-surface-container-low rounded-b-xl border-t border-outline-variant/30 flex gap-2">
-                      {actions.map(({ label, next, cls }) => (
-                        <button
-                          key={next}
-                          onClick={() => handleStatusUpdate(order.id, next)}
-                          className={`flex-1 rounded-lg kds-body-text font-bold uppercase tracking-wide transition-colors cursor-pointer ${cls}`}
-                          style={{ minHeight: 'var(--tap-target)', fontSize: 'var(--font-kds-label)' }}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                      {actions.map(({ label, next, cls }) => {
+                        const isUpdating = updatingIds.has(order.id);
+                        return (
+                          <button
+                            key={next}
+                            onClick={() => handleStatusUpdate(order.id, next)}
+                            disabled={isUpdating}
+                            className={`flex-1 rounded-lg kds-body-text font-bold uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${cls}`}
+                            style={{ minHeight: 'var(--tap-target)', fontSize: 'var(--font-kds-label)' }}
+                          >
+                            {isUpdating ? (
+                              <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                            ) : label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );

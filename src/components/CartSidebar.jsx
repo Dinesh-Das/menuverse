@@ -86,7 +86,7 @@ export default function CartSidebar() {
                 <div className="flex items-start justify-between gap-2">
                   <h4 className="text-sm font-bold text-on-surface leading-tight truncate">{item.name}</h4>
                   <button
-                    onClick={() => removeItem(item.id)}
+                    onClick={() => removeItem(item._cartKey || item.id)}
                     className="material-symbols-outlined text-xs text-on-surface-variant hover:text-error transition-colors shrink-0 cursor-pointer"
                     style={{ fontSize: '16px' }}
                   >
@@ -96,7 +96,7 @@ export default function CartSidebar() {
                 <p className="text-primary font-bold text-sm mt-0.5">₹{(item.price * item.qty).toFixed(2)}</p>
                 <div className="flex items-center gap-2 mt-2 bg-surface-container-high rounded-full px-1.5 py-0.5 w-max border border-outline-variant/20">
                   <button
-                    onClick={() => updateQty(item.id, item.qty - 1)}
+                    onClick={() => updateQty(item._cartKey || item.id, item.qty - 1)}
                     className="flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
                     style={{ width: 'var(--tap-target)', height: '28px' }}
                   >
@@ -104,7 +104,7 @@ export default function CartSidebar() {
                   </button>
                   <span className="text-sm font-bold text-on-surface w-4 text-center">{item.qty}</span>
                   <button
-                    onClick={() => updateQty(item.id, item.qty + 1)}
+                    onClick={() => updateQty(item._cartKey || item.id, item.qty + 1)}
                     className="flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
                     style={{ width: 'var(--tap-target)', height: '28px' }}
                   >

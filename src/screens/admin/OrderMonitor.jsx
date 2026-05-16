@@ -4,6 +4,7 @@ import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
 import { useAuth } from '../../context/AuthContext';
+import CancelReasonModal from '../../components/CancelReasonModal';
 
 const VALID_TRANSITIONS = {
   pending:   ['accepted', 'cancelled'],
@@ -39,13 +40,16 @@ export default function OrderMonitor() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('active');
+  const [updatingIds, setUpdatingIds] = useState(new Set());
+  const [cancelModal, setCancelModal] = useState({ isOpen: false, orderId: null });
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
   useEffect(() => {
-    adminFetchOrders()
+    if (!user?.restaurantId) return;
+    adminFetchOrders(null, user.restaurantId)
       .then(data => { setOrders(data); setLoading(false); })
       .catch(err => { console.error(err); setLoading(false); });
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!user?.restaurantId) return;
@@ -61,16 +65,38 @@ export default function OrderMonitor() {
     };
   }, [user]);
 
-  const handleStatusChange = async (orderId, newStatus) => {
+  const handleStatusChange = async (orderId, newStatus, cancelReason) => {
+    // CB-8: If cancelling, open the modal to collect reason
+    if (newStatus === 'cancelled' && !cancelReason) {
+      setCancelModal({ isOpen: true, orderId });
+      return;
+    }
+
     const prev = orders.find(o => o.id === orderId);
     if (!prev) return;
+
+    // AQ-6: Disable button during async operation
+    setUpdatingIds(s => new Set(s).add(orderId));
     setOrders(prevOrders => prevOrders.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    
     try {
-      await adminUpdateOrderStatus(orderId, newStatus);
+      await adminUpdateOrderStatus(orderId, newStatus, cancelReason || undefined);
     } catch (err) {
       console.error('Rollback:', err.message);
       setOrders(prevOrders => prevOrders.map(o => o.id === orderId ? { ...o, status: prev.status } : o));
+    } finally {
+      setUpdatingIds(s => { const next = new Set(s); next.delete(orderId); return next; });
     }
+  };
+
+  const handleCancelConfirm = (reason) => {
+    const { orderId } = cancelModal;
+    setCancelModal({ isOpen: false, orderId: null });
+    handleStatusChange(orderId, 'cancelled', reason);
+  };
+
+  const handleCancelDismiss = () => {
+    setCancelModal({ isOpen: false, orderId: null });
   };
 
   const filtered = filter === 'active'
@@ -108,6 +134,7 @@ export default function OrderMonitor() {
           <div className="space-y-4">
             {filtered.map(order => {
               const validNext = VALID_TRANSITIONS[order.status] || [];
+              const isUpdating = updatingIds.has(order.id);
               return (
                 <div key={order.id} className={`p-6 md:p-8 ${cardBg}`}>
                   <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
@@ -140,18 +167,31 @@ export default function OrderMonitor() {
                     </p>
                   )}
 
+                  {order.cancel_reason && (
+                    <p className="text-xs text-error bg-error/10 rounded-lg px-3 py-2 mb-5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm">info</span>
+                      Cancelled: {order.cancel_reason}
+                    </p>
+                  )}
+
                   <div className="flex items-center justify-between">
                     <span className="font-headline text-xl font-bold text-primary">₹{order.total_amount?.toFixed(2)}</span>
                     {validNext.length > 0 && (
                       <div className="flex gap-2 flex-wrap justify-end">
                         {validNext.map(status => (
-                          <button key={status} onClick={() => handleStatusChange(order.id, status)}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all cursor-pointer active:scale-95 ${
+                          <button key={status} 
+                            onClick={() => handleStatusChange(order.id, status)}
+                            disabled={isUpdating}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
                               status === 'cancelled'
                                 ? 'border border-error/30 text-error hover:bg-error/10'
                                 : 'bg-primary text-on-primary hover:bg-primary-fixed-dim'
                             }`}>
-                            {STATUS_BUTTON_LABELS[status] || status}
+                            {isUpdating ? (
+                              <span className="material-symbols-outlined animate-spin text-xs">progress_activity</span>
+                            ) : (
+                              STATUS_BUTTON_LABELS[status] || status
+                            )}
                           </button>
                         ))}
                       </div>
@@ -163,6 +203,14 @@ export default function OrderMonitor() {
           </div>
         )}
       </main>
+
+      {/* Cancel Reason Modal (CB-8 / LF-5) */}
+      <CancelReasonModal
+        isOpen={cancelModal.isOpen}
+        orderId={cancelModal.orderId}
+        onConfirm={handleCancelConfirm}
+        onCancel={handleCancelDismiss}
+      />
     </AdminLayout>
   );
 }

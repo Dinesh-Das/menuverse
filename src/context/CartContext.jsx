@@ -13,6 +13,15 @@ function loadFromStorage() {
   }
 }
 
+const MAX_ITEM_QTY = 20;
+
+function makeCartKey(dishId, modifiers = []) {
+  const modKey = modifiers.length > 0
+    ? JSON.stringify(modifiers.map(m => m.id || m.name).sort())
+    : '';
+  return `${dishId}::${modKey}`;
+}
+
 export function CartProvider({ children }) {
   const [items, setItems] = useState(loadFromStorage);
   const [remoteCarts, setRemoteCarts] = useState({});
@@ -97,23 +106,24 @@ export function CartProvider({ children }) {
 
   const addItem = useCallback((dish, qty = 1, selectedModifiers = []) => {
     setItems(prev => {
-      const existing = prev.find(i => i.id === dish.id);
+      const cartKey = makeCartKey(dish.id, selectedModifiers);
+      const existing = prev.find(i => i._cartKey === cartKey);
       if (existing) {
-        return prev.map(i => i.id === dish.id ? { ...i, qty: i.qty + qty } : i);
+        return prev.map(i => i._cartKey === cartKey ? { ...i, qty: Math.min(MAX_ITEM_QTY, i.qty + qty) } : i);
       }
-      return [...prev, { ...dish, qty, selectedModifiers }];
+      return [...prev, { ...dish, qty: Math.min(MAX_ITEM_QTY, qty), selectedModifiers, _cartKey: cartKey }];
     });
   }, []);
 
-  const removeItem = useCallback((dishId) => {
-    setItems(prev => prev.filter(i => i.id !== dishId));
+  const removeItem = useCallback((cartKey) => {
+    setItems(prev => prev.filter(i => i._cartKey !== cartKey));
   }, []);
 
-  const updateQty = useCallback((dishId, qty) => {
+  const updateQty = useCallback((cartKey, qty) => {
     if (qty <= 0) {
-      setItems(prev => prev.filter(i => i.id !== dishId));
+      setItems(prev => prev.filter(i => i._cartKey !== cartKey));
     } else {
-      setItems(prev => prev.map(i => i.id === dishId ? { ...i, qty } : i));
+      setItems(prev => prev.map(i => i._cartKey === cartKey ? { ...i, qty: Math.min(MAX_ITEM_QTY, qty) } : i));
     }
   }, []);
 

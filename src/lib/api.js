@@ -6,7 +6,7 @@ const now = () => new Date().toISOString();
 function genOrderId() {
   const d = new Date();
   const date = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-  const rand = Math.floor(1000 + Math.random() * 9000);
+  const rand = crypto.randomUUID().slice(0, 8).toUpperCase();
   return `SF-${date}-${rand}`;
 }
 
@@ -182,12 +182,13 @@ export async function createPayment(payload) {
 
 // ── Admin API ─────────────────────────────────────────────────
 
-export async function adminFetchOrders(status) {
+export async function adminFetchOrders(status, restaurantId) {
   let query = supabase
     .from('Order')
     .select(`*, items:OrderItem(*, menu_item:MenuItem(*)), table:Table(*)`)
     .order('created_at', { ascending: false });
 
+  if (restaurantId) query = query.eq('restaurant_id', restaurantId);
   if (status) query = query.eq('status', status);
 
   const { data, error } = await query;
@@ -207,11 +208,15 @@ export async function adminUpdateOrderStatus(orderId, status, cancelReason) {
   return data;
 }
 
-export async function adminFetchMenuItems() {
-  const { data, error } = await supabase
+export async function adminFetchMenuItems(restaurantId) {
+  let query = supabase
     .from('MenuItem')
     .select('*, category:MenuCategory(*), modifier_groups:ModifierGroup(*, options:ModifierOption(*))')
     .order('display_order', { ascending: true });
+
+  if (restaurantId) query = query.eq('restaurant_id', restaurantId);
+
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
 }

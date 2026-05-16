@@ -5,6 +5,7 @@ import { CartProvider } from './context/CartContext';
 import { ToastProvider } from './components/Toast';
 import { AuthProvider } from './context/AuthContext';
 import RequireAuth from './components/RequireAuth';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Customer screens
 import QRLanding     from './screens/QRLanding';
@@ -27,6 +28,7 @@ import OrderMonitor  from './screens/admin/OrderMonitor';
 
 export default function App() {
   const appType = import.meta.env.VITE_APP_TYPE || 'all'; // 'admin', 'user', or 'all'
+  const isDev = import.meta.env.DEV;
 
   return (
     <ThemeProvider>
@@ -34,48 +36,51 @@ export default function App() {
         <ToastProvider>
           <AuthProvider>
             <BrowserRouter>
-              <Routes>
-                {/* ── Admin Routes ─────────────────────────── */}
-                {(appType === 'admin' || appType === 'all') && (
-                  <>
-                    <Route path="/admin"            element={<Navigate to="/admin/login" replace />} />
-                    <Route path="/admin/login"      element={<AdminLogin />} />
-                    <Route path="/admin/dashboard"  element={<RequireAuth roles={['owner', 'manager']}><Dashboard /></RequireAuth>} />
-                    <Route path="/admin/settings"   element={<RequireAuth roles={['owner']}><Settings /></RequireAuth>} />
-                    <Route path="/admin/menu"       element={<RequireAuth roles={['owner', 'manager']}><MenuInventory /></RequireAuth>} />
-                    <Route path="/admin/ar"         element={<RequireAuth roles={['owner', 'manager']}><ARStudio /></RequireAuth>} />
-                    <Route path="/admin/qr"         element={<RequireAuth roles={['owner', 'manager']}><QRFactory /></RequireAuth>} />
-                    <Route path="/admin/kds"        element={<RequireAuth roles={['owner', 'manager', 'staff']}><KDS /></RequireAuth>} />
-                    <Route path="/admin/orders"     element={<RequireAuth roles={['owner', 'manager']}><OrderMonitor /></RequireAuth>} />
-                  </>
-                )}
+              <ErrorBoundary>
+                <Routes>
+                  {/* ── Admin Routes ─────────────────────────── */}
+                  {(appType === 'admin' || appType === 'all') && (
+                    <>
+                      <Route path="/admin"            element={<Navigate to="/admin/login" replace />} />
+                      <Route path="/admin/login"      element={<AdminLogin />} />
+                      <Route path="/admin/dashboard"  element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><Dashboard /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/settings"   element={<RequireAuth roles={['owner']}><ErrorBoundary><Settings /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/menu"       element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><MenuInventory /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/ar"         element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><ARStudio /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/qr"         element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><QRFactory /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/kds"        element={<RequireAuth roles={['owner', 'manager', 'staff']}><ErrorBoundary><KDS /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/orders"     element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><OrderMonitor /></ErrorBoundary></RequireAuth>} />
+                    </>
+                  )}
 
-                {/* ── Customer Routes ──────────────────────── */}
-                {(appType === 'user' || appType === 'all') && (
-                  <>
-                    <Route path="/" element={<Directory />} />
-                    <Route path="/r/:restaurantSlug/t/:tableId"    element={<QRLanding />} />
-                    <Route path="/r/:restaurantSlug/menu"          element={<MenuHome />} />
-                    <Route path="/r/:restaurantSlug/dish/:dishId"  element={<DishDetail />} />
-                    <Route path="/r/:restaurantSlug/checkout"      element={<Checkout />} />
-                    <Route path="/r/:restaurantSlug/order/:orderId" element={<OrderStatus />} />
-                    <Route path="/r/:restaurantSlug/table"          element={<TableSession />} />
+                  {/* ── Customer Routes ──────────────────────── */}
+                  {(appType === 'user' || appType === 'all') && (
+                    <>
+                      {/* LF-3: Directory only accessible in dev mode; production redirects to menu */}
+                      <Route path="/" element={isDev ? <Directory /> : <Navigate to="/r/zaika-zindagi/menu" replace />} />
+                      <Route path="/r/:restaurantSlug/t/:tableId"    element={<QRLanding />} />
+                      <Route path="/r/:restaurantSlug/menu"          element={<MenuHome />} />
+                      <Route path="/r/:restaurantSlug/dish/:dishId"  element={<DishDetail />} />
+                      <Route path="/r/:restaurantSlug/checkout"      element={<Checkout />} />
+                      <Route path="/r/:restaurantSlug/order/:orderId" element={<OrderStatus />} />
+                      <Route path="/r/:restaurantSlug/table"          element={<TableSession />} />
 
-                    {/* Legacy routes */}
-                    <Route path="/t/:tableId"       element={<Navigate to="/" replace />} />
-                    <Route path="/menu"             element={<MenuHome />} />
-                    <Route path="/dish/:dishId"     element={<DishDetail />} />
-                    <Route path="/checkout"         element={<Checkout />} />
-                    <Route path="/order/:orderId"   element={<OrderStatus />} />
-                    <Route path="/order"            element={<TableSession />} />
-                  </>
-                )}
+                      {/* Legacy routes */}
+                      <Route path="/t/:tableId"       element={<Navigate to="/" replace />} />
+                      <Route path="/menu"             element={<MenuHome />} />
+                      <Route path="/dish/:dishId"     element={<DishDetail />} />
+                      <Route path="/checkout"         element={<Checkout />} />
+                      <Route path="/order/:orderId"   element={<OrderStatus />} />
+                      <Route path="/order"            element={<TableSession />} />
+                    </>
+                  )}
 
-                {/* ── Redirects ────────────────────────────── */}
-                {appType === 'admin' && <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />}
-                {appType === 'user' && <Route path="*" element={<Navigate to="/" replace />} />}
-                {appType === 'all' && <Route path="*" element={<Navigate to="/" replace />} />}
-              </Routes>
+                  {/* ── Redirects ────────────────────────────── */}
+                  {appType === 'admin' && <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />}
+                  {appType === 'user' && <Route path="*" element={<Navigate to="/" replace />} />}
+                  {appType === 'all' && <Route path="*" element={<Navigate to="/" replace />} />}
+                </Routes>
+              </ErrorBoundary>
             </BrowserRouter>
           </AuthProvider>
         </ToastProvider>

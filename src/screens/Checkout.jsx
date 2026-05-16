@@ -39,12 +39,12 @@ export default function Checkout() {
   const handleCheckout = async (isPaid = false) => {
     if (allItems.length === 0) return;
     
-    // Anti-spam: 60-second cooldown
+    // Anti-spam: 10-second cooldown (prevents double-tap; server-side 5-pending check handles real protection)
     const lastOrderTime = localStorage.getItem('mv_last_order_time');
     if (lastOrderTime) {
       const diff = Date.now() - parseInt(lastOrderTime, 10);
-      if (diff < 60000) {
-        setError(`Please wait ${Math.ceil((60000 - diff) / 1000)} seconds before placing another order.`);
+      if (diff < 10000) {
+        setError(`Please wait ${Math.ceil((10000 - diff) / 1000)} seconds before placing another order.`);
         return;
       }
     }
@@ -141,7 +141,7 @@ export default function Checkout() {
                           {item.isRemote && <span className="text-[9px] text-amber-500 uppercase tracking-widest font-bold mt-0.5">Added by table</span>}
                         </div>
                         {!item.isRemote && (
-                          <button onClick={() => removeItem(item.id)} className="material-symbols-outlined text-on-surface-variant hover:text-error transition-colors text-sm cursor-pointer p-1">close</button>
+                          <button onClick={() => removeItem(item._cartKey || item.id)} className="material-symbols-outlined text-on-surface-variant hover:text-error transition-colors text-sm cursor-pointer p-1">close</button>
                         )}
                       </div>
                       <div className="text-primary font-headline font-bold mb-1 md:mb-2">₹{itemTotal.toFixed(2)}</div>
@@ -158,11 +158,11 @@ export default function Checkout() {
 
                       {!item.isRemote ? (
                         <div className="flex items-center gap-3 bg-surface-container rounded-full px-2 py-1 w-max border border-outline-variant/20 mt-auto">
-                          <button onClick={() => updateQty(item.id, item.qty - 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
+                          <button onClick={() => updateQty(item._cartKey || item.id, item.qty - 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
                             <span className="material-symbols-outlined text-sm">remove</span>
                           </button>
                           <span className="font-bold text-sm md:text-base text-on-surface w-4 md:w-6 text-center">{item.qty}</span>
-                          <button onClick={() => updateQty(item.id, item.qty + 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
+                          <button onClick={() => updateQty(item._cartKey || item.id, item.qty + 1)} className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer">
                             <span className="material-symbols-outlined text-sm">add</span>
                           </button>
                         </div>
