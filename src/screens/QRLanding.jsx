@@ -29,6 +29,7 @@ export default function QRLanding() {
           tableNumber: tableData.number,
           restaurantId: tableData.restaurant_id,
           restaurantSlug,
+          gstRate: tableData.restaurant?.gst_rate
         });
       } catch (err) {
         setError(err.message);

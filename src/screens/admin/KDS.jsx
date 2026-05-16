@@ -5,6 +5,7 @@ import { getSocket, joinRestaurantRoom } from '../../lib/socket';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { pendingOrdersBus } from '../../components/TopNav';
+import { useToast } from '../../components/Toast';
 
 const formatTime = (ms) => {
   const isNegative = ms < 0;
@@ -16,6 +17,7 @@ const formatTime = (ms) => {
 export default function KDS() {
   const { user } = useAuth();
   const { isDark, toggleTheme } = useTheme();
+  const { addToast } = useToast();
   const [orders, setOrders] = useState([]);
   const [now, setNow] = useState(Date.now());
   const [loading, setLoading] = useState(true);
@@ -29,10 +31,29 @@ export default function KDS() {
     audioRef.current.volume = 0.7;
   }, []);
 
+  const playFallbackBeep = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    } catch(e) {}
+  };
+
   const playAlert = useCallback(() => {
-    if (!muted && audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {}); // Ignore autoplay errors
+    if (!muted) {
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => playFallbackBeep());
+      } else {
+        playFallbackBeep();
+      }
     }
   }, [muted]);
 
@@ -80,14 +101,21 @@ export default function KDS() {
         });
       }
     };
+    const handleStaffRequest = (req) => {
+      addToast(`Table ${req.table?.number || req.table_id.slice(-4)} is requesting assistance!`, 'success');
+      playAlert();
+    };
 
     socket.on('order:new', handleNew);
     socket.on('order:updated', handleUpdated);
+    socket.on('staff_request:new', handleStaffRequest);
+
     return () => {
       socket.off('order:new', handleNew);
       socket.off('order:updated', handleUpdated);
+      socket.off('staff_request:new', handleStaffRequest);
     };
-  }, [user, playAlert]);
+  }, [user, playAlert, addToast]);
 
   // Tick every second for the elapsed timers
   useEffect(() => {
@@ -119,7 +147,7 @@ export default function KDS() {
     setUpdatingIds(s => new Set(s).add(`reject-${id}`));
     try {
       // LF-12: Allow kitchen to reject/cancel unavailable or invalid orders
-      await adminUpdateOrderStatus(id, 'cancelled');
+      await adminUpdateOrderStatus(id, 'cancelled', 'Item unavailable — rejected by kitchen');
       setOrders(prev => prev.filter(o => o.id !== id));
     } catch (err) {
       console.error('KDS reject failed:', err.message);

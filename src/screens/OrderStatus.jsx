@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { fetchOrderStatus } from '../lib/api';
 import { getSocket, joinOrderRoom } from '../lib/socket';
+import { supabase } from '../lib/supabase';
+import { useToast } from '../components/Toast';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 
@@ -35,6 +37,7 @@ export default function OrderStatus() {
   const { orderId, restaurantSlug } = useParams();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const { addToast } = useToast();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(true); // Supabase Realtime is always connected
@@ -100,10 +103,19 @@ export default function OrderStatus() {
   const handleRating = async (val) => {
     setRating(val);
     setFeedbackGiven(true);
-    // Simulate saving feedback to OrderFeedback table
     try {
+      const { error } = await supabase.from('OrderFeedback').insert({
+        id: crypto.randomUUID(),
+        restaurant_id: order.restaurant_id,
+        order_id: order.id,
+        rating: val,
+        created_at: new Date().toISOString()
+      });
+      if (error) throw error;
       console.log('Feedback saved:', { order_id: order.id, rating: val });
-    } catch(e) { }
+    } catch(e) {
+      addToast(`Failed to save feedback: ${e.message}`, 'error');
+    }
   };
 
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';

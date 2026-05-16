@@ -29,6 +29,7 @@ export function CartProvider({ children }) {
   const [tableNumber, setTableNumber] = useState(localStorage.getItem('mv_table_num') || null);
   const [restaurantId, setRestaurantId] = useState(localStorage.getItem('mv_restaurant_id') || null);
   const [restaurantSlug, setRestaurantSlug] = useState(localStorage.getItem('mv_restaurant_slug') || null);
+  const [gstRateState, setGstRateState] = useState(localStorage.getItem('mv_gst_rate') || '0.05');
 
   const deviceIdRef = useRef(localStorage.getItem('mv_device_id') || crypto.randomUUID());
   const channelRef = useRef(null);
@@ -115,6 +116,11 @@ export function CartProvider({ children }) {
       if (slug) localStorage.setItem('mv_restaurant_slug', slug);
       else localStorage.removeItem('mv_restaurant_slug');
     }
+    if (sessionData.gstRate !== undefined) {
+      setGstRateState(sessionData.gstRate);
+      if (sessionData.gstRate) localStorage.setItem('mv_gst_rate', sessionData.gstRate);
+      else localStorage.removeItem('mv_gst_rate');
+    }
   }, []);
 
   const addItem = useCallback((dish, qty = 1, selectedModifiers = []) => {
@@ -160,8 +166,8 @@ export function CartProvider({ children }) {
     const modsPrice = (i.selectedModifiers || []).reduce((mSum, mod) => mSum + (mod.price_delta || 0), 0);
     return sum + (i.price + modsPrice) * i.qty;
   }, 0);
-  // MF-09: GST rate configurable — read from localStorage, set by Settings, default 5%
-  const gstRate = parseFloat(localStorage.getItem('mv_gst_rate') || '5') / 100;
+  // MF-09: GST rate configurable — read from the Restaurant via context or local session
+  const gstRate = parseFloat(gstRateState || 0.05);
   const tax = +(subtotal * gstRate).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
 

@@ -1,18 +1,33 @@
 import React, { useState } from 'react';
 import { useCart } from '../context/CartContext';
+import { supabase } from '../lib/supabase';
+import { useToast } from './Toast';
 
 export default function CallWaiterFAB({ className = 'bottom-24 right-6' }) {
-  const { tableNumber } = useCart();
+  const { tableId, tableNumber, restaurantId } = useCart();
+  const { addToast } = useToast();
   const [requestState, setRequestState] = useState('idle'); // idle, requesting, success
 
-  const handleCallWaiter = () => {
+  const handleCallWaiter = async () => {
     setRequestState('requesting');
     
-    // Simulate API call (requires StaffRequest table in DB eventually)
-    setTimeout(() => {
+    try {
+      const { error } = await supabase.from('StaffRequest').insert({
+        id: crypto.randomUUID(),
+        restaurant_id: restaurantId,
+        table_id: tableId,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+      if (error) throw error;
       setRequestState('success');
       setTimeout(() => setRequestState('idle'), 3000);
-    }, 1000);
+    } catch (e) {
+      console.error(e);
+      addToast('Failed to call waiter. Try again.', 'error');
+      setRequestState('idle');
+    }
   };
 
   if (!tableNumber) return null; // Don't show if no table is selected

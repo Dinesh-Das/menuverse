@@ -104,6 +104,14 @@ export function joinRestaurantRoom(restaurantId) {
         if (fullOrder) dispatch('order:updated', fullOrder);
       }
     )
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'StaffRequest', filter: `restaurant_id=eq.${restaurantId}` },
+      async payload => {
+        const { data: table } = await supabase.from('Table').select('*').eq('id', payload.new.table_id).single();
+        dispatch('staff_request:new', { ...payload.new, table });
+      }
+    )
     .subscribe(status => {
       if (status === 'SUBSCRIBED') {
         _realtimeConnected = true;

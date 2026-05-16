@@ -90,6 +90,24 @@ export async function placeOrder(payload) {
     throw new Error('Kitchen is processing your previous orders. Please wait for them to be accepted before placing a new one.');
   }
 
+  // 0.5 Price Verification
+  const itemIds = payload.items.map(i => i.menu_item_id);
+  if (itemIds.length > 0) {
+    const { data: dbItems, error: dbErr } = await supabase
+      .from('MenuItem')
+      .select('id, price')
+      .in('id', itemIds);
+    if (dbErr) throw new Error(`Price verification failed: ${dbErr.message}`);
+
+    for (const item of payload.items) {
+      const dbItem = dbItems.find(i => i.id === item.menu_item_id);
+      if (!dbItem) throw new Error(`Item ${item.name} not found`);
+      if (Math.abs(dbItem.price - item.price) > 1) {
+        throw new Error(`Price mismatch for ${item.name}: expected ₹${dbItem.price}, got ₹${item.price}`);
+      }
+    }
+  }
+
   // 1. Insert the Order
   const { error: orderError } = await supabase.from('Order').insert({
     id: orderId,
@@ -243,6 +261,40 @@ export async function adminUpdateMenuItem(id, payload) {
   return { updated: result?.length };
 }
 
+export async function adminUpdateItemModifiers(itemId, restaurantId, groups) {
+  const { data: existingGroups } = await supabase.from('ModifierGroup').select('id').eq('menu_item_id', itemId);
+  if (existingGroups && existingGroups.length > 0) {
+    const groupIds = existingGroups.map(g => g.id);
+    await supabase.from('ModifierOption').delete().in('group_id', groupIds);
+    await supabase.from('ModifierGroup').delete().in('id', groupIds);
+  }
+
+  if (!groups || groups.length === 0) return;
+
+  for (const g of groups) {
+    const groupId = crypto.randomUUID();
+    await supabase.from('ModifierGroup').insert({
+      id: groupId,
+      restaurant_id: restaurantId,
+      menu_item_id: itemId,
+      name: g.name,
+      required: g.required,
+      created_at: now(),
+      updated_at: now()
+    });
+
+    if (g.options && g.options.length > 0) {
+      const optionsToInsert = g.options.map(o => ({
+        id: crypto.randomUUID(),
+        group_id: groupId,
+        name: o.name,
+        price_delta: parseFloat(o.price_delta) || 0
+      }));
+      await supabase.from('ModifierOption').insert(optionsToInsert);
+    }
+  }
+}
+
 export async function adminFetchCategories() {
   const { data, error } = await supabase
     .from('MenuCategory')
@@ -280,6 +332,16 @@ export async function adminUpdateTable(id, payload) {
     .single();
   if (error) throw new Error(error.message);
   return result;
+}
+
+export async function adminDeleteTable(id, restaurantId) {
+  const { error } = await supabase
+    .from('Table')
+    .delete()
+    .eq('id', id)
+    .eq('restaurant_id', restaurantId);
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 export async function adminClearTable(tableId) {

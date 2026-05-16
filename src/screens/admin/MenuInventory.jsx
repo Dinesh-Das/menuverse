@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchMenuItems, adminFetchCategories, adminCreateMenuItem, adminUpdateMenuItem } from '../../lib/api';
+import { adminFetchMenuItems, adminFetchCategories, adminCreateMenuItem, adminUpdateMenuItem, adminUpdateItemModifiers } from '../../lib/api';
+import { supabase } from '../../lib/supabase';
+import { useToast } from '../../components/Toast';
 
 import { useAuth } from '../../context/AuthContext';
 export default function MenuInventory() {
   const { user } = useAuth();
+  const { addToast } = useToast();
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
   const rowBg = 'hover:bg-surface-container border-outline-variant/10';
 
@@ -17,9 +20,11 @@ export default function MenuInventory() {
   // Modal State
   const [editingItem, setEditingItem] = useState(null); // null = closed, {} = new, {id...} = existing
   const [formData, setFormData] = useState({
-    name: '', description: '', price: '', category_id: '', image_url: '', dietary_flag: 'none', available: true
+    name: '', description: '', price: '', category_id: '', image_url: '', dietary_flag: 'none', available: true, modifiers: []
   });
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = React.useRef(null);
 
   const loadData = () => {
     setLoading(true);
@@ -40,7 +45,7 @@ export default function MenuInventory() {
   }, []);
 
   const openNewModal = () => {
-    setFormData({ name: '', description: '', price: '', category_id: categories[0]?.id || '', image_url: '', dietary_flag: 'none', available: true });
+    setFormData({ name: '', description: '', price: '', category_id: categories[0]?.id || '', image_url: '', dietary_flag: 'none', available: true, modifiers: [] });
     setEditingItem({});
   };
 
@@ -52,7 +57,8 @@ export default function MenuInventory() {
       category_id: item.category_id,
       image_url: item.image_url || '',
       dietary_flag: item.dietary_flag || 'none',
-      available: item.available
+      available: item.available,
+      modifiers: item.modifier_groups || []
     });
     setEditingItem(item);
   };
@@ -64,22 +70,65 @@ export default function MenuInventory() {
     setSaving(true);
     try {
       const payload = {
-        ...formData,
+        name: formData.name,
+        description: formData.description,
+        category_id: formData.category_id,
+        image_url: formData.image_url,
+        available: formData.available,
         price: parseFloat(formData.price),
         dietary_flag: formData.dietary_flag === 'none' ? null : formData.dietary_flag
       };
       
       if (editingItem.id) {
         await adminUpdateMenuItem(editingItem.id, { ...payload, restaurant_id: user.restaurantId });
+        await adminUpdateItemModifiers(editingItem.id, user.restaurantId, formData.modifiers);
       } else {
-        await adminCreateMenuItem({ ...payload, restaurant_id: user.restaurantId });
+        const newItem = await adminCreateMenuItem({ ...payload, restaurant_id: user.restaurantId });
+        await adminUpdateItemModifiers(newItem.id, user.restaurantId, formData.modifiers);
       }
       closeModal();
       loadData();
     } catch (err) {
-      alert('Failed to save: ' + err.message);
+      addToast('Failed to save: ' + err.message, 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      addToast('File too large — max 5MB.', 'error');
+      return;
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      addToast('Unsupported format — use PNG, JPEG or WebP.', 'error');
+      return;
+    }
+
+    setUploadingImage(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const filename = `${crypto.randomUUID()}.${ext}`;
+      const path = `menu-items/${user.restaurantId}/${filename}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('restaurant-assets')
+        .upload(path, file, { upsert: true, contentType: file.type });
+
+      if (uploadErr) throw new Error(uploadErr.message);
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('restaurant-assets')
+        .getPublicUrl(path);
+
+      setFormData(prev => ({ ...prev, image_url: publicUrl }));
+      addToast('Image uploaded successfully!', 'success');
+    } catch (err) {
+      addToast(`Upload failed: ${err.message}`, 'error');
+    } finally {
+      setUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = '';
     }
   };
 
@@ -208,8 +257,38 @@ export default function MenuInventory() {
                   </div>
 
                   <div className="col-span-2">
-                    <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Image URL</label>
-                    <input type="url" value={formData.image_url} onChange={e => setFormData({...formData, image_url: e.target.value})} className="w-full bg-surface-container border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary" placeholder="https://..." />
+                    <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Item Image</label>
+                    <div className="flex gap-3 items-center">
+                      {formData.image_url && (
+                        <img src={formData.image_url} alt="Preview" className="w-12 h-12 rounded object-cover shadow-sm" />
+                      )}
+                      <input 
+                        type="url" 
+                        value={formData.image_url} 
+                        onChange={e => setFormData({...formData, image_url: e.target.value})} 
+                        className="flex-1 bg-surface-container border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary" 
+                        placeholder="https://..." 
+                      />
+                      <input 
+                        type="file" 
+                        ref={imageInputRef} 
+                        onChange={handleImageUpload} 
+                        accept="image/png, image/jpeg, image/webp" 
+                        className="hidden" 
+                      />
+                      <button 
+                        type="button" 
+                        onClick={() => imageInputRef.current?.click()}
+                        disabled={uploadingImage}
+                        className="px-4 py-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-container-high transition-colors text-on-surface-variant flex items-center justify-center cursor-pointer"
+                      >
+                        {uploadingImage ? (
+                          <span className="material-symbols-outlined animate-spin">progress_activity</span>
+                        ) : (
+                          <span className="material-symbols-outlined">upload</span>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -225,6 +304,120 @@ export default function MenuInventory() {
                   <div className="flex items-center gap-3 pt-6">
                     <input type="checkbox" id="available" checked={formData.available} onChange={e => setFormData({...formData, available: e.target.checked})} className="w-5 h-5 accent-primary cursor-pointer" />
                     <label htmlFor="available" className="text-sm font-bold text-on-surface cursor-pointer">Available in Menu</label>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-outline-variant/20 mt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest">Modifiers</label>
+                    <button 
+                      type="button" 
+                      onClick={() => setFormData(prev => ({ 
+                        ...prev, 
+                        modifiers: [...prev.modifiers, { name: '', required: false, options: [] }] 
+                      }))}
+                      className="px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer border border-outline-variant/30 hover:bg-surface-container-high text-on-surface flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-sm">add</span> Add Group
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-6">
+                    {formData.modifiers.map((group, gIdx) => (
+                      <div key={gIdx} className="p-4 bg-surface-container border border-outline-variant/20 rounded-xl space-y-4">
+                        <div className="flex items-center gap-4">
+                          <input 
+                            type="text" 
+                            placeholder="Group Name (e.g. Size, Spice Level)" 
+                            value={group.name} 
+                            onChange={e => {
+                              const newMods = [...formData.modifiers];
+                              newMods[gIdx].name = e.target.value;
+                              setFormData({...formData, modifiers: newMods});
+                            }}
+                            className="flex-1 bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary" 
+                          />
+                          <label className="flex items-center gap-2 text-sm text-on-surface">
+                            <input 
+                              type="checkbox" 
+                              checked={group.required} 
+                              onChange={e => {
+                                const newMods = [...formData.modifiers];
+                                newMods[gIdx].required = e.target.checked;
+                                setFormData({...formData, modifiers: newMods});
+                              }}
+                              className="accent-primary"
+                            /> Required
+                          </label>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const newMods = [...formData.modifiers];
+                              newMods.splice(gIdx, 1);
+                              setFormData({...formData, modifiers: newMods});
+                            }}
+                            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-error/10 text-on-surface-variant hover:text-error transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">delete</span>
+                          </button>
+                        </div>
+                        
+                        <div className="pl-6 border-l-2 border-outline-variant/20 space-y-2">
+                          {group.options.map((opt, oIdx) => (
+                            <div key={oIdx} className="flex items-center gap-3">
+                              <input 
+                                type="text" 
+                                placeholder="Option Name (e.g. Large, Extra Spicy)" 
+                                value={opt.name} 
+                                onChange={e => {
+                                  const newMods = [...formData.modifiers];
+                                  newMods[gIdx].options[oIdx].name = e.target.value;
+                                  setFormData({...formData, modifiers: newMods});
+                                }}
+                                className="flex-1 bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-1.5 text-sm text-on-surface focus:outline-none focus:border-primary" 
+                              />
+                              <div className="relative w-24">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-on-surface-variant">₹</span>
+                                <input 
+                                  type="number" 
+                                  step="0.01" 
+                                  placeholder="0.00" 
+                                  value={opt.price_delta} 
+                                  onChange={e => {
+                                    const newMods = [...formData.modifiers];
+                                    newMods[gIdx].options[oIdx].price_delta = e.target.value;
+                                    setFormData({...formData, modifiers: newMods});
+                                  }}
+                                  className="w-full pl-6 pr-2 py-1.5 bg-surface-container-low border border-outline-variant/30 rounded-lg text-sm text-on-surface focus:outline-none focus:border-primary" 
+                                />
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={() => {
+                                  const newMods = [...formData.modifiers];
+                                  newMods[gIdx].options.splice(oIdx, 1);
+                                  setFormData({...formData, modifiers: newMods});
+                                }}
+                                className="w-7 h-7 flex items-center justify-center rounded text-on-surface-variant hover:bg-error/10 hover:text-error transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-xs">close</span>
+                              </button>
+                            </div>
+                          ))}
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const newMods = [...formData.modifiers];
+                              newMods[gIdx].options.push({ name: '', price_delta: '' });
+                              setFormData({...formData, modifiers: newMods});
+                            }}
+                            className="text-[10px] uppercase font-bold tracking-widest text-primary hover:underline flex items-center gap-1 mt-2 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[10px]">add</span> Add Option
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

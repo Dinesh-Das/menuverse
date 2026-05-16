@@ -32,6 +32,7 @@ export default function Settings() {
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('staff');
   const [inviting, setInviting] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
 
   // ── Shared ────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -55,13 +56,17 @@ export default function Settings() {
           setPrimaryColor(data.primary_color || '#B8860B');
           setFontFamily(data.font_family || 'serif');
           setLogoUrl(data.logo_url || '');
+          if (data.gst_rate !== undefined && data.gst_rate !== null) {
+            setGstRate(String(data.gst_rate * 100));
+            localStorage.setItem('mv_gst_rate', String(data.gst_rate));
+          } else {
+            const local = localStorage.getItem('mv_gst_rate');
+            setGstRate(local ? String(parseFloat(local) * 100) : '5');
+          }
         }
         setLoading(false);
       })
       .catch(err => { console.error(err); setLoading(false); });
-
-    // MF-09: Load GST rate from localStorage
-    setGstRate(localStorage.getItem('mv_gst_rate') || '5');
   };
 
   const loadTeam = () => {
@@ -129,17 +134,17 @@ export default function Settings() {
     if (!restaurantName.trim()) return;
     setSaving(true);
     try {
+      const rate = parseFloat(gstRate);
       await adminUpdateRestaurant(user.restaurantId, {
         name: restaurantName,
         description,
         primary_color: primaryColor,
         font_family: fontFamily,
         ...(logoUrl ? { logo_url: logoUrl } : {}),
+        ...(!isNaN(rate) && rate >= 0 && rate <= 30 ? { gst_rate: rate / 100 } : {}),
       });
-      // MF-09: Persist GST rate to localStorage (read by CartContext)
-      const rate = parseFloat(gstRate);
       if (!isNaN(rate) && rate >= 0 && rate <= 30) {
-        localStorage.setItem('mv_gst_rate', String(rate));
+        localStorage.setItem('mv_gst_rate', String(rate / 100));
       }
       addToast('Settings saved successfully!', 'success');
     } catch (err) {
@@ -154,17 +159,15 @@ export default function Settings() {
     if (!newEmail.trim()) return;
     setInviting(true);
     try {
-      // In a Supabase-native setup, staff accounts must be created via Supabase Auth invite
-      const { error } = await supabase.auth.admin.inviteUserByEmail(newEmail, {
-        data: { restaurant_id: user.restaurantId, role: newRole }
+      const { error } = await supabase.functions.invoke('invite-staff', {
+        body: { email: newEmail, role: newRole, restaurant_id: user.restaurantId }
       });
       if (error) throw new Error(error.message);
       addToast(`Invite sent to ${newEmail}`, 'success');
       setNewEmail('');
       loadTeam();
     } catch {
-      // Auth Admin API requires service role key — fall back to informational note
-      addToast('Invitations require Supabase service role setup. See DEPLOY.md for instructions.', 'error');
+      setShowInviteModal(true);
     } finally {
       setInviting(false);
     }
@@ -440,6 +443,22 @@ export default function Settings() {
                   )}
                 </div>
               </>
+            )}
+
+            {showInviteModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-dim/80 backdrop-blur-sm">
+                <div className="bg-surface-container border border-outline-variant/20 rounded-2xl shadow-2xl p-8 max-w-md w-full">
+                  <h2 className="font-headline text-xl font-bold text-on-surface mb-4">Manual Setup Required</h2>
+                  <p className="text-sm text-on-surface-variant mb-6">
+                    The Supabase Edge Function to invite staff is not deployed. Please configure your edge function (`invite-staff`) or deploy the project manually as per DEPLOY.md instructions.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => setShowInviteModal(false)} className="px-6 py-2.5 rounded-xl font-bold text-sm bg-primary text-on-primary hover:brightness-110 shadow-md transition-all cursor-pointer">
+                      Got it
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Save / Discard — hide on Team tab (no DB save needed, actions are immediate) */}

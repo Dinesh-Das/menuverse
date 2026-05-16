@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchTables, adminCreateTable, adminClearTable } from '../../lib/api';
+import { adminFetchTables, adminCreateTable, adminClearTable, adminDeleteTable } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
 
@@ -140,6 +140,22 @@ export default function QRFactory() {
       loadTables();
     } catch (err) {
       addToast(`Error clearing table: ${err.message}`, 'error');
+    }
+  };
+
+  const handleDeleteTable = async (tableId, number, isTableActive) => {
+    if (isTableActive) {
+      addToast(`Cannot delete Table ${number} while it is active. Please clear it first.`, 'error');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete Table ${number}? This action cannot be undone.`)) return;
+    
+    try {
+      await adminDeleteTable(tableId, user.restaurantId);
+      addToast(`Table ${number} deleted!`, 'success');
+      loadTables();
+    } catch (err) {
+      addToast(`Error deleting table: ${err.message}`, 'error');
     }
   };
 
@@ -308,12 +324,20 @@ export default function QRFactory() {
                   {table.status !== 'available' && (
                     <button
                       onClick={() => handleClearTable(table.id, table.number)}
-                      className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 active:scale-95 mt-auto"
+                      className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 active:scale-95 mt-auto mb-2"
                     >
                       <span className="material-symbols-outlined text-sm">cleaning_services</span>
                       Clear Table
                     </button>
                   )}
+                  
+                  <button
+                    onClick={() => handleDeleteTable(table.id, table.number, table.status !== 'available')}
+                    className="w-full py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 border border-error/30 text-error hover:bg-error/10 active:scale-95 mt-auto"
+                  >
+                    <span className="material-symbols-outlined text-sm">delete</span>
+                    Delete Table
+                  </button>
                 </div>
               );
             })}

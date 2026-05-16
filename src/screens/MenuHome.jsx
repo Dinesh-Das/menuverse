@@ -49,7 +49,8 @@ export default function MenuHome() {
         if (!sessionSlug && data.restaurant?.slug) {
           setSession({
             restaurantId: data.restaurant.id,
-            restaurantSlug: data.restaurant.slug
+            restaurantSlug: data.restaurant.slug,
+            gstRate: data.restaurant.gst_rate
           });
         }
       })
@@ -142,9 +143,8 @@ export default function MenuHome() {
             alt={dish.name}
             loading="lazy"
             decoding="async"
-            className="h-full w-full object-cover transition-all duration-500 group-hover:scale-105"
+            className="h-full w-full object-cover transition-all duration-500 group-hover:scale-105 opacity-0"
             onLoad={e => e.target.classList.remove('opacity-0')}
-            style={{ opacity: 0 }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-surface-dim/80 via-transparent to-transparent opacity-80" />
           
@@ -432,7 +432,14 @@ export default function MenuHome() {
                   {upsellCandidates.slice(0, 6).map(item => (
                     <div key={item.id} className="flex-none w-32 bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 shadow-sm flex flex-col">
                       <div className="h-20 overflow-hidden">
-                        <img src={item.image_url} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-cover transition-opacity duration-300" onLoad={e => e.target.classList.remove('opacity-0')} style={{ opacity: 0 }} />
+                        <img 
+                          src={item.image_url} 
+                          alt={item.name} 
+                          loading="lazy" 
+                          decoding="async" 
+                          className="w-full h-full object-cover transition-opacity duration-300 opacity-0" 
+                          onLoad={e => e.target.classList.remove('opacity-0')} 
+                        />
                       </div>
                       <div className="p-3 flex flex-col flex-grow">
                         <h4 className="text-[11px] font-bold text-on-surface line-clamp-1 mb-1">{item.name}</h4>

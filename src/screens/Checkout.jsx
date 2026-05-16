@@ -14,6 +14,7 @@ export default function Checkout() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [upsellItems, setUpsellItems] = useState([]);
+  const [celebration, setCelebration] = useState(false);
 
   const currentSlug = restaurantSlug || sessionSlug || 'zaika-zindagi';
 
@@ -31,7 +32,6 @@ export default function Checkout() {
           candidates = [...candidates, ...cat.items];
         }
       });
-      console.log("Upsell candidates found:", candidates.length, candidates.map(c => c.name));
       setUpsellItems(candidates);
     }).catch(err => console.error("Upsell fetch error:", err));
   }, [currentSlug]);
@@ -73,8 +73,12 @@ export default function Checkout() {
       localStorage.setItem('mv_last_order_time', Date.now().toString());
       clearCart();
 
-      const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
-      navigate(`${basePath}/order/${result.order_ref}`);
+      setCelebration(true);
+      setTimeout(() => {
+        setCelebration(false);
+        const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+        navigate(`${basePath}/order/${result.order_ref}`);
+      }, 2500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -243,7 +247,7 @@ export default function Checkout() {
                     <span className="font-headline font-bold text-on-surface">₹{subtotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
-                    <span>GST (5%)</span>
+                    <span>GST ({subtotal > 0 ? Math.round((tax/subtotal)*100) : (localStorage.getItem('mv_gst_rate') || 5)}%)</span>
                     <span className="font-headline font-bold text-on-surface">₹{tax.toFixed(2)}</span>
                   </div>
                 </div>
