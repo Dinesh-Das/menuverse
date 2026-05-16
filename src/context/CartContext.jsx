@@ -32,6 +32,8 @@ export function CartProvider({ children }) {
   const [tableSessionToken, setTableSessionToken] = useState(localStorage.getItem('mv_table_session_token') || null);
   const [tableSessionId, setTableSessionId] = useState(localStorage.getItem('mv_table_session_id') || null);
   const [gstRateState, setGstRateState] = useState(localStorage.getItem('mv_gst_rate') || '0.05');
+  const [paymentEnabled, setPaymentEnabled] = useState(localStorage.getItem('mv_payment_enabled') === 'true');
+  const [paymentProvider, setPaymentProvider] = useState(localStorage.getItem('mv_payment_provider') || 'razorpay');
 
   const deviceIdRef = useRef(localStorage.getItem('mv_device_id') || crypto.randomUUID());
   const channelRef = useRef(null);
@@ -133,6 +135,15 @@ export function CartProvider({ children }) {
       if (sessionData.gstRate) localStorage.setItem('mv_gst_rate', sessionData.gstRate);
       else localStorage.removeItem('mv_gst_rate');
     }
+    if (sessionData.paymentEnabled !== undefined) {
+      setPaymentEnabled(Boolean(sessionData.paymentEnabled));
+      localStorage.setItem('mv_payment_enabled', String(Boolean(sessionData.paymentEnabled)));
+    }
+    if (sessionData.paymentProvider !== undefined) {
+      setPaymentProvider(sessionData.paymentProvider || 'razorpay');
+      if (sessionData.paymentProvider) localStorage.setItem('mv_payment_provider', sessionData.paymentProvider);
+      else localStorage.removeItem('mv_payment_provider');
+    }
   }, []);
 
   const addItem = useCallback((dish, qty = 1, selectedModifiers = []) => {
@@ -187,6 +198,7 @@ export function CartProvider({ children }) {
     <CartContext.Provider value={{
       items, remoteItems, allItems, count, subtotal, tax, total,
       tableId, tableNumber, restaurantId, restaurantSlug, tableSessionToken, tableSessionId,
+      paymentEnabled, paymentProvider,
       addItem, removeItem, updateQty, clearCart, setSession
     }}>
       {children}

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchOrderStatus } from '../lib/api';
+import { fetchOrderStatus, submitOrderFeedback } from '../lib/api';
 import { getSocket, joinOrderRoom } from '../lib/socket';
-import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
@@ -107,14 +106,11 @@ export default function OrderStatus() {
     setRating(val);
     setFeedbackSaving(true);
     try {
-      const { error } = await supabase.from('OrderFeedback').insert({
-        id: crypto.randomUUID(),
-        restaurant_id: order.restaurant_id,
-        order_id: order.id,
+      await submitOrderFeedback({
+        orderId: order.id,
+        tableSessionToken: localStorage.getItem('mv_table_session_token'),
         rating: val,
-        created_at: new Date().toISOString()
       });
-      if (error) throw error;
       setFeedbackGiven(true);
     } catch(e) {
       addToast(`Failed to save feedback: ${e.message}`, 'error');

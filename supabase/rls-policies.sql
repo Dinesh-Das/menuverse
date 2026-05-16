@@ -12,17 +12,20 @@ alter table "ModifierOption" enable row level security;
 alter table "Order" enable row level security;
 alter table "OrderItem" enable row level security;
 alter table "Payment" enable row level security;
-alter table "OrderFeedback" enable row level security;
-alter table "StaffRequest" enable row level security;
+alter table if exists "OrderFeedback" enable row level security;
+alter table if exists "StaffRequest" enable row level security;
 alter table if exists "TableSession" enable row level security;
 alter table if exists "SessionBill" enable row level security;
 
 drop policy if exists "restaurant_public_read" on "Restaurant";
 drop policy if exists "restaurant_owner_update" on "Restaurant";
 drop policy if exists "user_self_read" on "User";
+drop policy if exists "user_admin_same_restaurant_read" on "User";
 drop policy if exists "user_self_update" on "User";
 drop policy if exists "table_public_read" on "Table";
+drop policy if exists "table_public_qr_read" on "Table";
 drop policy if exists "table_staff_update" on "Table";
+drop policy if exists "table_staff_manage" on "Table";
 drop policy if exists "table_admin_insert" on "Table";
 drop policy if exists "table_owner_delete" on "Table";
 drop policy if exists "category_public_read" on "MenuCategory";
@@ -35,16 +38,34 @@ drop policy if exists "modoption_public_read" on "ModifierOption";
 drop policy if exists "modoption_admin_manage" on "ModifierOption";
 drop policy if exists "order_anon_insert" on "Order";
 drop policy if exists "order_table_read" on "Order";
+drop policy if exists "order_staff_read" on "Order";
 drop policy if exists "order_staff_update" on "Order";
 drop policy if exists "orderitem_anon_insert" on "OrderItem";
 drop policy if exists "orderitem_public_read" on "OrderItem";
+drop policy if exists "orderitem_staff_read" on "OrderItem";
 drop policy if exists "payment_anon_insert" on "Payment";
 drop policy if exists "payment_staff_read" on "Payment";
-drop policy if exists "feedback_anon_insert" on "OrderFeedback";
-drop policy if exists "feedback_staff_read" on "OrderFeedback";
-drop policy if exists "staffreq_anon_insert" on "StaffRequest";
-drop policy if exists "staffreq_staff_read" on "StaffRequest";
-drop policy if exists "staffreq_staff_update" on "StaffRequest";
+do $$
+begin
+  if to_regclass('"OrderFeedback"') is not null then
+    drop policy if exists "feedback_anon_insert" on "OrderFeedback";
+    drop policy if exists "feedback_staff_read" on "OrderFeedback";
+  end if;
+
+  if to_regclass('"StaffRequest"') is not null then
+    drop policy if exists "staffreq_anon_insert" on "StaffRequest";
+    drop policy if exists "staffreq_staff_read" on "StaffRequest";
+    drop policy if exists "staffreq_staff_update" on "StaffRequest";
+  end if;
+
+  if to_regclass('"TableSession"') is not null then
+    drop policy if exists "tablesession_staff_read" on "TableSession";
+  end if;
+
+  if to_regclass('"SessionBill"') is not null then
+    drop policy if exists "sessionbill_staff_read" on "SessionBill";
+  end if;
+end $$;
 
 create policy "restaurant_public_read" on "Restaurant"
   for select using (true);
@@ -162,24 +183,38 @@ create policy "payment_staff_read" on "Payment"
     )
   );
 
-create policy "feedback_staff_read" on "OrderFeedback"
-  for select using (app_admin_can_access("OrderFeedback".restaurant_id));
+do $$
+begin
+  if to_regclass('"OrderFeedback"') is not null then
+    create policy "feedback_staff_read" on "OrderFeedback"
+      for select using (app_admin_can_access("OrderFeedback".restaurant_id));
+  end if;
 
-create policy "staffreq_staff_read" on "StaffRequest"
-  for select using (app_staff_can_access("StaffRequest".restaurant_id));
+  if to_regclass('"StaffRequest"') is not null then
+    create policy "staffreq_staff_read" on "StaffRequest"
+      for select using (app_staff_can_access("StaffRequest".restaurant_id));
 
-create policy "staffreq_staff_update" on "StaffRequest"
-  for update using (app_staff_can_access("StaffRequest".restaurant_id))
-  with check (app_staff_can_access("StaffRequest".restaurant_id));
+    create policy "staffreq_staff_update" on "StaffRequest"
+      for update using (app_staff_can_access("StaffRequest".restaurant_id))
+      with check (app_staff_can_access("StaffRequest".restaurant_id));
+  end if;
+end $$;
 
-create policy "tablesession_staff_read" on "TableSession"
-  for select using (app_staff_can_access("TableSession".restaurant_id));
+do $$
+begin
+  if to_regclass('"TableSession"') is not null then
+    create policy "tablesession_staff_read" on "TableSession"
+      for select using (app_staff_can_access("TableSession".restaurant_id));
+  end if;
 
-create policy "sessionbill_staff_read" on "SessionBill"
-  for select using (
-    exists (
-      select 1 from "TableSession" ts
-      where ts.id = "SessionBill".table_session_id
-        and app_staff_can_access(ts.restaurant_id)
-    )
-  );
+  if to_regclass('"SessionBill"') is not null and to_regclass('"TableSession"') is not null then
+    create policy "sessionbill_staff_read" on "SessionBill"
+      for select using (
+        exists (
+          select 1 from "TableSession" ts
+          where ts.id = "SessionBill".table_session_id
+            and app_staff_can_access(ts.restaurant_id)
+        )
+      );
+  end if;
+end $$;

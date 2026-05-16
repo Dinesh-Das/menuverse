@@ -43,7 +43,9 @@ Important production functions:
 - `get_order_status_secure`
 - `get_table_session_orders`
 - `create_staff_request_secure`
+- `submit_order_feedback_secure`
 - `close_table_session`
+- `remove_staff_member_secure`
 
 Deploy Edge Functions:
 
@@ -65,6 +67,7 @@ npm audit --omit=dev
 
 - Apply migrations and RLS policies before enabling public QR ordering.
 - Verify owners, managers, and staff have `User.restaurant_id` set correctly.
+- Use session-specific table links/tokens for occupied tables; static table QR scans no longer expose an active bill unless `open_session_join_enabled` is intentionally enabled.
 - Keep service role keys only in Supabase Edge Function secrets.
 - Configure Razorpay credentials only in Edge Function secrets.
 - Confirm storage policies restrict writes by restaurant folder.

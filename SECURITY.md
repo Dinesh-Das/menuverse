@@ -14,8 +14,9 @@ QR scans start or resume a `TableSession` through `start_table_session`. The ses
 - Reading order status
 - Reading table bill/session orders
 - Calling staff
+- Submitting post-meal order feedback
 
-Closing a table session invalidates the old token for new orders.
+If an active session already exists, the static table QR does not return the session token unless the caller already presents the valid token or the table has `open_session_join_enabled` intentionally enabled. Closing a table session invalidates the old token for new orders.
 
 ## Order Creation
 
@@ -35,3 +36,5 @@ The current functions are safe placeholders. Live payment settlement must verify
 ## Abuse Protection
 
 Current protections include table session token validation, pending-order limits, waiter-request cooldowns, idempotency keys, and RLS denial of direct sensitive public writes. Production should add IP/device-level rate limiting at the Edge Function layer.
+
+Team member removal is performed through `remove_staff_member_secure`; only the restaurant owner can remove manager/staff profiles for the same restaurant.

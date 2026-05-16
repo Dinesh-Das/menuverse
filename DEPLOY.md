@@ -55,7 +55,9 @@ The secure MVP order path depends on these RPC functions:
 - `get_order_status_secure`
 - `get_table_session_orders`
 - `create_staff_request_secure`
+- `submit_order_feedback_secure`
 - `close_table_session`
+- `remove_staff_member_secure`
 
 ## 4. Edge Functions
 
@@ -93,6 +95,7 @@ using (bucket_id = 'restaurant-assets');
 ## Known Production TODOs
 
 - Complete Razorpay Orders API creation and webhook signature verification.
+- Replace static table-only QR joins with staff-issued, session-specific QR links for restaurants that need stricter bill privacy.
 - Add a printer/KOT Edge Function or webhook target.
 - Add WhatsApp notification provider calls behind Edge Functions.
 - Add richer analytics materialized views once live order data exists.

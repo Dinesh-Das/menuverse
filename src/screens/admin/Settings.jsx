@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminUpdateRestaurant } from '../../lib/api';
+import { adminRemoveStaffMember, adminUpdateRestaurant } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
@@ -187,12 +187,7 @@ export default function Settings() {
   const handleRemoveMember = async (memberId) => {
     if (memberId === user.id) { addToast("You can't remove yourself.", 'error'); return; }
     try {
-      const { error } = await supabase
-        .from('User')
-        .delete()
-        .eq('id', memberId)
-        .eq('restaurant_id', user.restaurantId);
-      if (error) throw new Error(error.message);
+      await adminRemoveStaffMember(memberId, user.restaurantId);
       setTeamMembers(prev => prev.filter(m => m.id !== memberId));
       addToast('Member removed.', 'success');
     } catch (err) {

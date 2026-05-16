@@ -21,7 +21,7 @@ function normalizeOrderItems(items = []) {
     menu_item_id: item.menu_item_id || item.id,
     quantity: Number(item.quantity ?? item.qty ?? 1),
     modifier_option_ids: (item.modifier_option_ids || item.modifiers || item.selectedModifiers || [])
-      .map(mod => mod.id)
+      .map(mod => typeof mod === 'string' ? mod : mod.id)
       .filter(Boolean),
     notes: item.notes || null,
   }));
@@ -266,6 +266,17 @@ export async function createStaffRequest({ restaurantId, tableId, tableSessionTo
   return data;
 }
 
+export async function submitOrderFeedback({ orderId, tableSessionToken, rating, comment = null }) {
+  const { data, error } = await supabase.rpc('submit_order_feedback_secure', {
+    p_order_id: orderId,
+    p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+    p_rating: rating,
+    p_comment: comment,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 // Admin API
 
 export async function adminFetchOrders(status, restaurantId, limit = 100, offset = 0) {
@@ -454,13 +465,6 @@ export async function adminDeleteTable(id, restaurantId) {
 export async function adminClearTable(tableId, restaurantId) {
   requireRestaurantId(restaurantId);
   const ts = now();
-  const { error: tErr } = await supabase
-    .from('Table')
-    .update({ status: 'available', updated_at: ts })
-    .eq('id', tableId)
-    .eq('restaurant_id', restaurantId);
-  if (tErr) throw new Error(tErr.message);
-
   const { error: sessionErr } = await supabase.rpc('close_table_session', {
     p_restaurant_id: restaurantId,
     p_table_id: tableId,
@@ -468,16 +472,42 @@ export async function adminClearTable(tableId, restaurantId) {
   if (sessionErr && !allowClientOrderFallback) throw new Error(sessionErr.message);
 
   if (sessionErr && allowClientOrderFallback) {
+    const { count: activeCount, error: activeErr } = await supabase
+      .from('Order')
+      .select('id', { count: 'exact', head: true })
+      .eq('table_id', tableId)
+      .eq('restaurant_id', restaurantId)
+      .in('status', ['pending', 'accepted', 'preparing']);
+    if (activeErr) throw new Error(activeErr.message);
+    if (activeCount > 0) throw new Error('Cannot clear table while kitchen-active orders exist.');
+
     const { error: oErr } = await supabase
       .from('Order')
       .update({ status: 'completed', updated_at: ts })
       .eq('table_id', tableId)
       .eq('restaurant_id', restaurantId)
-      .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served']);
+      .in('status', ['ready', 'served']);
     if (oErr) throw new Error(oErr.message);
+
+    const { error: tErr } = await supabase
+      .from('Table')
+      .update({ status: 'available', updated_at: ts })
+      .eq('id', tableId)
+      .eq('restaurant_id', restaurantId);
+    if (tErr) throw new Error(tErr.message);
   }
 
   return true;
+}
+
+export async function adminRemoveStaffMember(memberId, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('remove_staff_member_secure', {
+    p_restaurant_id: restaurantId,
+    p_member_id: memberId,
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function adminUpdateRestaurant(id, payload) {

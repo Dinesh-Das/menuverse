@@ -30,6 +30,8 @@ export default function QRLanding() {
           restaurantId: tableData.restaurant_id,
           restaurantSlug,
           gstRate: tableData.restaurant?.gst_rate,
+          paymentEnabled: Boolean(tableData.restaurant?.payment_enabled),
+          paymentProvider: tableData.restaurant?.payment_provider || 'razorpay',
         };
 
         try {

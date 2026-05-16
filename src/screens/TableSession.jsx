@@ -9,7 +9,7 @@ import { safeParseModifiers } from '../lib/businessRules';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber, clearCart, addItem, tableSessionToken } = useCart();
+  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, paymentEnabled, paymentProvider } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
@@ -61,7 +61,13 @@ export default function TableSession() {
   };
 
   const requestPaymentLink = async () => {
-    setPaymentState({ isOpen: true, status: 'processing', message: 'Creating a secure payment request...' });
+    if (!paymentEnabled) {
+      setPayAtCounterOpen(true);
+      return;
+    }
+
+    const providerName = paymentProvider === 'razorpay' ? 'Razorpay' : 'digital';
+    setPaymentState({ isOpen: true, status: 'processing', message: `Creating a secure ${providerName} payment request...` });
     try {
       await createPayment({
         table_session_token: tableSessionToken,
@@ -147,13 +153,23 @@ export default function TableSession() {
               <h2 className="font-headline text-4xl font-bold text-primary tracking-tight mb-6">₹{totalBill.toFixed(2)}</h2>
               
               <div className="flex flex-col gap-3">
-                <button
-                  onClick={requestPaymentLink}
-                  className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
-                >
-                  Request Payment Link
-                  <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
-                </button>
+                {paymentEnabled ? (
+                  <button
+                    onClick={requestPaymentLink}
+                    className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                  >
+                    Request Payment Link
+                    <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setPayAtCounterOpen(true)}
+                    className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                  >
+                    Ask Staff for Payment Link
+                    <span className="material-symbols-outlined text-lg ml-1">support_agent</span>
+                  </button>
+                )}
                 {/* LF-06: Pay at Counter — opens informational dialog instead of doing nothing */}
                 <button
                   onClick={() => setPayAtCounterOpen(true)}
@@ -212,15 +228,23 @@ export default function TableSession() {
                       </div>
                     </div>
                     <div className="p-4 space-y-2">
-                      {order.items.map((item, idx) => (
-                        <div key={idx} className="flex justify-between text-sm">
-                          <span className="text-on-surface-variant">
-                            <span className="font-bold text-on-surface mr-2">{item.quantity}x</span>
-                            {item.name}
-                          </span>
-                          <span className="font-medium text-on-surface">₹{(item.price * item.quantity).toFixed(2)}</span>
-                        </div>
-                      ))}
+                      {order.items.map((item, idx) => {
+                        const modifiers = safeParseModifiers(item.modifiers_json);
+                        const modifierTotal = modifiers.reduce((sum, mod) => sum + Number(mod.price_delta || 0), 0);
+                        const lineTotal = (Number(item.price || 0) + modifierTotal) * Number(item.quantity || 0);
+                        return (
+                          <div key={idx} className="flex justify-between text-sm gap-4">
+                            <span className="text-on-surface-variant">
+                              <span className="font-bold text-on-surface mr-2">{item.quantity}x</span>
+                              {item.name}
+                              {modifiers.length > 0 && (
+                                <span className="block text-[10px] mt-0.5">{modifiers.map(mod => mod.name).filter(Boolean).join(', ')}</span>
+                              )}
+                            </span>
+                            <span className="font-medium text-on-surface whitespace-nowrap">₹{lineTotal.toFixed(2)}</span>
+                          </div>
+                        );
+                      })}
                       <div className="pt-2 mt-2 border-t border-outline-variant/10 flex justify-between items-center">
                         <span className="text-xs font-bold text-on-surface-variant">Order Total</span>
                         <span className="font-bold text-primary">₹{order.total_amount.toFixed(2)}</span>
@@ -244,7 +268,11 @@ export default function TableSession() {
 
             {/* CTA */}
             <div className="mt-10 p-6 bg-surface-container-high rounded-2xl border border-outline-variant/10 text-center">
-              <p className="text-sm text-on-surface-variant mb-4">Ready to wrap up? You can settle your bill at the counter or request a digital payment link from our staff.</p>
+              <p className="text-sm text-on-surface-variant mb-4">
+                {paymentEnabled
+                  ? 'Ready to wrap up? You can settle your bill at the counter or request a verified digital payment link from our staff.'
+                  : 'Ready to wrap up? Ask our staff for the available payment options for this table.'}
+              </p>
               <button 
                 onClick={() => { clearCart(); navigate(menuPath); }}
                 className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
