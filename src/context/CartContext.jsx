@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 
 const CartContext = createContext(null);
 const STORAGE_KEY = 'mv_cart';
+const TABLE_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 function loadFromStorage() {
   try {
@@ -122,8 +123,13 @@ export function CartProvider({ children }) {
     }
     if (sessionData.tableSessionToken !== undefined) {
       setTableSessionToken(sessionData.tableSessionToken);
-      if (sessionData.tableSessionToken) localStorage.setItem('mv_table_session_token', sessionData.tableSessionToken);
-      else localStorage.removeItem('mv_table_session_token');
+      if (sessionData.tableSessionToken) {
+        localStorage.setItem('mv_table_session_token', sessionData.tableSessionToken);
+        localStorage.setItem('mv_table_session_expires', String(Date.now() + TABLE_SESSION_TTL_MS));
+      } else {
+        localStorage.removeItem('mv_table_session_token');
+        localStorage.removeItem('mv_table_session_expires');
+      }
     }
     if (sessionData.tableSessionId !== undefined) {
       setTableSessionId(sessionData.tableSessionId);

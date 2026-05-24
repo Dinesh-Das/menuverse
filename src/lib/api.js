@@ -1,15 +1,8 @@
 import { supabase } from './supabase';
-import { canTransitionOrderStatus } from './businessRules';
+import { canTransitionOrderStatus, safeParseModifiers } from './businessRules';
 
 const now = () => new Date().toISOString();
-const allowClientOrderFallback = import.meta.env.DEV && import.meta.env.VITE_ALLOW_CLIENT_ORDER_FALLBACK === 'true';
-
-function genOrderId() {
-  const d = new Date();
-  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const rand = crypto.randomUUID().slice(0, 8).toUpperCase();
-  return `SF-${date}-${rand}`;
-}
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 
 function requireRestaurantId(restaurantId) {
   if (!restaurantId) throw new Error('Restaurant context is required for this operation.');
@@ -25,6 +18,31 @@ function normalizeOrderItems(items = []) {
       .filter(Boolean),
     notes: item.notes || null,
   }));
+}
+
+async function getAuthHeader() {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function apiFetch(path, options = {}) {
+  const { auth, ...fetchOptions } = options;
+  const authHeaders = auth === false ? {} : await getAuthHeader();
+  const headers = {
+    ...authHeaders,
+    ...(fetchOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(fetchOptions.headers || {}),
+  };
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...fetchOptions,
+    headers,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error || `Request failed with status ${response.status}`);
+  }
+  return payload;
 }
 
 // Public customer API
@@ -58,7 +76,13 @@ export async function fetchMenu(restaurantSlug) {
 
   return {
     restaurant,
-    categories: categories?.map(cat => ({ ...cat, items: cat.items || [] })) || [],
+    categories: categories?.map(cat => ({
+      ...cat,
+      items: (cat.items || []).map(item => ({
+        ...item,
+        tags: safeParseModifiers(item.tags_json) ?? [],
+      })),
+    })) || [],
   };
 }
 
@@ -99,78 +123,10 @@ export async function fetchMenuItem(dishId) {
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error('Menu item not found');
-  return data;
-}
-
-async function placeOrderClientFallback(payload) {
-  const orderId = genOrderId();
-  const ts = now();
-
-  const { count, error: countErr } = await supabase
-    .from('Order')
-    .select('id', { count: 'exact', head: true })
-    .eq('table_id', payload.table_id)
-    .eq('restaurant_id', payload.restaurant_id)
-    .eq('status', 'pending');
-  if (countErr) throw new Error(`Anti-spam check failed: ${countErr.message}`);
-  if (count >= 5) throw new Error('Kitchen is processing your previous orders. Please wait before placing another order.');
-
-  const itemIds = payload.items.map(i => i.menu_item_id);
-  const { data: dbItems, error: dbErr } = await supabase
-    .from('MenuItem')
-    .select('id, name, price, available, restaurant_id')
-    .in('id', itemIds)
-    .eq('restaurant_id', payload.restaurant_id);
-  if (dbErr) throw new Error(`Price verification failed: ${dbErr.message}`);
-
-  let totalAmount = 0;
-  for (const item of payload.items) {
-    const dbItem = dbItems.find(i => i.id === item.menu_item_id);
-    if (!dbItem) throw new Error(`Item ${item.name || item.menu_item_id} not found`);
-    if (!dbItem.available) throw new Error(`${dbItem.name} is currently unavailable`);
-    totalAmount += Number(dbItem.price) * Number(item.quantity || 1);
-  }
-
-  const { error: orderError } = await supabase.from('Order').insert({
-    id: orderId,
-    restaurant_id: payload.restaurant_id,
-    table_id: payload.table_id,
-    table_session_id: payload.table_session_id || null,
-    total_amount: Number(totalAmount.toFixed(2)),
-    special_instructions: payload.special_instructions || null,
-    idempotency_key: payload.idempotency_key,
-    status: 'pending',
-    created_at: ts,
-    updated_at: ts,
-  });
-  if (orderError) throw new Error(`Order failed: ${orderError.message}`);
-
-  const orderItems = payload.items.map(item => {
-    const dbItem = dbItems.find(i => i.id === item.menu_item_id);
-    return {
-      id: crypto.randomUUID(),
-      order_id: orderId,
-      menu_item_id: item.menu_item_id,
-      name: dbItem.name,
-      quantity: item.quantity,
-      price: dbItem.price,
-      modifiers_json: item.modifiers?.length ? JSON.stringify(item.modifiers) : null,
-    };
-  });
-
-  const { error: itemsError } = await supabase.from('OrderItem').insert(orderItems);
-  if (itemsError) {
-    await supabase.from('Order').delete().eq('id', orderId).eq('restaurant_id', payload.restaurant_id);
-    throw new Error(`Order items failed: ${itemsError.message}`);
-  }
-
-  await supabase
-    .from('Table')
-    .update({ status: 'occupied', updated_at: ts })
-    .eq('id', payload.table_id)
-    .eq('restaurant_id', payload.restaurant_id);
-
-  return { order_ref: orderId, status: 'pending', total_amount: Number(totalAmount.toFixed(2)) };
+  return {
+    ...data,
+    tags: safeParseModifiers(data.tags_json) ?? [],
+  };
 }
 
 export async function placeOrder(payload) {
@@ -185,15 +141,10 @@ export async function placeOrder(payload) {
     p_items: normalizeOrderItems(payload.items),
   };
 
+  // Order creation must go through the create_order_secure RPC only.
   const { data, error } = await supabase.rpc('create_order_secure', rpcPayload);
-  if (!error) return Array.isArray(data) ? data[0] : data;
-
-  if (allowClientOrderFallback) {
-    console.warn('[Menuverse] create_order_secure RPC unavailable; using opted-in local demo fallback.', error.message);
-    return placeOrderClientFallback(payload);
-  }
-
-  throw new Error(`Secure order creation is not available: ${error.message}`);
+  if (error) throw new Error(`Secure order creation failed: ${error.message}`);
+  return Array.isArray(data) ? data[0] : data;
 }
 
 export async function fetchOrderStatus(orderId) {
@@ -206,24 +157,10 @@ export async function fetchOrderStatus(orderId) {
     if (!error && data) return Array.isArray(data) ? data[0] : data;
   }
 
-  if (!allowClientOrderFallback) throw new Error('Order status requires a valid table session.');
-
-  const { data, error } = await supabase
-    .from('Order')
-    .select(`
-      *,
-      items:OrderItem(*, menu_item:MenuItem(*)),
-      table:Table(*),
-      payments:Payment(*)
-    `)
-    .eq('id', orderId)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error('Order not found');
-  return data;
+  throw new Error('Order status requires a valid table session.');
 }
 
-export async function fetchTableOrders(tableId) {
+export async function fetchTableOrders(_tableId) {
   const tableSessionToken = localStorage.getItem('mv_table_session_token');
   if (tableSessionToken) {
     const { data, error } = await supabase.rpc('get_table_session_orders', {
@@ -232,16 +169,7 @@ export async function fetchTableOrders(tableId) {
     if (!error) return data || [];
   }
 
-  if (!allowClientOrderFallback) throw new Error('Table bill requires a valid table session.');
-
-  const { data, error } = await supabase
-    .from('Order')
-    .select('*, items:OrderItem(*, menu_item:MenuItem(*))')
-    .eq('table_id', tableId)
-    .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served', 'completed'])
-    .order('created_at', { ascending: false });
-  if (error) throw new Error('Failed to fetch table orders');
-  return data || [];
+  throw new Error('Table bill requires a valid table session.');
 }
 
 export async function createPayment(payload) {
@@ -256,14 +184,20 @@ export async function createPayment(payload) {
   return data;
 }
 
-export async function createStaffRequest({ restaurantId, tableId, tableSessionToken }) {
+export async function createStaffRequest({ restaurantId, tableId, tableSessionToken, requestType = 'waiter', message = null }) {
   const { data, error } = await supabase.rpc('create_staff_request_secure', {
     p_restaurant_id: requireRestaurantId(restaurantId),
     p_table_id: tableId,
     p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+    p_request_type: requestType,
+    p_message: message,
   });
   if (error) throw new Error(error.message);
   return data;
+}
+
+export async function fetchPublicARAsset(itemId) {
+  return apiFetch(`/api/public/menu-items/${itemId}/ar`, { auth: false });
 }
 
 export async function submitOrderFeedback({ orderId, tableSessionToken, rating, comment = null }) {
@@ -329,6 +263,30 @@ export async function adminFetchMenuItems(restaurantId) {
     .order('display_order', { ascending: true });
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+export async function adminFetchARAsset(itemId) {
+  return apiFetch(`/api/admin/menu-items/${itemId}/ar`);
+}
+
+export async function adminUploadARAsset(itemId, formData) {
+  return apiFetch(`/api/admin/menu-items/${itemId}/ar/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function adminUpdateARAssetStatus(itemId, payload) {
+  return apiFetch(`/api/admin/menu-items/${itemId}/ar/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminDeleteARAsset(itemId) {
+  return apiFetch(`/api/admin/menu-items/${itemId}/ar`, {
+    method: 'DELETE',
+  });
 }
 
 export async function adminCreateMenuItem(payload) {
@@ -464,38 +422,11 @@ export async function adminDeleteTable(id, restaurantId) {
 
 export async function adminClearTable(tableId, restaurantId) {
   requireRestaurantId(restaurantId);
-  const ts = now();
   const { error: sessionErr } = await supabase.rpc('close_table_session', {
     p_restaurant_id: restaurantId,
     p_table_id: tableId,
   });
-  if (sessionErr && !allowClientOrderFallback) throw new Error(sessionErr.message);
-
-  if (sessionErr && allowClientOrderFallback) {
-    const { count: activeCount, error: activeErr } = await supabase
-      .from('Order')
-      .select('id', { count: 'exact', head: true })
-      .eq('table_id', tableId)
-      .eq('restaurant_id', restaurantId)
-      .in('status', ['pending', 'accepted', 'preparing']);
-    if (activeErr) throw new Error(activeErr.message);
-    if (activeCount > 0) throw new Error('Cannot clear table while kitchen-active orders exist.');
-
-    const { error: oErr } = await supabase
-      .from('Order')
-      .update({ status: 'completed', updated_at: ts })
-      .eq('table_id', tableId)
-      .eq('restaurant_id', restaurantId)
-      .in('status', ['ready', 'served']);
-    if (oErr) throw new Error(oErr.message);
-
-    const { error: tErr } = await supabase
-      .from('Table')
-      .update({ status: 'available', updated_at: ts })
-      .eq('id', tableId)
-      .eq('restaurant_id', restaurantId);
-    if (tErr) throw new Error(tErr.message);
-  }
+  if (sessionErr) throw new Error(sessionErr.message);
 
   return true;
 }

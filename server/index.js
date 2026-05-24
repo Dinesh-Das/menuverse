@@ -6,6 +6,8 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import QRCode from 'qrcode';
+import multer from 'multer';
+import { createClient } from '@supabase/supabase-js';
 
 // ── DEPRECATION NOTICE ───────────────────────────────────────────────────
 // This Express server is being phased out in favor of Supabase-native architecture.
@@ -31,6 +33,12 @@ const httpServer = createServer(app);
 
 const PORT = process.env.PORT || 3001;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:5173';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+  : null;
+const arUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // ── CORS — whitelist from env, with a safe dev default ──────────────────────
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:4173')
@@ -73,17 +81,46 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 
 // ── Auth Middleware ──────────────────────────────────────────────────────────
-const requireAuth = (req, res, next) => {
+const requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  const token = authHeader.split(' ')[1];
   try {
-    const payload = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
     req.user = payload;
-    next();
+    return next();
   } catch {
-    return res.status(401).json({ error: 'Invalid token' });
+    if (!supabaseAdmin) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    try {
+      const { data, error } = await supabaseAdmin.auth.getUser(token);
+      if (error || !data?.user) return res.status(401).json({ error: 'Invalid token' });
+
+      const profile = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { id: data.user.id },
+            ...(data.user.email ? [{ email: data.user.email }] : []),
+          ],
+        },
+      });
+      if (!profile) return res.status(403).json({ error: 'User profile is not linked to a restaurant.' });
+
+      req.user = {
+        userId: profile.id,
+        restaurantId: profile.restaurant_id,
+        role: profile.role,
+        email: profile.email,
+      };
+      return next();
+    } catch (err) {
+      console.error('[Auth] Supabase token verification failed:', err);
+      return res.status(401).json({ error: 'Invalid token' });
+    }
   }
 };
 
@@ -104,14 +141,72 @@ const genOrderId = () => {
 
 // Valid order state transitions — matches client-side map exactly
 const VALID_TRANSITIONS = {
-  pending:    ['accepted', 'cancelled'],
-  accepted:   ['preparing'],
-  preparing:  ['ready'],
-  ready:      ['served'],
-  served:     ['completed'],
-  completed:  [],
-  cancelled:  [],
+  pending: ['accepted', 'preparing', 'cancelled'],
+  accepted: ['preparing', 'cancelled'],
+  preparing: ['ready', 'cancelled'],
+  ready: ['served'],
+  served: ['completed'],
+  completed: [],
+  cancelled: [],
 };
+
+const GLB_MIME_TYPES = new Set(['model/gltf-binary', 'application/octet-stream']);
+const USDZ_MIME_TYPES = new Set(['model/vnd.usdz+zip', 'model/vnd.pixar.usd', 'application/octet-stream', 'application/zip']);
+const THUMBNAIL_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function requireStorageClient() {
+  if (!supabaseAdmin) {
+    throw new Error('Supabase service role storage client is not configured.');
+  }
+  return supabaseAdmin;
+}
+
+function getFileExtension(file) {
+  return file.originalname.split('.').pop()?.toLowerCase() || '';
+}
+
+function validateUpload(file, { label, maxBytes, mimeTypes, extensions }) {
+  if (!file) throw new Error(`${label} is required.`);
+  if (file.size > maxBytes) throw new Error(`${label} exceeds the allowed size.`);
+  const ext = getFileExtension(file);
+  if (!mimeTypes.has(file.mimetype) || !extensions.includes(ext)) {
+    throw new Error(`${label} has an unsupported file type.`);
+  }
+}
+
+async function uploadToStorage(path, file) {
+  const client = requireStorageClient();
+  const { error } = await client.storage
+    .from('ar-models')
+    .upload(path, file.buffer, {
+      upsert: true,
+      contentType: file.mimetype,
+    });
+  if (error) throw new Error(error.message);
+
+  const { data } = client.storage.from('ar-models').getPublicUrl(path);
+  return data.publicUrl;
+}
+
+function storagePathFromPublicUrl(publicUrl) {
+  if (!publicUrl) return null;
+  const marker = '/storage/v1/object/public/ar-models/';
+  const index = publicUrl.indexOf(marker);
+  if (index === -1) return null;
+  return decodeURIComponent(publicUrl.slice(index + marker.length));
+}
+
+async function assertMenuItemForRestaurant(itemId, restaurantId) {
+  const menuItem = await prisma.menuItem.findFirst({
+    where: { id: itemId, restaurant_id: restaurantId },
+  });
+  if (!menuItem) {
+    const error = new Error('Menu item not found for this restaurant.');
+    error.status = 404;
+    throw error;
+  }
+  return menuItem;
+}
 
 // ── SEED ─────────────────────────────────────────────────────────────────────
 app.post('/api/seed', async (req, res) => {
@@ -361,6 +456,190 @@ app.delete('/api/admin/menu-items/:id', requireAuth, requireRole('owner'), async
 });
 
 // ── MENU CATEGORIES (Admin) ──────────────────────────────────────────────────
+app.post(
+  '/api/admin/menu-items/:itemId/ar/upload',
+  requireAuth,
+  requireRole('owner', 'manager'),
+  arUpload.fields([
+    { name: 'glb_file', maxCount: 1 },
+    { name: 'usdz_file', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const { itemId } = req.params;
+      await assertMenuItemForRestaurant(itemId, req.user.restaurantId);
+
+      const glbFile = req.files?.glb_file?.[0];
+      const usdzFile = req.files?.usdz_file?.[0];
+      const thumbnailFile = req.files?.thumbnail?.[0];
+
+      validateUpload(glbFile, {
+        label: 'GLB file',
+        maxBytes: 20 * 1024 * 1024,
+        mimeTypes: GLB_MIME_TYPES,
+        extensions: ['glb'],
+      });
+      if (usdzFile) {
+        validateUpload(usdzFile, {
+          label: 'USDZ file',
+          maxBytes: 20 * 1024 * 1024,
+          mimeTypes: USDZ_MIME_TYPES,
+          extensions: ['usdz'],
+        });
+      }
+      if (thumbnailFile) {
+        validateUpload(thumbnailFile, {
+          label: 'Thumbnail',
+          maxBytes: 2 * 1024 * 1024,
+          mimeTypes: THUMBNAIL_MIME_TYPES,
+          extensions: ['jpg', 'jpeg', 'png', 'webp'],
+        });
+      }
+
+      const basePath = `${req.user.restaurantId}/${itemId}`;
+      const storageUpdates = {
+        model_glb_url: await uploadToStorage(`${basePath}/model.glb`, glbFile),
+        processing_status: 'ready',
+        processing_error: null,
+        file_size: glbFile.size + (usdzFile?.size || 0) + (thumbnailFile?.size || 0),
+      };
+
+      if (usdzFile) {
+        storageUpdates.model_usdz_url = await uploadToStorage(`${basePath}/model.usdz`, usdzFile);
+      }
+      if (thumbnailFile) {
+        const thumbExt = getFileExtension(thumbnailFile);
+        storageUpdates.thumbnail_url = await uploadToStorage(`${basePath}/thumbnail.${thumbExt}`, thumbnailFile);
+        storageUpdates.preview_image_url = storageUpdates.thumbnail_url;
+      }
+
+      const asset = await prisma.aRAsset.upsert({
+        where: { menu_item_id: itemId },
+        update: storageUpdates,
+        create: {
+          restaurant_id: req.user.restaurantId,
+          menu_item_id: itemId,
+          ...storageUpdates,
+        },
+      });
+
+      await prisma.menuItem.update({
+        where: { id: itemId },
+        data: { has_ar_preview: true },
+      });
+
+      res.json(asset);
+    } catch (err) {
+      console.error(err);
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  }
+);
+
+app.patch('/api/admin/menu-items/:itemId/ar/status', requireAuth, requireRole('owner', 'manager'), async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { is_active, ar_preview_enabled } = req.body;
+    await assertMenuItemForRestaurant(itemId, req.user.restaurantId);
+
+    const existing = await prisma.aRAsset.findUnique({ where: { menu_item_id: itemId } });
+    if (!existing) return res.status(404).json({ error: 'AR asset not found.' });
+
+    const asset = await prisma.aRAsset.update({
+      where: { menu_item_id: itemId },
+      data: {
+        ...(is_active !== undefined ? { is_active: Boolean(is_active) } : {}),
+      },
+    });
+
+    if (ar_preview_enabled !== undefined) {
+      await prisma.menuItem.update({
+        where: { id: itemId },
+        data: { ar_preview_enabled: Boolean(ar_preview_enabled) },
+      });
+    }
+
+    res.json(asset);
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/menu-items/:itemId/ar', requireAuth, requireRole('owner', 'manager'), async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    await assertMenuItemForRestaurant(itemId, req.user.restaurantId);
+    const asset = await prisma.aRAsset.findUnique({ where: { menu_item_id: itemId } });
+    if (!asset) return res.status(404).json({ error: 'AR asset not found.' });
+    res.json(asset);
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/menu-items/:itemId/ar', requireAuth, requireRole('owner', 'manager'), async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    await assertMenuItemForRestaurant(itemId, req.user.restaurantId);
+    const asset = await prisma.aRAsset.findUnique({ where: { menu_item_id: itemId } });
+    if (!asset) return res.status(404).json({ error: 'AR asset not found.' });
+
+    const paths = [
+      asset.model_glb_url,
+      asset.model_usdz_url,
+      asset.thumbnail_url,
+      asset.preview_image_url,
+    ]
+      .map(storagePathFromPublicUrl)
+      .filter(Boolean);
+
+    if (paths.length) {
+      const client = requireStorageClient();
+      const { error } = await client.storage.from('ar-models').remove([...new Set(paths)]);
+      if (error) throw new Error(error.message);
+    }
+
+    await prisma.aRAsset.delete({ where: { menu_item_id: itemId } });
+    await prisma.menuItem.update({
+      where: { id: itemId },
+      data: { has_ar_preview: false, ar_preview_enabled: false },
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/public/menu-items/:itemId/ar', async (req, res) => {
+  try {
+    const item = await prisma.menuItem.findUnique({
+      where: { id: req.params.itemId },
+      include: { ar_asset: true },
+    });
+
+    if (!item?.has_ar_preview || !item.ar_preview_enabled || !item.ar_asset?.is_active) {
+      return res.status(404).json({ error: 'AR preview is not active.' });
+    }
+
+    res.json({
+      menu_item_id: item.id,
+      has_ar_preview: item.has_ar_preview,
+      model_glb_url: item.ar_asset.model_glb_url,
+      model_usdz_url: item.ar_asset.model_usdz_url,
+      thumbnail_url: item.ar_asset.thumbnail_url,
+      fallback_video_url: item.ar_asset.source_video_url,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/categories', requireAuth, async (req, res) => {
   try {
     const cats = await prisma.menuCategory.findMany({
@@ -512,6 +791,11 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurant_id } });
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
     const orderId = genOrderId();
 
     // Trustless Pricing Calculation
@@ -580,8 +864,9 @@ app.post('/api/orders', async (req, res) => {
       });
     }
 
-    const calculatedTax = +(calculatedSubtotal * 0.05).toFixed(2);
-    const calculatedTotalAmount = +(calculatedSubtotal + calculatedTax).toFixed(2);
+    const calculatedTax = +(calculatedSubtotal * Number(restaurant.gst_rate || 0)).toFixed(2);
+    const calculatedServiceCharge = +(calculatedSubtotal * Number(restaurant.service_charge_rate || 0)).toFixed(2);
+    const calculatedTotalAmount = +(calculatedSubtotal + calculatedTax + calculatedServiceCharge).toFixed(2);
 
     if (calculatedTotalAmount <= 0) {
       return res.status(400).json({ error: 'Order total must be greater than zero' });
@@ -592,6 +877,9 @@ app.post('/api/orders', async (req, res) => {
         id: orderId,
         restaurant_id,
         table_id,
+        subtotal_amount: +calculatedSubtotal.toFixed(2),
+        tax_amount: calculatedTax,
+        service_charge_amount: calculatedServiceCharge,
         total_amount: calculatedTotalAmount,
         special_instructions,
         idempotency_key: idempotency_key || null,

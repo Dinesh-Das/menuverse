@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import '@google/model-viewer';
 import { useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { fetchMenuItem } from '../lib/api';
+import { fetchMenuItem, fetchPublicARAsset } from '../lib/api';
 import { CustomerTopNav } from '../components/TopNav';
 
 const MAX_QTY = 20;
@@ -15,10 +16,17 @@ export default function DishDetail() {
   const [error, setError] = useState(null);
   const [selectedModifiers, setSelectedModifiers] = useState({});
   const [addedFeedback, setAddedFeedback] = useState(false);
+  const [arAsset, setArAsset] = useState(null);
+  const [showARModal, setShowARModal] = useState(false);
+  const [arSupported, setArSupported] = useState(true);
 
   useEffect(() => {
-    fetchMenuItem(dishId)
-      .then(data => {
+    let mounted = true;
+
+    async function loadDish() {
+      try {
+        const data = await fetchMenuItem(dishId);
+        if (!mounted) return;
         setDish(data);
         // Initialize selected modifiers for required groups
         const initial = {};
@@ -26,12 +34,29 @@ export default function DishDetail() {
           initial[group.id] = null;
         });
         setSelectedModifiers(initial);
+        setArAsset(null);
+
+        if (data.has_ar_preview && data.ar_preview_enabled) {
+          try {
+            const arData = await fetchPublicARAsset(dishId);
+            if (mounted) setArAsset(arData);
+          } catch {
+            if (mounted) setArAsset(null);
+          }
+        }
+
         setLoading(false);
-      })
-      .catch(err => {
+      } catch (err) {
+        if (!mounted) return;
         setError(err.message);
         setLoading(false);
-      });
+      }
+    }
+
+    loadDish();
+    return () => {
+      mounted = false;
+    };
   }, [dishId]);
 
   // Check if all required modifier groups have selections
@@ -69,6 +94,11 @@ export default function DishDetail() {
     setTimeout(() => setAddedFeedback(false), 2000);
   };
 
+  const handleOpenAR = () => {
+    setArSupported(Boolean(navigator.xr));
+    setShowARModal(true);
+  };
+
   if (loading) return (
     <div className="min-h-dvh bg-background flex items-center justify-center">
       <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
@@ -91,7 +121,8 @@ export default function DishDetail() {
 
       <div className="flex flex-col md:flex-row md:items-start md:gap-12 max-w-7xl mx-auto md:px-12 md:pt-24">
         {/* ── Image/AR Section ────────────────────────── */}
-        <div className={`relative w-full aspect-square md:aspect-[4/3] md:w-1/2 md:rounded-3xl overflow-hidden md:shadow-2xl pt-16 md:pt-0 ${isUnavailable ? 'grayscale opacity-70' : ''}`}>
+        <div className="w-full md:w-1/2">
+          <div className={`relative w-full aspect-square md:aspect-[4/3] md:rounded-3xl overflow-hidden md:shadow-2xl pt-16 md:pt-0 ${isUnavailable ? 'grayscale opacity-70' : ''}`}>
           <img
             src={dish.image_url}
             alt={dish.name}
@@ -106,15 +137,17 @@ export default function DishDetail() {
             </div>
           )}
           
-          {/* AR Overlay Button — Coming Soon */}
-          <button
-            disabled
-            title="AR view coming soon — stay tuned!"
-            className="absolute bottom-6 right-6 md:bottom-8 md:right-8 glass-dark border border-white/10 text-on-surface/50 px-4 py-2.5 rounded-full flex items-center gap-2 backdrop-blur-2xl shadow-luxury z-10 cursor-not-allowed opacity-60"
-          >
-            <span className="material-symbols-outlined text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>view_in_ar</span>
-            <span className="text-[10px] font-bold uppercase tracking-widest pt-0.5">Coming Soon</span>
-          </button>
+          </div>
+
+          {arAsset?.model_glb_url && (
+            <button
+              onClick={handleOpenAR}
+              className="mt-4 mx-6 md:mx-0 w-[calc(100%-3rem)] md:w-full bg-surface-container-high text-on-surface border border-outline-variant/20 px-5 py-3 rounded-full flex items-center justify-center gap-2 shadow-luxury hover:bg-primary hover:text-on-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>view_in_ar</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest pt-0.5">View in AR</span>
+            </button>
+          )}
         </div>
 
         {/* ── Content Body ──────────────────────────────────── */}
@@ -142,8 +175,8 @@ export default function DishDetail() {
           </div>
 
           {/* Tags */}
-          {dish.tags_json && (() => {
-            const tags = (() => { try { return JSON.parse(dish.tags_json); } catch { return []; } })();
+          {(dish.tags?.length > 0 || dish.tags_json) && (() => {
+            const tags = dish.tags?.length ? dish.tags : (() => { try { return JSON.parse(dish.tags_json); } catch { return []; } })();
             return tags.length > 0 ? (
               <div className="flex gap-2 mb-6 flex-wrap">
                 {tags.map(tag => (
@@ -254,6 +287,48 @@ export default function DishDetail() {
           </div>
         </main>
       </div>
+
+      {showARModal && arAsset && (
+        <div className="fixed inset-0 z-[120] bg-background/90 backdrop-blur-xl flex items-center justify-center p-4">
+          <div className="relative w-full max-w-5xl bg-surface-container-low border border-outline-variant/20 rounded-3xl shadow-2xl overflow-hidden">
+            <button
+              onClick={() => setShowARModal(false)}
+              className="absolute top-4 right-4 z-10 w-11 h-11 rounded-full bg-surface-container-highest text-on-surface flex items-center justify-center shadow-lg hover:bg-error hover:text-white transition-colors"
+              aria-label="Close AR viewer"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+
+            {!arSupported && arAsset.fallback_video_url ? (
+              <video
+                src={arAsset.fallback_video_url}
+                controls
+                autoPlay
+                loop
+                playsInline
+                className="w-full h-[80vh] object-contain bg-black"
+              />
+            ) : (
+              <div className="p-4 pt-16">
+                {!arSupported && (
+                  <p className="text-xs text-on-surface-variant text-center mb-3">
+                    AR is not available on this device, but you can still inspect the 3D preview.
+                  </p>
+                )}
+                <model-viewer
+                  src={arAsset.model_glb_url}
+                  ios-src={arAsset.model_usdz_url || undefined}
+                  ar="true"
+                  ar-modes="webxr scene-viewer quick-look"
+                  camera-controls="true"
+                  auto-rotate="true"
+                  style={{ width: '100%', height: '80vh' }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

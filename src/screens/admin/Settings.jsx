@@ -8,6 +8,21 @@ import { useToast } from '../../components/Toast';
 import { INTEGRATION_READINESS } from '../../lib/integrations';
 
 const TABS = ['Brand', 'Operations', 'Team'];
+const LOGO_SIGNATURES = {
+  jpg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
+  jpeg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
+  png: { type: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47] },
+  webp: { type: 'image/webp', bytes: [0x52, 0x49, 0x46, 0x46] },
+};
+
+async function logoMagicBytesMatch(file) {
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  const expected = LOGO_SIGNATURES[ext];
+  if (!expected || expected.type !== file.type) return false;
+
+  const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  return expected.bytes.every((byte, index) => bytes[index] === byte);
+}
 
 export default function Settings() {
   const { user } = useAuth();
@@ -104,8 +119,12 @@ export default function Settings() {
       addToast('File too large — max 5MB.', 'error');
       return;
     }
-    if (!['image/png', 'image/svg+xml', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      addToast('Unsupported format — use PNG, SVG, JPEG or WebP.', 'error');
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      addToast('Unsupported format - use PNG, JPEG or WebP.', 'error');
+      return;
+    }
+    if (!(await logoMagicBytesMatch(file))) {
+      addToast('File signature does not match the selected image type.', 'error');
       return;
     }
 
@@ -266,7 +285,7 @@ export default function Settings() {
                       <input
                         ref={logoInputRef}
                         type="file"
-                        accept="image/png,image/svg+xml,image/jpeg,image/webp"
+                        accept="image/png,image/jpeg,image/webp"
                         className="hidden"
                         onChange={handleLogoChange}
                       />
@@ -284,8 +303,8 @@ export default function Settings() {
                         ) : (
                           <>
                             <span className="material-symbols-outlined text-4xl mb-3 text-on-surface-variant block">cloud_upload</span>
-                            <p className="font-bold text-sm text-on-surface">Drop SVG or high-res PNG here</p>
-                            <p className="text-[10px] mt-1 text-on-surface-variant">Max size: 5MB · PNG, SVG, JPEG, WebP</p>
+                            <p className="font-bold text-sm text-on-surface">Drop a high-res logo here</p>
+                            <p className="text-[10px] mt-1 text-on-surface-variant">Max size: 5MB · PNG, JPEG, WebP</p>
                           </>
                         )}
                       </div>

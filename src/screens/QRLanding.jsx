@@ -4,6 +4,19 @@ import { fetchTableInfo, startOrResumeTableSession } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 
+function getStoredTableSessionToken() {
+  const token = localStorage.getItem('mv_table_session_token');
+  const expiresAt = Number(localStorage.getItem('mv_table_session_expires') || 0);
+  if (!token) return null;
+  if (!expiresAt || Date.now() > expiresAt) {
+    localStorage.removeItem('mv_table_session_token');
+    localStorage.removeItem('mv_table_session_id');
+    localStorage.removeItem('mv_table_session_expires');
+    return null;
+  }
+  return token;
+}
+
 export default function QRLanding() {
   const { restaurantSlug, tableId } = useParams();
   const navigate = useNavigate();
@@ -38,7 +51,7 @@ export default function QRLanding() {
           const tableSession = await startOrResumeTableSession({
             restaurantId: tableData.restaurant_id,
             tableId,
-            existingToken: localStorage.getItem('mv_table_session_token'),
+            existingToken: getStoredTableSessionToken(),
           });
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;

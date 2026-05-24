@@ -9,79 +9,80 @@ datasource db {
 }
 
 model Restaurant {
-  id            String   @id @default(uuid())
-  name          String
-  slug          String   @unique
-  description   String?
-  logo_url      String?
-  primary_color String?  @default("#B8860B")
-  font_family   String?  @default("serif")
-  gst_rate      Float?   @default(0.05)
-  service_charge_rate Float @default(0)
-  payment_provider String? @default("razorpay")
-  payment_enabled Boolean @default(false)
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  name                String
+  slug                String   @unique
+  description         String?
+  logo_url            String?
+  primary_color       String?  @default("#B8860B")
+  font_family         String?  @default("serif")
+  gst_rate            Float?   @default(0.05)
+  service_charge_rate Float    @default(0)
+  payment_provider    String?  @default("razorpay")
+  payment_enabled     Boolean  @default(false)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
 
-  users       User[]
-  tables      Table[]
-  table_sessions TableSession[]
-  categories  MenuCategory[]
-  items       MenuItem[]
-  orders      Order[]
+  users           User[]
+  tables          Table[]
+  table_sessions  TableSession[]
+  categories      MenuCategory[]
+  items           MenuItem[]
+  orders          Order[]
   modifier_groups ModifierGroup[]
-  feedbacks   OrderFeedback[]
-  staff_reqs  StaffRequest[]
+  feedbacks       OrderFeedback[]
+  staff_reqs      StaffRequest[]
+  ar_assets       ARAsset[]
 }
 
 model User {
-  id             String     @id @default(uuid())
-  restaurant_id  String
-  email          String     @unique
-  password_hash  String
-  role           String     // owner, manager, staff, super_admin
-  created_at     DateTime   @default(now())
-  updated_at     DateTime   @updatedAt
+  id            String   @id @default(uuid())
+  restaurant_id String
+  email         String   @unique
+  password_hash String
+  role          String // owner, manager, staff, super_admin
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
 }
 
 model Table {
-  id             String     @id @default(uuid())
-  restaurant_id  String
-  number         String
-  section        String
-  capacity       Int
-  status         String     @default("available") // available, occupied, awaiting_payment, closed
-  qr_code_url    String?
-  qr_enabled      Boolean    @default(true)
-  created_at     DateTime   @default(now())
-  updated_at     DateTime   @updatedAt
+  id            String   @id @default(uuid())
+  restaurant_id String
+  number        String
+  section       String
+  capacity      Int
+  status        String   @default("available") // available, occupied, awaiting_payment, closed
+  qr_code_url   String?
+  qr_enabled    Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
-  orders         Order[]
-  staff_reqs     StaffRequest[]
-  sessions       TableSession[]
+  restaurant Restaurant     @relation(fields: [restaurant_id], references: [id])
+  orders     Order[]
+  staff_reqs StaffRequest[]
+  sessions   TableSession[]
 
   // LF-08: Prevent duplicate table numbers within same restaurant
   @@unique([restaurant_id, number])
 }
 
 model TableSession {
-  id             String   @id @default(uuid())
-  restaurant_id  String
-  table_id       String
-  token          String   @unique @default(uuid())
-  status         String   @default("active") // active, billing, paid, closed
-  opened_at      DateTime @default(now())
-  closed_at      DateTime?
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
+  id            String    @id @default(uuid())
+  restaurant_id String
+  table_id      String
+  token         String    @unique @default(uuid())
+  status        String    @default("active") // active, billing, paid, closed
+  opened_at     DateTime  @default(now())
+  closed_at     DateTime?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
-  table          Table      @relation(fields: [table_id], references: [id])
-  orders         Order[]
-  bill           SessionBill?
+  restaurant Restaurant   @relation(fields: [restaurant_id], references: [id])
+  table      Table        @relation(fields: [table_id], references: [id])
+  orders     Order[]
+  bill       SessionBill?
 }
 
 model SessionBill {
@@ -96,106 +97,115 @@ model SessionBill {
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
-  table_session    TableSession @relation(fields: [table_session_id], references: [id])
+  table_session TableSession @relation(fields: [table_session_id], references: [id])
 }
 
 model MenuCategory {
-  id             String     @id @default(uuid())
-  restaurant_id  String
-  name           String
-  display_order  Int        @default(0)
-  archived       Boolean    @default(false)
-  created_at     DateTime   @default(now())
-  updated_at     DateTime   @updatedAt
+  id            String   @id @default(uuid())
+  restaurant_id String
+  name          String
+  display_order Int      @default(0)
+  archived      Boolean  @default(false)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
-  items          MenuItem[]
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+  items      MenuItem[]
 }
 
 model MenuItem {
-  id             String     @id @default(uuid())
-  restaurant_id  String
-  category_id    String
-  name           String
-  description    String?
-  price          Float
-  dietary_flag   String?    // veg, non-veg, vegan
-  available      Boolean    @default(true)
-  display_order  Int        @default(0)
-  image_url      String?
-  tags_json      String?    // Stringified JSON array e.g. ["popular", "spicy"]
-  created_at     DateTime   @default(now())
-  updated_at     DateTime   @updatedAt
+  id                 String   @id @default(uuid())
+  restaurant_id      String
+  category_id        String
+  name               String
+  description        String?
+  price              Float
+  dietary_flag       String? // veg, non-veg, vegan
+  available          Boolean  @default(true)
+  display_order      Int      @default(0)
+  image_url          String?
+  tags_json          String? // Stringified JSON array e.g. ["popular", "spicy"]
+  has_ar_preview     Boolean  @default(false)
+  ar_preview_enabled Boolean  @default(false)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
-  restaurant     Restaurant   @relation(fields: [restaurant_id], references: [id])
-  category       MenuCategory @relation(fields: [category_id], references: [id])
-  order_items    OrderItem[]
+  restaurant      Restaurant      @relation(fields: [restaurant_id], references: [id])
+  category        MenuCategory    @relation(fields: [category_id], references: [id])
+  order_items     OrderItem[]
   modifier_groups ModifierGroup[]
+  ar_asset        ARAsset?
+
+  @@index([restaurant_id, display_order])
 }
 
 model ModifierGroup {
-  id             String     @id @default(uuid())
-  restaurant_id  String
-  menu_item_id   String
-  name           String     // e.g. "Spice Level"
-  required       Boolean    @default(false)
-  created_at     DateTime   @default(now())
-  updated_at     DateTime   @updatedAt
+  id            String   @id @default(uuid())
+  restaurant_id String
+  menu_item_id  String
+  name          String // e.g. "Spice Level"
+  required      Boolean  @default(false)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
-  menu_item      MenuItem   @relation(fields: [menu_item_id], references: [id])
-  options        ModifierOption[]
+  restaurant Restaurant       @relation(fields: [restaurant_id], references: [id])
+  menu_item  MenuItem         @relation(fields: [menu_item_id], references: [id])
+  options    ModifierOption[]
 }
 
 model ModifierOption {
-  id               String        @id @default(uuid())
-  group_id         String
-  name             String
-  price_delta      Float         @default(0)
+  id          String @id @default(uuid())
+  group_id    String
+  name        String
+  price_delta Float  @default(0)
 
-  group            ModifierGroup @relation(fields: [group_id], references: [id])
+  group ModifierGroup @relation(fields: [group_id], references: [id])
 }
 
 model Order {
-  id                   String      @id // Format: SF-YYYYMMDD-XXXX
-  restaurant_id        String
-  table_id             String
-  table_session_id     String?
-  status               String      @default("pending") // pending, accepted, preparing, ready, served, completed, cancelled
-  subtotal_amount      Float       @default(0)
-  tax_amount           Float       @default(0)
-  service_charge_amount Float      @default(0)
-  total_amount         Float
-  special_instructions String?
-  idempotency_key      String?     @unique
-  cancel_reason        String?
-  created_at           DateTime    @default(now())
-  updated_at           DateTime    @updatedAt
+  id                    String   @id // Format: SF-YYYYMMDD-XXXX
+  restaurant_id         String
+  table_id              String
+  table_session_id      String?
+  status                String   @default("pending") // pending, accepted, preparing, ready, served, completed, cancelled
+  subtotal_amount       Float    @default(0)
+  tax_amount            Float    @default(0)
+  service_charge_amount Float    @default(0)
+  total_amount          Float
+  special_instructions  String?
+  idempotency_key       String?  @unique
+  cancel_reason         String?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
 
-  restaurant           Restaurant  @relation(fields: [restaurant_id], references: [id])
-  table                Table       @relation(fields: [table_id], references: [id])
-  table_session        TableSession? @relation(fields: [table_session_id], references: [id])
-  items                OrderItem[]
-  payments             Payment[]
-  feedback             OrderFeedback?
+  restaurant    Restaurant     @relation(fields: [restaurant_id], references: [id])
+  table         Table          @relation(fields: [table_id], references: [id])
+  table_session TableSession?  @relation(fields: [table_session_id], references: [id])
+  items         OrderItem[]
+  payments      Payment[]
+  feedback      OrderFeedback?
+
+  @@index([restaurant_id, status])
+  @@index([table_id])
+  @@index([table_session_id])
 }
 
 model OrderItem {
-  id             String   @id @default(uuid())
+  id             String  @id @default(uuid())
   order_id       String
   menu_item_id   String
   name           String
-  quantity       Int      @default(1)
+  quantity       Int     @default(1)
   price          Float
-  modifiers_json String?  // Stringified JSON
-  
-  order          Order    @relation(fields: [order_id], references: [id])
-  menu_item      MenuItem @relation(fields: [menu_item_id], references: [id])
+  modifiers_json String? // Stringified JSON
+
+  order     Order    @relation(fields: [order_id], references: [id])
+  menu_item MenuItem @relation(fields: [menu_item_id], references: [id])
 }
 
 model Payment {
   id                  String   @id @default(uuid())
-  order_id            String   @unique  // SEC-08: Prevent duplicate payment records for same order
+  order_id            String   @unique // SEC-08: Prevent duplicate payment records for same order
   razorpay_order_id   String
   razorpay_payment_id String?
   status              String   @default("initiated")
@@ -203,29 +213,56 @@ model Payment {
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
-  order               Order    @relation(fields: [order_id], references: [id])
+  order Order @relation(fields: [order_id], references: [id])
 }
 
 model OrderFeedback {
-  id             String   @id @default(uuid())
-  restaurant_id  String
-  order_id       String   @unique
-  rating         Int
-  comment        String?
-  created_at     DateTime @default(now())
+  id            String   @id @default(uuid())
+  restaurant_id String
+  order_id      String   @unique
+  rating        Int
+  comment       String?
+  created_at    DateTime @default(now())
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
-  order          Order      @relation(fields: [order_id], references: [id])
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+  order      Order      @relation(fields: [order_id], references: [id])
 }
 
 model StaffRequest {
-  id             String   @id @default(uuid())
-  restaurant_id  String
-  table_id       String
-  status         String   @default("pending") // pending, resolved
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
+  id            String   @id @default(uuid())
+  restaurant_id String
+  table_id      String
+  request_type  String   @default("waiter") // waiter, water, bill, other
+  message       String?
+  status        String   @default("pending") // pending, resolved
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-  restaurant     Restaurant @relation(fields: [restaurant_id], references: [id])
-  table          Table      @relation(fields: [table_id], references: [id])
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+  table      Table      @relation(fields: [table_id], references: [id])
+
+  @@index([restaurant_id])
+}
+
+model ARAsset {
+  id                String   @id @default(uuid())
+  restaurant_id     String
+  menu_item_id      String   @unique
+  source_image_url  String?
+  source_video_url  String?
+  thumbnail_url     String?
+  model_glb_url     String?
+  model_usdz_url    String?
+  preview_image_url String?
+  file_size         Float?
+  polygon_count     Int?
+  model_scale       Float?   @default(1.0)
+  processing_status String   @default("not_uploaded")
+  processing_error  String?
+  is_active         Boolean  @default(false)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+  menu_item  MenuItem   @relation(fields: [menu_item_id], references: [id])
 }

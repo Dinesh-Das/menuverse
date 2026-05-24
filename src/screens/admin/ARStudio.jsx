@@ -1,213 +1,320 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import '@google/model-viewer';
 import AdminLayout from '../../components/AdminLayout';
+import { AdminTopNav } from '../../components/TopNav';
+import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../components/Toast';
+import {
+  adminDeleteARAsset,
+  adminFetchARAsset,
+  adminFetchMenuItems,
+  adminUpdateARAssetStatus,
+  adminUploadARAsset,
+} from '../../lib/api';
 
-const AR_LOG_LINES = [
-  { ts: '00:00:01', text: 'Initializing Neural Rendering Engine v4.2.1...', active: false },
-  { ts: '00:00:02', text: 'Connecting to compute cluster (gpu-pool-alpha)...', active: false },
-  { ts: '00:00:04', text: 'Loading source assets for "Truffle Risotto"...', active: false },
-  { ts: '00:00:05', text: 'Texture resolution exceeds optimal bounds. Downsampling...', active: false },
-  { ts: '00:00:08', text: 'Generating geometry from point cloud data...', active: true },
-  { ts: '00:00:12', text: 'Applying physically based materials (PBR)...', active: false },
-  { ts: '00:00:15', text: 'Commencing radiosity bake for realistic lighting...', active: false },
-  { ts: '00:00:18', text: 'Optimizing mesh topology for web delivery...', active: false },
-  { ts: '00:00:20', text: 'Exporting to .glb format...', active: false },
-  { ts: '00:00:21', text: 'Uploading artifact to edge CDN...', active: false },
-  { ts: '00:00:22', text: 'AR Generation Complete. Ready for deployment.', active: false }
-];
+const MAX_GLB_SIZE = 20 * 1024 * 1024;
+const MAX_USDZ_SIZE = 20 * 1024 * 1024;
+const MAX_THUMBNAIL_SIZE = 2 * 1024 * 1024;
+
+const STATUS_STYLES = {
+  ready: 'bg-green-500/10 text-green-600 border-green-500/20',
+  failed: 'bg-error/10 text-error border-error/20',
+  not_uploaded: 'bg-surface-container-highest text-on-surface-variant border-outline-variant/20',
+};
+
+function validateFileSize(file, maxBytes, label) {
+  if (file && file.size > maxBytes) {
+    throw new Error(`${label} must be ${Math.round(maxBytes / 1024 / 1024)}MB or smaller.`);
+  }
+}
 
 export default function ARStudio() {
-  const [logs, setLogs] = useState([]);
-  
-  useEffect(() => {
-    let currentIdx = 0;
-    const timer = setInterval(() => {
-      if (currentIdx < AR_LOG_LINES.length) {
-        setLogs(prev => [...prev, AR_LOG_LINES[currentIdx]]);
-        currentIdx++;
-      } else {
-        clearInterval(timer);
-      }
-    }, 1500);
-    return () => clearInterval(timer);
-  }, []);
+  const { user } = useAuth();
+  const { addToast } = useToast();
+  const [items, setItems] = useState([]);
+  const [selectedItemId, setSelectedItemId] = useState('');
+  const [asset, setAsset] = useState(null);
+  const [loadingItems, setLoadingItems] = useState(true);
+  const [loadingAsset, setLoadingAsset] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [glbFile, setGlbFile] = useState(null);
+  const [usdzFile, setUsdzFile] = useState(null);
+  const [thumbnailFile, setThumbnailFile] = useState(null);
 
-  const cardBg = 'bg-surface-container border border-outline-variant/10 shadow-luxury';
+  const selectedItem = useMemo(
+    () => items.find(item => item.id === selectedItemId) || null,
+    [items, selectedItemId]
+  );
+
+  const status = asset?.processing_status || 'not_uploaded';
+  const badgeClass = STATUS_STYLES[status] || STATUS_STYLES.not_uploaded;
+
+  const loadItems = async () => {
+    if (!user?.restaurantId) return;
+    setLoadingItems(true);
+    try {
+      const data = await adminFetchMenuItems(user.restaurantId);
+      setItems(data);
+      setSelectedItemId(current => current || data[0]?.id || '');
+    } catch (err) {
+      addToast(`Failed to load menu items: ${err.message}`, 'error');
+    } finally {
+      setLoadingItems(false);
+    }
+  };
+
+  const loadAsset = async (itemId) => {
+    if (!itemId) return;
+    setLoadingAsset(true);
+    try {
+      const data = await adminFetchARAsset(itemId);
+      setAsset(data);
+    } catch (err) {
+      if (!err.message.toLowerCase().includes('not found')) {
+        addToast(`Failed to load AR asset: ${err.message}`, 'error');
+      }
+      setAsset(null);
+    } finally {
+      setLoadingAsset(false);
+    }
+  };
+
+  useEffect(() => {
+    loadItems();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.restaurantId]);
+
+  useEffect(() => {
+    loadAsset(selectedItemId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemId]);
+
+  const handleUpload = async (event) => {
+    event.preventDefault();
+    if (!selectedItemId || !glbFile) return;
+
+    try {
+      validateFileSize(glbFile, MAX_GLB_SIZE, 'GLB file');
+      validateFileSize(usdzFile, MAX_USDZ_SIZE, 'USDZ file');
+      validateFileSize(thumbnailFile, MAX_THUMBNAIL_SIZE, 'Thumbnail');
+
+      const formData = new FormData();
+      formData.append('glb_file', glbFile);
+      if (usdzFile) formData.append('usdz_file', usdzFile);
+      if (thumbnailFile) formData.append('thumbnail', thumbnailFile);
+
+      setUploading(true);
+      const uploaded = await adminUploadARAsset(selectedItemId, formData);
+      setAsset(uploaded);
+      setGlbFile(null);
+      setUsdzFile(null);
+      setThumbnailFile(null);
+      await loadItems();
+      addToast('AR asset uploaded.', 'success');
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleToggle = async (checked) => {
+    if (!selectedItemId || !asset) return;
+    setSavingStatus(true);
+    try {
+      const updated = await adminUpdateARAssetStatus(selectedItemId, {
+        is_active: checked,
+        ar_preview_enabled: checked,
+      });
+      setAsset(updated);
+      setItems(prev => prev.map(item => (
+        item.id === selectedItemId
+          ? { ...item, ar_preview_enabled: checked, has_ar_preview: true }
+          : item
+      )));
+      addToast(checked ? 'AR preview enabled.' : 'AR preview disabled.', 'success');
+    } catch (err) {
+      addToast(`Status update failed: ${err.message}`, 'error');
+    } finally {
+      setSavingStatus(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedItemId || !asset) return;
+    if (!window.confirm('Delete this AR asset? This removes the uploaded model files.')) return;
+    try {
+      await adminDeleteARAsset(selectedItemId);
+      setAsset(null);
+      setItems(prev => prev.map(item => (
+        item.id === selectedItemId
+          ? { ...item, has_ar_preview: false, ar_preview_enabled: false }
+          : item
+      )));
+      addToast('AR asset deleted.', 'success');
+    } catch (err) {
+      addToast(`Delete failed: ${err.message}`, 'error');
+    }
+  };
 
   return (
     <AdminLayout>
-      <main className="admin-content min-h-screen">
-        {/* ── Header ────────────────────────────────────── */}
-        <header className="flex justify-between items-center px-16 py-12 bg-background">
-          <div>
-            <h2 className="text-4xl font-headline font-semibold tracking-tight text-on-surface">
-              AR Studio Pipeline
-            </h2>
-            <p className="font-body mt-2 text-sm text-on-surface-variant">
-              Butter Chicken | <span className="font-medium text-primary">Asset ID: #88291-BC</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-8 hidden md:flex">
-            <div className="text-right">
-              <p className="text-[9px] uppercase font-bold tracking-[0.2em] mb-1 text-primary">Model Status</p>
-              <p className="font-medium text-lg text-on-surface">Mesh Optimization</p>
-            </div>
-            <div className="h-14 w-14 rounded-full overflow-hidden ring-1 ring-offset-4 ring-outline-variant ring-offset-background">
-              <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuCau8Sg-UDmdsTWp-jvnd5quPgW52TVolp1JeRQDQupfb5a5JOVd0hbxzyUq-kOdGkKcHrcNh6Jdgyq9Q2BYR0o5pi0AIHjCb6DG7SxUgs3VLpm09V5WFH0nGdwKJoDOI6NNhg_J0RFAKQKKC_XiKMLnnWiaSGtidZ2_I91M5nfPYgtiQuGIm9mLdq4N0iaXeMayevMqSYLqD-DDjxkh3PLtzr74zLf92Ow_vImThxIFaY0cuLxyyNc8gGpABmlRmgnhYw7dUqp2WzT" alt="Admin" className="h-full w-full object-cover transition-all duration-700" />
-            </div>
-          </div>
-        </header>
+      <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
+        <AdminTopNav
+          title="AR Studio"
+          subtitle="Upload and publish interactive 3D previews for menu items."
+        />
 
-        {/* ── Stepper Pipeline ──────────────────────────── */}
-        <section className="px-16 py-8">
-          <div className="relative flex justify-between max-w-5xl">
-            {/* Lines */}
-            <div className="absolute top-5 left-0 w-full h-[1px] z-0 bg-outline-variant/30"></div>
-            <div className="absolute top-5 left-0 w-[75%] h-[1px] z-0 bg-primary"></div>
-            
-            {/* Steps */}
-            {[
-              { label: 'Uploading', state: 'complete', icon: 'check' },
-              { label: 'Validation', state: 'complete', icon: 'check' },
-              { label: 'Photogrammetry', state: 'complete', icon: 'check' },
-              { label: 'Optimization', state: 'active', icon: 'change_circle' },
-              { label: 'Ready', state: 'pending', icon: 'rocket_launch' }
-            ].map((step, idx) => (
-              <div key={idx} className="relative z-10 flex flex-col items-center gap-4">
-                <div className={`h-10 w-10 rounded-full flex items-center justify-center
-                  ${step.state === 'complete' ? 'bg-primary text-on-primary shadow-luxury' : ''}
-                  ${step.state === 'active' ? 'bg-surface border-2 border-primary text-primary animate-pulse' : ''}
-                  ${step.state === 'pending' ? 'bg-surface-container text-on-surface-variant/40 border border-outline-variant/30' : ''}
-                `}>
-                  <span className="material-symbols-outlined text-lg font-bold">{step.icon}</span>
-                </div>
-                <span className={`text-[10px] uppercase font-bold tracking-[0.15em] 
-                  ${step.state !== 'pending' ? 'text-primary' : 'text-on-surface-variant/40'}
-                `}>
-                  {step.label}
+        <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-8">
+          <section className="space-y-6">
+            <div className="rounded-2xl bg-surface-container-low border border-outline-variant/10 p-6 shadow-luxury">
+              <label className="block text-[10px] uppercase font-bold tracking-[0.18em] text-on-surface-variant mb-3">
+                Menu Item
+              </label>
+              <select
+                value={selectedItemId}
+                disabled={loadingItems || items.length === 0}
+                onChange={event => setSelectedItemId(event.target.value)}
+                className="w-full rounded-xl bg-surface-container border border-outline-variant/20 px-4 py-3 text-sm font-bold text-on-surface focus:outline-none focus:border-primary"
+              >
+                {items.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <form onSubmit={handleUpload} className="rounded-2xl bg-surface-container-low border border-outline-variant/10 p-6 shadow-luxury space-y-5">
+              <div>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Upload Model</h3>
+                <p className="text-xs text-on-surface-variant mt-1">GLB is required. USDZ and thumbnail are optional.</p>
+              </div>
+
+              <label className="block">
+                <span className="block text-[10px] uppercase font-bold tracking-[0.18em] text-on-surface-variant mb-2">
+                  GLB Model
                 </span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* ── Main Workspace ────────────────────────────── */}
-        <section className="px-16 py-8 grid grid-cols-12 gap-12 pb-24">
-          
-          {/* Left Col: Video + Logs */}
-          <div className="col-span-12 lg:col-span-5 flex flex-col gap-8">
-            {/* Video Preview Card */}
-            <div className={`${cardBg} rounded-xl overflow-hidden group relative`}>
-              <div className="aspect-video relative overflow-hidden bg-surface-container">
-                <img 
-                  src="https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=800&q=80" 
-                  alt="Source Video" 
-                  className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
+                <input
+                  type="file"
+                  accept=".glb,model/gltf-binary"
+                  onChange={event => setGlbFile(event.target.files?.[0] || null)}
+                  className="block w-full text-xs text-on-surface-variant file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-xs file:font-bold file:uppercase file:tracking-widest file:text-on-primary"
                 />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <button className="h-16 w-16 rounded-full flex items-center justify-center border hover:scale-110 transition-transform cursor-pointer glass-dark border-primary/20 text-primary">
-                    <span className="material-symbols-outlined text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>play_arrow</span>
-                  </button>
-                </div>
-                <div className="absolute bottom-6 left-6 flex gap-3">
-                  <span className="px-3 py-1 rounded text-[9px] font-bold tracking-[0.2em] uppercase border bg-surface/90 text-on-surface border-outline-variant/30">Source Video</span>
-                  <span className="px-3 py-1 rounded text-[9px] font-bold tracking-[0.2em] uppercase bg-primary/90 text-on-primary">4K / 60FPS</span>
-                </div>
-              </div>
-              <div className="p-8">
-                <h3 className="font-headline text-xl font-semibold mb-6 text-on-surface">Input Stream Analysis</h3>
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="p-5 rounded-lg border bg-primary-container/20 border-primary/10">
-                    <p className="text-[9px] uppercase font-bold tracking-[0.15em] mb-1 text-primary">Total Frames</p>
-                    <p className="text-2xl font-bold text-on-surface">1,240</p>
-                  </div>
-                  <div className="p-5 rounded-lg border bg-primary-container/20 border-primary/10">
-                    <p className="text-[9px] uppercase font-bold tracking-[0.15em] mb-1 text-primary">Coverage</p>
-                    <p className="text-2xl font-bold text-on-surface">94.2%</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+              </label>
 
-            {/* Optimization Logs */}
-            <div className="p-8 rounded-xl font-body text-[11px] h-52 overflow-y-auto leading-relaxed custom-scrollbar bg-surface-container-high border border-outline-variant/20">
-              {logs.map((log, i) => (
-                <p key={i} className={`mb-1 ${log.active ? 'text-primary font-medium italic animate-pulse' : 'text-on-surface-variant'}`}>
-                  [{log.ts}] {log.text}
+              <label className="block">
+                <span className="block text-[10px] uppercase font-bold tracking-[0.18em] text-on-surface-variant mb-2">
+                  USDZ Model
+                </span>
+                <input
+                  type="file"
+                  accept=".usdz,model/vnd.usdz+zip"
+                  onChange={event => setUsdzFile(event.target.files?.[0] || null)}
+                  className="block w-full text-xs text-on-surface-variant file:mr-4 file:rounded-full file:border-0 file:bg-surface-container-highest file:px-4 file:py-2 file:text-xs file:font-bold file:uppercase file:tracking-widest file:text-on-surface"
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-[10px] uppercase font-bold tracking-[0.18em] text-on-surface-variant mb-2">
+                  Thumbnail
+                </span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={event => setThumbnailFile(event.target.files?.[0] || null)}
+                  className="block w-full text-xs text-on-surface-variant file:mr-4 file:rounded-full file:border-0 file:bg-surface-container-highest file:px-4 file:py-2 file:text-xs file:font-bold file:uppercase file:tracking-widest file:text-on-surface"
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={uploading || !selectedItemId || !glbFile}
+                className="w-full rounded-xl bg-primary text-on-primary px-5 py-3 text-xs font-bold uppercase tracking-widest shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {uploading && <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>}
+                Upload Asset
+              </button>
+            </form>
+          </section>
+
+          <section className="rounded-2xl bg-surface-container-low border border-outline-variant/10 shadow-luxury overflow-hidden">
+            <div className="p-6 md:p-8 border-b border-outline-variant/10 flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+              <div>
+                <p className="text-[10px] uppercase font-bold tracking-[0.2em] text-primary mb-2">
+                  {selectedItem?.category?.name || 'Selected Dish'}
                 </p>
-              ))}
-              {logs.length < AR_LOG_LINES.length && (
-                <p className="mb-1 animate-pulse text-on-surface-variant/50">_</p>
-              )}
-            </div>
-          </div>
+                <h2 className="font-headline text-2xl md:text-3xl font-bold text-on-surface">
+                  {selectedItem?.name || 'No menu item selected'}
+                </h2>
+              </div>
 
-          {/* Right Col: 3D Model Viewer Card */}
-          <div className="col-span-12 lg:col-span-7 flex flex-col gap-10">
-            <div className={`${cardBg} rounded-xl flex-1 relative overflow-hidden`}>
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent pointer-events-none"></div>
-              
-              <div className="w-full h-full flex flex-col items-center justify-center relative p-16">
-                <div className="relative group cursor-grab active:cursor-grabbing">
-                  <div className="absolute -inset-16 blur-[100px] rounded-full opacity-60 bg-primary/20"></div>
-                  <img 
-                    src="https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=800&q=80" 
-                    alt="3D Mesh" 
-                    className="w-96 h-96 object-contain drop-shadow-[0_40px_70px_rgba(0,0,0,0.12)] transform transition-transform duration-1000 animate-float"
-                    style={{ maskImage: 'radial-gradient(circle, black 40%, transparent 70%)', WebkitMaskImage: 'radial-gradient(circle, black 40%, transparent 70%)' }}
+              <div className="flex items-center gap-3">
+                <span className={`px-3 py-1 rounded-full border text-[10px] font-bold uppercase tracking-widest ${badgeClass}`}>
+                  {status.replace(/_/g, ' ')}
+                </span>
+                <label className="flex items-center gap-3 rounded-full bg-surface-container px-4 py-2 border border-outline-variant/10">
+                  <span className="text-xs font-bold text-on-surface">Enabled</span>
+                  <input
+                    type="checkbox"
+                    disabled={!asset || savingStatus || status !== 'ready'}
+                    checked={Boolean(asset?.is_active && selectedItem?.ar_preview_enabled)}
+                    onChange={event => handleToggle(event.target.checked)}
+                    className="w-5 h-5 accent-primary"
                   />
-                </div>
-
-                {/* Viewer Controls */}
-                <div className="absolute top-8 right-8 flex flex-col gap-4">
-                  {['grid_on', 'light_mode', 'zoom_in'].map(icon => (
-                    <button key={icon} className="h-11 w-11 rounded-full flex items-center justify-center border transition-all cursor-pointer glass-dark border-primary/20 text-on-surface-variant hover:text-primary hover:bg-surface-container">
-                      <span className="material-symbols-outlined">{icon}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Quality Badges */}
-                <div className="absolute bottom-8 left-8 flex gap-5">
-                  <div className="flex items-center gap-4 px-5 py-4 rounded-xl border glass-dark border-primary/20">
-                    <div className="h-9 w-9 rounded flex items-center justify-center font-bold text-xs bg-primary text-on-primary">A</div>
-                    <div>
-                      <p className="text-[8px] uppercase font-bold leading-none tracking-widest text-on-surface-variant">Resolution</p>
-                      <p className="text-[11px] font-semibold mt-1 text-on-surface">Premium Ultra-HD</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="absolute bottom-8 right-8">
-                  <button 
-                    disabled 
-                    title="AR Studio generation is a mock preview — coming soon!" 
-                    className="flex items-center gap-4 px-10 py-5 rounded-lg font-bold text-xs uppercase tracking-[0.2em] shadow-2xl transition-all group cursor-not-allowed bg-on-surface text-background opacity-50"
-                  >
-                    Publish to Menu
-                    <span className="material-symbols-outlined text-lg group-hover:translate-x-1 transition-transform">arrow_forward</span>
-                  </button>
-                </div>
+                </label>
               </div>
             </div>
 
-            {/* Detailed Stats Panel */}
-            <div className="grid grid-cols-3 gap-8">
-              {[
-                { label: 'File Size', val: '12.4', unit: 'MB', sub: 'Highly Optimized' },
-                { label: 'Triangles', val: '45.2', unit: 'K', sub: 'Retopology: Done' },
-                { label: 'Load Time', val: '0.8', unit: 's', sub: 'On 5G Connection' }
-              ].map(stat => (
-                <div key={stat.label} className={`p-8 rounded-xl ${cardBg}`}>
-                  <p className="text-[9px] uppercase font-bold tracking-[0.2em] mb-2 text-on-surface-variant/60">{stat.label}</p>
-                  <p className="text-3xl font-headline font-bold text-on-surface">
-                    {stat.val}<span className="text-sm font-body ml-1 text-primary">{stat.unit}</span>
-                  </p>
-                  <p className="text-[10px] font-medium mt-3 text-primary">{stat.sub}</p>
+            <div className="p-6 md:p-8">
+              {loadingAsset ? (
+                <div className="h-[300px] flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
                 </div>
-              ))}
+              ) : asset?.model_glb_url ? (
+                <model-viewer
+                  src={asset.model_glb_url}
+                  camera-controls="true"
+                  auto-rotate="true"
+                  style={{ width: '100%', height: '300px', background: 'transparent' }}
+                />
+              ) : (
+                <div className="h-[300px] rounded-xl border border-dashed border-outline-variant/30 bg-surface-container flex flex-col items-center justify-center text-center px-6">
+                  <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-3">view_in_ar</span>
+                  <p className="font-bold text-on-surface">No AR asset uploaded</p>
+                  <p className="text-xs text-on-surface-variant mt-1">Select a GLB file and upload it to create the preview.</p>
+                </div>
+              )}
+
+              <div className="grid md:grid-cols-3 gap-4 mt-6">
+                <div className="rounded-xl bg-surface-container p-4 border border-outline-variant/10">
+                  <p className="text-[9px] uppercase font-bold tracking-widest text-on-surface-variant mb-1">GLB URL</p>
+                  <p className="text-xs text-on-surface truncate">{asset?.model_glb_url || 'Not uploaded'}</p>
+                </div>
+                <div className="rounded-xl bg-surface-container p-4 border border-outline-variant/10">
+                  <p className="text-[9px] uppercase font-bold tracking-widest text-on-surface-variant mb-1">USDZ URL</p>
+                  <p className="text-xs text-on-surface truncate">{asset?.model_usdz_url || 'Not uploaded'}</p>
+                </div>
+                <div className="rounded-xl bg-surface-container p-4 border border-outline-variant/10">
+                  <p className="text-[9px] uppercase font-bold tracking-widest text-on-surface-variant mb-1">Thumbnail</p>
+                  <p className="text-xs text-on-surface truncate">{asset?.thumbnail_url || 'Not uploaded'}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-end mt-8">
+                <button
+                  onClick={handleDelete}
+                  disabled={!asset}
+                  className="rounded-xl border border-error/20 text-error px-5 py-3 text-xs font-bold uppercase tracking-widest hover:bg-error/10 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-sm">delete</span>
+                  Delete AR Asset
+                </button>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </main>
     </AdminLayout>
   );
