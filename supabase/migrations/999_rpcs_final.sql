@@ -1,13 +1,11 @@
 -- Keep fresh installs aligned after the older 20260516 RPC migrations run.
 
-drop function if exists create_order_secure(text, text, text, jsonb, text, text);
-
 create or replace function start_table_session(
   p_restaurant_id text,
   p_table_id text,
   p_existing_token text default null
 )
-returns table(id text, token text, status text)
+returns table(id text, token text, status text, table_id text, restaurant_id text)
 language plpgsql
 security definer
 set search_path = public
@@ -40,6 +38,8 @@ begin
     id := v_session.id;
     token := v_session.token;
     status := v_session.status;
+    table_id := v_session.table_id;
+    restaurant_id := v_session.restaurant_id;
     return next;
     return;
   end if;
@@ -74,6 +74,8 @@ begin
   id := v_session.id;
   token := v_session.token;
   status := v_session.status;
+  table_id := v_session.table_id;
+  restaurant_id := v_session.restaurant_id;
   return next;
 end;
 $$;
@@ -142,6 +144,6 @@ begin
 end;
 $$;
 
-grant execute on function create_order_secure(text, text, text, text, text, jsonb) to anon, authenticated;
+grant execute on function create_order_secure(text, text, text, jsonb, text, text) to anon, authenticated;
 grant execute on function start_table_session(text, text, text) to anon, authenticated;
 grant execute on function close_table_session(text, text) to authenticated;

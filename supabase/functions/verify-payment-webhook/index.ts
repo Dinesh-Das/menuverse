@@ -29,6 +29,40 @@ async function hmacSha256Hex(secret: string, payload: string) {
   return toHex(signature);
 }
 
+async function sendRestaurantBroadcast(
+  supabase: ReturnType<typeof createClient>,
+  restaurantId: string,
+  payload: Record<string, unknown>,
+) {
+  const channel = supabase.channel(`restaurant:${restaurantId}`);
+  const subscribed = await new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 2000);
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        clearTimeout(timeout);
+        resolve(true);
+      }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        clearTimeout(timeout);
+        resolve(false);
+      }
+    });
+  });
+
+  if (!subscribed) {
+    await supabase.removeChannel(channel);
+    return false;
+  }
+
+  const response = await channel.send({
+    type: 'broadcast',
+    event: 'payment:captured',
+    payload,
+  });
+  await supabase.removeChannel(channel);
+  return response === 'ok';
+}
+
 serve(async (req) => {
   if (req.method !== 'POST') {
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
@@ -49,7 +83,12 @@ serve(async (req) => {
     return Response.json({ error: 'Invalid signature.' }, { status: 400 });
   }
 
-  const event = JSON.parse(rawBody);
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return Response.json({ error: 'Invalid JSON.' }, { status: 400 });
+  }
   if (event.event !== 'payment.captured') {
     return Response.json({ received: true, ignored: event.event || null });
   }
@@ -128,19 +167,20 @@ serve(async (req) => {
   }
 
   await Promise.all(restaurantIds.map(async (restaurantId) => {
-    const channel = supabase.channel(`restaurant:${restaurantId}`);
-    await channel.send({
-      type: 'broadcast',
-      event: 'payment:captured',
-      payload: {
+    const delivered = await sendRestaurantBroadcast(
+      supabase,
+      restaurantId,
+      {
         restaurant_id: restaurantId,
         razorpay_order_id: razorpayOrderId,
         razorpay_payment_id: razorpayPaymentId,
         order_ids: orderIds,
         table_session_ids: tableSessionIds,
       },
-    });
-    await supabase.removeChannel(channel);
+    );
+    if (!delivered) {
+      console.warn(`Payment captured broadcast was not delivered for restaurant ${restaurantId}.`);
+    }
   }));
 
   return Response.json({ received: true });

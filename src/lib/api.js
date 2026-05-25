@@ -20,6 +20,26 @@ function normalizeOrderItems(items = []) {
   }));
 }
 
+function normalizeRpcJson(data) {
+  if (typeof data !== 'string') return data;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMenuItem(item) {
+  return {
+    ...item,
+    tags: safeParseModifiers(item.tags_json) ?? [],
+    modifier_groups: (item.modifier_groups || []).map(group => ({
+      ...group,
+      options: group.options || [],
+    })),
+  };
+}
+
 async function getAuthHeader() {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
@@ -48,41 +68,20 @@ async function apiFetch(path, options = {}) {
 // Public customer API
 
 export async function fetchMenu(restaurantSlug) {
-  let restaurantQuery = supabase.from('Restaurant').select('*');
-  restaurantQuery = restaurantSlug
-    ? restaurantQuery.eq('slug', restaurantSlug).maybeSingle()
-    : restaurantQuery.limit(1).maybeSingle();
+  const { data, error } = await supabase.rpc('get_public_menu_by_slug', {
+    p_restaurant_slug: restaurantSlug || null,
+  });
+  if (error) throw new Error(error.message);
 
-  const { data: restaurant, error: restErr } = await restaurantQuery;
-  if (restErr || !restaurant) throw new Error('Restaurant not found');
-
-  const { data: categories, error: catErr } = await supabase
-    .from('MenuCategory')
-    .select(`
-      *,
-      items:MenuItem(
-        *,
-        modifier_groups:ModifierGroup(
-          *,
-          options:ModifierOption(*)
-        )
-      )
-    `)
-    .eq('restaurant_id', restaurant.id)
-    .eq('archived', false)
-    .order('display_order', { ascending: true });
-
-  if (catErr) throw new Error(catErr.message);
+  const payload = normalizeRpcJson(data);
+  if (!payload?.restaurant) throw new Error('Restaurant not found');
 
   return {
-    restaurant,
-    categories: categories?.map(cat => ({
+    restaurant: payload.restaurant,
+    categories: (payload.categories || []).map(cat => ({
       ...cat,
-      items: (cat.items || []).map(item => ({
-        ...item,
-        tags: safeParseModifiers(item.tags_json) ?? [],
-      })),
-    })) || [],
+      items: (cat.items || []).map(normalizeMenuItem),
+    })),
   };
 }
 
@@ -109,24 +108,13 @@ export async function startOrResumeTableSession({ restaurantId, tableId, existin
 }
 
 export async function fetchMenuItem(dishId) {
-  const { data, error } = await supabase
-    .from('MenuItem')
-    .select(`
-      *,
-      category:MenuCategory(*),
-      modifier_groups:ModifierGroup(
-        *,
-        options:ModifierOption(*)
-      )
-    `)
-    .eq('id', dishId)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc('get_public_menu_item', {
+    p_menu_item_id: dishId,
+  });
   if (error) throw new Error(error.message);
-  if (!data) throw new Error('Menu item not found');
-  return {
-    ...data,
-    tags: safeParseModifiers(data.tags_json) ?? [],
-  };
+  const item = normalizeRpcJson(data);
+  if (!item) throw new Error('Menu item not found');
+  return normalizeMenuItem(item);
 }
 
 export async function placeOrder(payload) {

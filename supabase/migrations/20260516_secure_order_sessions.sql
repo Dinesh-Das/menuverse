@@ -583,7 +583,7 @@ end;
 $$;
 
 grant execute on function start_table_session(text, text, text) to anon, authenticated;
--- Superseded by 001_rpcs.sql and cleaned up by 999_rpcs_final.sql.
+-- Superseded by 20260524000100_rpcs.sql and cleaned up by 999_rpcs_final.sql.
 grant execute on function get_table_session_orders(text) to anon, authenticated;
 grant execute on function get_order_status_secure(text, text) to anon, authenticated;
 grant execute on function create_staff_request_secure(text, text, text) to anon, authenticated;

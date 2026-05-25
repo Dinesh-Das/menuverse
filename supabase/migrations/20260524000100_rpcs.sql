@@ -103,16 +103,13 @@ begin
 end;
 $$;
 
-drop function if exists create_order_secure(text, text, text, jsonb, text, text);
-drop function if exists create_order_secure(text, text, text, text, text, jsonb);
-
 create or replace function create_order_secure(
   p_restaurant_id text,
   p_table_id text,
   p_table_session_token text default null,
+  p_items jsonb default '[]'::jsonb,
   p_special_instructions text default null,
-  p_idempotency_key text default null,
-  p_items jsonb default '[]'::jsonb
+  p_idempotency_key text default null
 )
 returns table(order_ref text, status text, total_amount numeric)
 language plpgsql
@@ -340,7 +337,7 @@ create or replace function start_table_session(
   p_table_id text,
   p_existing_token text default null
 )
-returns table(id text, token text, status text)
+returns table(id text, token text, status text, table_id text, restaurant_id text)
 language plpgsql
 security definer
 set search_path = public
@@ -373,6 +370,8 @@ begin
     id := v_session.id;
     token := v_session.token;
     status := v_session.status;
+    table_id := v_session.table_id;
+    restaurant_id := v_session.restaurant_id;
     return next;
     return;
   end if;
@@ -407,6 +406,8 @@ begin
   id := v_session.id;
   token := v_session.token;
   status := v_session.status;
+  table_id := v_session.table_id;
+  restaurant_id := v_session.restaurant_id;
   return next;
 end;
 $$;
@@ -499,8 +500,100 @@ as $$
   ) q;
 $$;
 
-drop function if exists create_staff_request_secure(text, text, text);
-drop function if exists create_staff_request_secure(text, text, text, text, text);
+create or replace function get_public_menu_by_slug(p_restaurant_slug text default null)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with selected_restaurant as (
+    select r.*
+    from "Restaurant" r
+    where p_restaurant_slug is null
+      or r.slug = p_restaurant_slug
+    order by r.created_at asc
+    limit 1
+  )
+  select jsonb_build_object(
+    'restaurant', to_jsonb(sr),
+    'categories', coalesce((
+      select jsonb_agg(
+        to_jsonb(c)
+        || jsonb_build_object(
+          'items', coalesce((
+            select jsonb_agg(
+              to_jsonb(mi)
+              || jsonb_build_object(
+                'modifier_groups', coalesce((
+                  select jsonb_agg(
+                    to_jsonb(mg)
+                    || jsonb_build_object(
+                      'options', coalesce((
+                        select jsonb_agg(to_jsonb(mo) order by mo.name)
+                        from "ModifierOption" mo
+                        where mo.group_id = mg.id
+                      ), '[]'::jsonb)
+                    )
+                    order by mg.created_at, mg.name
+                  )
+                  from "ModifierGroup" mg
+                  where mg.menu_item_id = mi.id
+                    and mg.restaurant_id = sr.id
+                ), '[]'::jsonb)
+              )
+              order by mi.display_order, mi.name
+            )
+            from "MenuItem" mi
+            where mi.category_id = c.id
+              and mi.restaurant_id = sr.id
+          ), '[]'::jsonb)
+        )
+        order by c.display_order, c.name
+      )
+      from "MenuCategory" c
+      where c.restaurant_id = sr.id
+        and c.archived = false
+    ), '[]'::jsonb)
+  )
+  from selected_restaurant sr;
+$$;
+
+create or replace function get_public_menu_item(p_menu_item_id text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select to_jsonb(mi)
+    || jsonb_build_object(
+      'category', to_jsonb(c),
+      'restaurant', to_jsonb(r),
+      'modifier_groups', coalesce((
+        select jsonb_agg(
+          to_jsonb(mg)
+          || jsonb_build_object(
+            'options', coalesce((
+              select jsonb_agg(to_jsonb(mo) order by mo.name)
+              from "ModifierOption" mo
+              where mo.group_id = mg.id
+            ), '[]'::jsonb)
+          )
+          order by mg.created_at, mg.name
+        )
+        from "ModifierGroup" mg
+        where mg.menu_item_id = mi.id
+          and mg.restaurant_id = mi.restaurant_id
+      ), '[]'::jsonb)
+    )
+  from "MenuItem" mi
+  join "MenuCategory" c on c.id = mi.category_id
+  join "Restaurant" r on r.id = mi.restaurant_id
+  where mi.id = p_menu_item_id
+    and c.archived = false
+  limit 1;
+$$;
 
 create or replace function create_staff_request_secure(
   p_restaurant_id text,
@@ -561,8 +654,10 @@ begin
 end;
 $$;
 
-grant execute on function create_order_secure(text, text, text, text, text, jsonb) to anon, authenticated;
+grant execute on function create_order_secure(text, text, text, jsonb, text, text) to anon, authenticated;
 grant execute on function start_table_session(text, text, text) to anon, authenticated;
 grant execute on function close_table_session(text, text) to authenticated;
 grant execute on function get_table_session_orders(text) to anon, authenticated;
+grant execute on function get_public_menu_by_slug(text) to anon, authenticated;
+grant execute on function get_public_menu_item(text) to anon, authenticated;
 grant execute on function create_staff_request_secure(text, text, text, text, text) to anon, authenticated;

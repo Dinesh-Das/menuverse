@@ -150,9 +150,10 @@ const VALID_TRANSITIONS = {
   cancelled: [],
 };
 
-const GLB_MIME_TYPES = new Set(['model/gltf-binary', 'application/octet-stream']);
-const USDZ_MIME_TYPES = new Set(['model/vnd.usdz+zip', 'model/vnd.pixar.usd', 'application/octet-stream', 'application/zip']);
+const GLB_MIME_TYPES = new Set(['model/gltf-binary']);
+const USDZ_MIME_TYPES = new Set(['model/vnd.usdz+zip', 'model/vnd.pixar.usd', 'application/zip', 'application/x-zip-compressed']);
 const THUMBNAIL_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const BINARY_MIME_FALLBACKS = new Set(['application/octet-stream', '']);
 
 function requireStorageClient() {
   if (!supabaseAdmin) {
@@ -165,12 +166,52 @@ function getFileExtension(file) {
   return file.originalname.split('.').pop()?.toLowerCase() || '';
 }
 
-function validateUpload(file, { label, maxBytes, mimeTypes, extensions }) {
+function hasBytes(buffer, bytes, offset = 0) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < offset + bytes.length) return false;
+  return bytes.every((byte, index) => buffer[offset + index] === byte);
+}
+
+function isGlb(file) {
+  return file.buffer.length >= 12
+    && hasBytes(file.buffer, [0x67, 0x6c, 0x54, 0x46])
+    && file.buffer.readUInt32LE(4) === 2;
+}
+
+function isZipArchive(file) {
+  return (
+    hasBytes(file.buffer, [0x50, 0x4b, 0x03, 0x04])
+    || hasBytes(file.buffer, [0x50, 0x4b, 0x05, 0x06])
+    || hasBytes(file.buffer, [0x50, 0x4b, 0x07, 0x08])
+  );
+}
+
+function thumbnailMagicMatchesExtension(file, ext) {
+  const isJpeg = hasBytes(file.buffer, [0xff, 0xd8, 0xff]);
+  const isPng = hasBytes(file.buffer, [0x89, 0x50, 0x4e, 0x47]);
+  const isWebp = hasBytes(file.buffer, [0x52, 0x49, 0x46, 0x46]) && hasBytes(file.buffer, [0x57, 0x45, 0x42, 0x50], 8);
+
+  if (['jpg', 'jpeg'].includes(ext)) return isJpeg;
+  if (ext === 'png') return isPng;
+  if (ext === 'webp') return isWebp;
+  return false;
+}
+
+function validateUpload(file, { label, maxBytes, mimeTypes, extensions, validateMagic }) {
   if (!file) throw new Error(`${label} is required.`);
   if (file.size > maxBytes) throw new Error(`${label} exceeds the allowed size.`);
   const ext = getFileExtension(file);
-  if (!mimeTypes.has(file.mimetype) || !extensions.includes(ext)) {
+  if (!extensions.includes(ext)) {
+    throw new Error(`${label} has an unsupported file extension.`);
+  }
+
+  const hasKnownMime = mimeTypes.has(file.mimetype);
+  const hasBinaryFallback = BINARY_MIME_FALLBACKS.has(file.mimetype);
+  if (!hasKnownMime && !hasBinaryFallback) {
     throw new Error(`${label} has an unsupported file type.`);
+  }
+
+  if (validateMagic && !validateMagic(file, ext)) {
+    throw new Error(`${label} content does not match its file type.`);
   }
 }
 
@@ -479,6 +520,7 @@ app.post(
         maxBytes: 20 * 1024 * 1024,
         mimeTypes: GLB_MIME_TYPES,
         extensions: ['glb'],
+        validateMagic: isGlb,
       });
       if (usdzFile) {
         validateUpload(usdzFile, {
@@ -486,6 +528,7 @@ app.post(
           maxBytes: 20 * 1024 * 1024,
           mimeTypes: USDZ_MIME_TYPES,
           extensions: ['usdz'],
+          validateMagic: isZipArchive,
         });
       }
       if (thumbnailFile) {
@@ -494,6 +537,7 @@ app.post(
           maxBytes: 2 * 1024 * 1024,
           mimeTypes: THUMBNAIL_MIME_TYPES,
           extensions: ['jpg', 'jpeg', 'png', 'webp'],
+          validateMagic: thumbnailMagicMatchesExtension,
         });
       }
 
@@ -796,6 +840,13 @@ app.post('/api/orders', async (req, res) => {
       return res.status(404).json({ error: 'Restaurant not found' });
     }
 
+    const table = await prisma.table.findFirst({
+      where: { id: table_id, restaurant_id },
+    });
+    if (!table) {
+      return res.status(400).json({ error: 'Invalid table for this restaurant' });
+    }
+
     const orderId = genOrderId();
 
     // Trustless Pricing Calculation
@@ -892,7 +943,7 @@ app.post('/api/orders', async (req, res) => {
     });
 
     // Update table status
-    await prisma.table.update({ where: { id: table_id }, data: { status: 'occupied' } });
+    await prisma.table.update({ where: { id: table.id }, data: { status: 'occupied' } });
 
     // Emit to KDS / restaurant room
     io.to(`restaurant:${restaurant_id}`).emit('order:new', order);
