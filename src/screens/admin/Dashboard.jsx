@@ -25,24 +25,40 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user?.restaurantId) return;
     
-    let channel;
+    let channel = null;
+    let cancelled = false;
+
+    const refreshOrders = () => {
+      adminFetchOrders(null, user.restaurantId)
+        .then(res => {
+          if (!cancelled) setOrders(res.data);
+        })
+        .catch(err => {
+          if (cancelled) return;
+          console.error(err);
+          addToast(`Failed to refresh dashboard orders: ${err.message}`, 'error');
+        });
+    };
+
     const fetchAndSubscribe = async () => {
       try {
         const { data } = await adminFetchOrders(null, user.restaurantId);
+        if (cancelled) return;
         setOrders(data);
         setLoading(false);
 
-        channel = supabase.channel('dashboard_orders')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'Order', filter: `restaurant_id=eq.${user.restaurantId}` }, () => {
-            adminFetchOrders(null, user.restaurantId)
-              .then(res => setOrders(res.data))
-              .catch(err => {
-                console.error(err);
-                addToast(`Failed to refresh dashboard orders: ${err.message}`, 'error');
-              });
-          })
-          .subscribe();
+        const channelName = `dashboard_orders:${user.restaurantId}:${crypto.randomUUID()}`;
+        channel = supabase
+          .channel(channelName)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'Order', filter: `restaurant_id=eq.${user.restaurantId}` },
+            refreshOrders
+          );
+
+        channel.subscribe();
       } catch (err) {
+        if (cancelled) return;
         console.error(err);
         addToast(`Failed to load dashboard orders: ${err.message}`, 'error');
         setLoading(false);
@@ -52,6 +68,7 @@ export default function Dashboard() {
     fetchAndSubscribe();
 
     return () => {
+      cancelled = true;
       if (channel) supabase.removeChannel(channel);
     };
   }, [user, addToast]);
