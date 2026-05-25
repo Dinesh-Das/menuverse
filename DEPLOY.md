@@ -59,6 +59,19 @@ The secure MVP order path depends on these RPC functions:
 - `close_table_session`
 - `remove_staff_member_secure`
 
+## Storage Buckets
+
+The `ar-models` bucket is created automatically by migration `20260526000000_create_ar_models_bucket.sql`.
+
+If you are using the Supabase dashboard instead of migrations:
+1. Go to Storage → New Bucket
+2. Name: `ar-models`
+3. Public bucket: **Yes**
+4. File size limit: 20 MB
+5. Allowed MIME types: `model/gltf-binary, model/vnd.usdz+zip, application/octet-stream, image/jpeg, image/png, image/webp`
+
+This bucket stores GLB, USDZ, and thumbnail assets for the AR menu preview feature.
+
 ## 4. Edge Functions
 
 ```bash

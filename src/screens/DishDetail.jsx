@@ -318,10 +318,10 @@ export default function DishDetail() {
                 <model-viewer
                   src={arAsset.model_glb_url}
                   ios-src={arAsset.model_usdz_url || undefined}
-                  ar="true"
+                  ar=""
                   ar-modes="webxr scene-viewer quick-look"
-                  camera-controls="true"
-                  auto-rotate="true"
+                  camera-controls=""
+                  auto-rotate=""
                   style={{ width: '100%', height: '80vh' }}
                 />
               </div>

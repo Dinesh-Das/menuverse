@@ -275,8 +275,8 @@ export default function ARStudio() {
               ) : asset?.model_glb_url ? (
                 <model-viewer
                   src={asset.model_glb_url}
-                  camera-controls="true"
-                  auto-rotate="true"
+                  camera-controls=""
+                  auto-rotate=""
                   style={{ width: '100%', height: '300px', background: 'transparent' }}
                 />
               ) : (

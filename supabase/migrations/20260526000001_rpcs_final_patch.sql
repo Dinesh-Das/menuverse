@@ -1,3 +1,5 @@
+-- Patch: re-applies start_table_session with qr_enabled guard.
+-- Runs after 20260524000100_rpcs.sql to override the earlier definition.
 -- Keep fresh installs aligned after the older 20260516 RPC migrations run.
 
 create or replace function start_table_session(
