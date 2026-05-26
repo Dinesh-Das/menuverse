@@ -547,6 +547,7 @@ as $$
             from "MenuItem" mi
             where mi.category_id = c.id
               and mi.restaurant_id = sr.id
+              and mi.available = true
           ), '[]'::jsonb)
         )
         order by c.display_order, c.name
@@ -592,6 +593,7 @@ as $$
   join "Restaurant" r on r.id = mi.restaurant_id
   where mi.id = p_menu_item_id
     and c.archived = false
+    and mi.available = true
   limit 1;
 $$;
 

@@ -1,23 +1,3 @@
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values (
-  'ar-models',
-  'ar-models',
-  true,
-  20971520, -- 20MB
-  array[
-    'model/gltf-binary',
-    'model/vnd.usdz+zip',
-    'model/vnd.pixar.usd',
-    'application/octet-stream',
-    'application/zip',
-    'application/x-zip-compressed',
-    'image/jpeg',
-    'image/png',
-    'image/webp'
-  ]
-)
-on conflict (id) do nothing;
-
 create or replace function public.app_storage_staff_can_access(p_restaurant_id text)
 returns boolean
 language sql

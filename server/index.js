@@ -249,6 +249,11 @@ async function assertMenuItemForRestaurant(itemId, restaurantId) {
   return menuItem;
 }
 
+function getPublicTableSessionToken(req) {
+  const token = req.query.table_session_token || req.headers['x-table-session-token'];
+  return typeof token === 'string' ? token.trim() : '';
+}
+
 // ── SEED ─────────────────────────────────────────────────────────────────────
 app.post('/api/seed', async (req, res) => {
   try {
@@ -420,8 +425,12 @@ app.get('/api/menu', async (req, res) => {
 
 app.get('/api/menu/item/:id', async (req, res) => {
   try {
-    const item = await prisma.menuItem.findUnique({
-      where: { id: req.params.id },
+    const item = await prisma.menuItem.findFirst({
+      where: {
+        id: req.params.id,
+        available: true,
+        category: { is: { archived: false } },
+      },
       include: {
         category: true,
         modifier_groups: {
@@ -959,8 +968,21 @@ app.post('/api/orders', async (req, res) => {
 app.get('/api/tables/:id/orders', async (req, res) => {
   try {
     const { id } = req.params;
+    const tableSessionToken = getPublicTableSessionToken(req);
+    if (!tableSessionToken) {
+      return res.status(401).json({ error: 'table_session_token is required.' });
+    }
+
+    const session = await prisma.tableSession.findFirst({
+      where: { table_id: id, token: tableSessionToken },
+      select: { id: true },
+    });
+    if (!session) {
+      return res.status(403).json({ error: 'Invalid table session token.' });
+    }
+
     const orders = await prisma.order.findMany({
-      where: { table_id: id },
+      where: { table_id: id, table_session_id: session.id },
       include: { 
         items: {
           include: { menu_item: true }
@@ -978,8 +1000,21 @@ app.get('/api/tables/:id/orders', async (req, res) => {
 // GET /api/orders/:id — poll or track order (public)
 app.get('/api/orders/:id', async (req, res) => {
   try {
-    const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
+    const tableSessionToken = getPublicTableSessionToken(req);
+    if (!tableSessionToken) {
+      return res.status(401).json({ error: 'table_session_token is required.' });
+    }
+
+    const session = await prisma.tableSession.findUnique({
+      where: { token: tableSessionToken },
+      select: { id: true },
+    });
+    if (!session) {
+      return res.status(403).json({ error: 'Invalid table session token.' });
+    }
+
+    const order = await prisma.order.findFirst({
+      where: { id: req.params.id, table_session_id: session.id },
       include: { 
         items: {
           include: { menu_item: true }

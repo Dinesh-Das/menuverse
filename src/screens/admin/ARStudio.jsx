@@ -190,6 +190,11 @@ export default function ARStudio() {
               <div>
                 <h3 className="font-headline text-xl font-bold text-on-surface">Upload Model</h3>
                 <p className="text-xs text-on-surface-variant mt-1">GLB is required. USDZ and thumbnail are optional.</p>
+                <ul className="mt-3 space-y-1 text-xs text-on-surface-variant">
+                  <li>GLB and USDZ files must be 20MB or smaller.</li>
+                  <li>Thumbnails must be JPG, PNG, or WebP and 2MB or smaller.</li>
+                  <li>Video-to-3D generation is planned for a future pipeline service.</li>
+                </ul>
               </div>
 
               <label className="block">
@@ -268,6 +273,12 @@ export default function ARStudio() {
             </div>
 
             <div className="p-6 md:p-8">
+              {status === 'failed' && asset?.processing_error && (
+                <div className="mb-6 rounded-xl border border-error/20 bg-error/10 px-4 py-3 text-sm text-error">
+                  <span className="font-bold">Generation failed:</span> {asset.processing_error}
+                </div>
+              )}
+
               {loadingAsset ? (
                 <div className="h-[300px] flex items-center justify-center">
                   <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
