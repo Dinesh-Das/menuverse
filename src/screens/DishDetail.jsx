@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import '@google/model-viewer';
 import { useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { fetchMenuItem, fetchPublicARAsset } from '../lib/api';
@@ -19,6 +18,7 @@ export default function DishDetail() {
   const [arAsset, setArAsset] = useState(null);
   const [showARModal, setShowARModal] = useState(false);
   const [arSupported, setArSupported] = useState(true);
+  const [modelViewerReady, setModelViewerReady] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -58,6 +58,17 @@ export default function DishDetail() {
       mounted = false;
     };
   }, [dishId]);
+
+  useEffect(() => {
+    if (!showARModal || !arAsset?.model_glb_url || modelViewerReady) return undefined;
+    let mounted = true;
+    import('@google/model-viewer').then(() => {
+      if (mounted) setModelViewerReady(true);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [arAsset?.model_glb_url, modelViewerReady, showARModal]);
 
   // Check if all required modifier groups have selections
   const requiredGroups = useMemo(() =>
@@ -315,15 +326,21 @@ export default function DishDetail() {
                     AR is not available on this device, but you can still inspect the 3D preview.
                   </p>
                 )}
-                <model-viewer
-                  src={arAsset.model_glb_url}
-                  ios-src={arAsset.model_usdz_url || undefined}
-                  ar=""
-                  ar-modes="webxr scene-viewer quick-look"
-                  camera-controls=""
-                  auto-rotate=""
-                  style={{ width: '100%', height: '80vh' }}
-                />
+                {modelViewerReady ? (
+                  <model-viewer
+                    src={arAsset.model_glb_url}
+                    ios-src={arAsset.model_usdz_url || undefined}
+                    ar=""
+                    ar-modes="webxr scene-viewer quick-look"
+                    camera-controls=""
+                    auto-rotate=""
+                    style={{ width: '100%', height: '80vh' }}
+                  />
+                ) : (
+                  <div className="h-[80vh] flex items-center justify-center">
+                    <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

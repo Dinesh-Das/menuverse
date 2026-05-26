@@ -196,7 +196,8 @@ export default function Settings() {
       addToast(`Invite sent to ${newEmail}`, 'success');
       setNewEmail('');
       loadTeam();
-    } catch {
+    } catch (err) {
+      addToast(`Invite failed: ${err.message}`, 'error');
       setShowInviteModal(true);
     } finally {
       setInviting(false);
@@ -527,7 +528,7 @@ export default function Settings() {
                 <div className="bg-surface-container border border-outline-variant/20 rounded-2xl shadow-2xl p-8 max-w-md w-full">
                   <h2 className="font-headline text-xl font-bold text-on-surface mb-4">Manual Setup Required</h2>
                   <p className="text-sm text-on-surface-variant mb-6">
-                    The Supabase Edge Function to invite staff is not deployed. Please configure your edge function (`invite-staff`) or deploy the project manually as per DEPLOY.md instructions.
+                    The staff invite could not be completed. Confirm the `invite-staff` Edge Function is deployed and Supabase email invites are enabled.
                   </p>
                   <div className="flex justify-end gap-3">
                     <button onClick={() => setShowInviteModal(false)} className="px-6 py-2.5 rounded-xl font-bold text-sm bg-primary text-on-primary hover:brightness-110 shadow-md transition-all cursor-pointer">

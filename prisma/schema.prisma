@@ -20,6 +20,10 @@ model Restaurant {
   service_charge_rate Float    @default(0)
   payment_provider    String?  @default("razorpay")
   payment_enabled     Boolean  @default(false)
+  pos_provider        String?
+  pos_sync_enabled    Boolean  @default(false)
+  printer_enabled     Boolean  @default(false)
+  whatsapp_enabled    Boolean  @default(false)
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
@@ -33,6 +37,9 @@ model Restaurant {
   feedbacks       OrderFeedback[]
   staff_reqs      StaffRequest[]
   ar_assets       ARAsset[]
+  staff_invites   StaffInvite[]
+  integration_jobs IntegrationJob[]
+  guest_contacts  GuestContact[]
 }
 
 model User {
@@ -83,6 +90,7 @@ model TableSession {
   table      Table        @relation(fields: [table_id], references: [id])
   orders     Order[]
   bill       SessionBill?
+  guest_contact GuestContact?
 }
 
 model SessionBill {
@@ -123,6 +131,11 @@ model MenuItem {
   dietary_flag       String? // veg, non-veg, vegan
   available          Boolean  @default(true)
   display_order      Int      @default(0)
+  dynamic_rank       Int?
+  ranking_locked     Boolean  @default(false)
+  avg_sentiment_score Float    @default(0.5)
+  sentiment_badge    String?
+  order_count_7d     Int      @default(0)
   image_url          String?
   tags_json          String? // Stringified JSON array e.g. ["popular", "spicy"]
   has_ar_preview     Boolean  @default(false)
@@ -184,6 +197,7 @@ model Order {
   items         OrderItem[]
   payments      Payment[]
   feedback      OrderFeedback?
+  integration_jobs IntegrationJob[]
 
   @@index([restaurant_id, status])
   @@index([table_id])
@@ -210,6 +224,11 @@ model Payment {
   razorpay_payment_id String?
   status              String   @default("initiated")
   amount              Float
+  provider            String   @default("razorpay")
+  payment_method      String?
+  provider_fee        Float?
+  paid_at             DateTime?
+  metadata            Json     @default("{}")
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
@@ -222,10 +241,74 @@ model OrderFeedback {
   order_id      String   @unique
   rating        Int
   comment       String?
+  food_rating   Int?
+  service_rating Int?
+  value_rating  Int?
+  item_ratings  Json     @default("[]")
+  sentiment_label String?
+  sentiment_score Float?
+  sentiment_topics Json   @default("[]")
+  key_phrase    String?
+  analysed_at   DateTime?
+  flag_for_review Boolean @default(false)
+  analysis_source String?
   created_at    DateTime @default(now())
 
   restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
   order      Order      @relation(fields: [order_id], references: [id])
+}
+
+model StaffInvite {
+  id              String   @id @default(uuid())
+  restaurant_id   String
+  email           String
+  role            String
+  status          String   @default("sent")
+  invited_by      String?
+  invited_user_id String?
+  error           String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+}
+
+model IntegrationJob {
+  id            String   @id @default(uuid())
+  restaurant_id String
+  order_id      String?
+  job_type      String
+  provider      String?
+  status        String   @default("pending")
+  payload       Json     @default("{}")
+  response      Json?
+  error         String?
+  retry_count   Int      @default(0)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+  order      Order?     @relation(fields: [order_id], references: [id])
+
+  @@index([restaurant_id, job_type])
+}
+
+model GuestContact {
+  id                String   @id @default(uuid())
+  restaurant_id     String
+  table_session_id  String   @unique
+  name              String?
+  phone             String?
+  email             String?
+  marketing_consent Boolean  @default(false)
+  last_seen_at      DateTime @default(now())
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  restaurant    Restaurant   @relation(fields: [restaurant_id], references: [id])
+  table_session TableSession @relation(fields: [table_session_id], references: [id])
+
+  @@index([restaurant_id, last_seen_at])
 }
 
 model StaffRequest {

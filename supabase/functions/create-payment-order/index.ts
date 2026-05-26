@@ -111,7 +111,12 @@ serve(async (req) => {
       order_id: order.id,
       razorpay_order_id: razorpayOrder.id,
       status: 'initiated',
+      provider: 'razorpay',
       amount: Number(order.total_amount || 0),
+      metadata: {
+        table_session_token: tableSessionToken,
+        razorpay_receipt: razorpayOrder.receipt || null,
+      },
     }));
 
   if (newPaymentRows.length) {
@@ -129,7 +134,12 @@ serve(async (req) => {
       .update({
         razorpay_order_id: razorpayOrder.id,
         status: 'initiated',
+        provider: 'razorpay',
         amount: Number(order.total_amount || 0),
+        metadata: {
+          table_session_token: tableSessionToken,
+          razorpay_receipt: razorpayOrder.receipt || null,
+        },
         updated_at: now,
       })
       .eq('id', existingByOrderId.get(order.id).id)));

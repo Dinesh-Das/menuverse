@@ -16,6 +16,9 @@ alter table if exists "OrderFeedback" enable row level security;
 alter table if exists "StaffRequest" enable row level security;
 alter table if exists "TableSession" enable row level security;
 alter table if exists "SessionBill" enable row level security;
+alter table if exists "StaffInvite" enable row level security;
+alter table if exists "IntegrationJob" enable row level security;
+alter table if exists "GuestContact" enable row level security;
 
 drop policy if exists "restaurant_public_read" on "Restaurant";
 drop policy if exists "restaurant_owner_update" on "Restaurant";
@@ -56,6 +59,23 @@ begin
     drop policy if exists "staffreq_anon_insert" on "StaffRequest";
     drop policy if exists "staffreq_staff_read" on "StaffRequest";
     drop policy if exists "staffreq_staff_update" on "StaffRequest";
+  end if;
+
+  if to_regclass('"StaffInvite"') is not null then
+    drop policy if exists "staffinvite_admin_select" on "StaffInvite";
+    drop policy if exists "staffinvite_owner_insert" on "StaffInvite";
+    drop policy if exists "staffinvite_owner_update" on "StaffInvite";
+  end if;
+
+  if to_regclass('"IntegrationJob"') is not null then
+    drop policy if exists "integrationjob_staff_select" on "IntegrationJob";
+    drop policy if exists "integrationjob_staff_insert" on "IntegrationJob";
+    drop policy if exists "integrationjob_staff_update" on "IntegrationJob";
+  end if;
+
+  if to_regclass('"GuestContact"') is not null then
+    drop policy if exists "guestcontact_staff_select" on "GuestContact";
+    drop policy if exists "guestcontact_staff_update" on "GuestContact";
   end if;
 
   if to_regclass('"TableSession"') is not null then
@@ -197,6 +217,39 @@ begin
     create policy "staffreq_staff_update" on "StaffRequest"
       for update using (app_staff_can_access("StaffRequest".restaurant_id))
       with check (app_staff_can_access("StaffRequest".restaurant_id));
+  end if;
+
+  if to_regclass('"StaffInvite"') is not null then
+    create policy "staffinvite_admin_select" on "StaffInvite"
+      for select using (app_staff_can_access("StaffInvite".restaurant_id));
+
+    create policy "staffinvite_owner_insert" on "StaffInvite"
+      for insert with check (app_admin_can_access("StaffInvite".restaurant_id));
+
+    create policy "staffinvite_owner_update" on "StaffInvite"
+      for update using (app_admin_can_access("StaffInvite".restaurant_id))
+      with check (app_admin_can_access("StaffInvite".restaurant_id));
+  end if;
+
+  if to_regclass('"IntegrationJob"') is not null then
+    create policy "integrationjob_staff_select" on "IntegrationJob"
+      for select using (app_staff_can_access("IntegrationJob".restaurant_id));
+
+    create policy "integrationjob_staff_insert" on "IntegrationJob"
+      for insert with check (app_staff_can_access("IntegrationJob".restaurant_id));
+
+    create policy "integrationjob_staff_update" on "IntegrationJob"
+      for update using (app_staff_can_access("IntegrationJob".restaurant_id))
+      with check (app_staff_can_access("IntegrationJob".restaurant_id));
+  end if;
+
+  if to_regclass('"GuestContact"') is not null then
+    create policy "guestcontact_staff_select" on "GuestContact"
+      for select using (app_staff_can_access("GuestContact".restaurant_id));
+
+    create policy "guestcontact_staff_update" on "GuestContact"
+      for update using (app_staff_can_access("GuestContact".restaurant_id))
+      with check (app_staff_can_access("GuestContact".restaurant_id));
   end if;
 end $$;
 

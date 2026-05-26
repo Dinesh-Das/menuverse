@@ -5,6 +5,7 @@ import BottomNav from '../components/BottomNav';
 import { placeOrder, fetchMenu } from '../lib/api';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
+import { sortRecommendedItems } from '../lib/recommendations';
 
 export default function Checkout() {
   const { restaurantSlug } = useParams();
@@ -19,6 +20,7 @@ export default function Checkout() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [upsellItems, setUpsellItems] = useState([]);
+  const [upsellCategories, setUpsellCategories] = useState([]);
   const [celebration, setCelebration] = useState(false);
 
   const currentSlug = restaurantSlug || sessionSlug || 'zaika-zindagi';
@@ -30,23 +32,19 @@ export default function Checkout() {
   React.useEffect(() => {
     if (!currentSlug) return;
     fetchMenu(currentSlug).then(data => {
-      let candidates = [];
-      data.categories.forEach(cat => {
-        const name = cat.name.toLowerCase();
-        if (
-          name.includes('beverage') || name.includes('drink') || 
-          name.includes('dessert') || name.includes('sides') ||
-          name.includes('sweet') || name.includes('liquid')
-        ) {
-          candidates = [...candidates, ...(cat.items || []).filter(item => item.available)];
-        }
-      });
+      const candidates = data.categories.flatMap(cat => cat.items || []).filter(item => item.available);
+      setUpsellCategories(data.categories || []);
       setUpsellItems(candidates);
     }).catch(err => {
       console.error("Upsell fetch error:", err);
       addToast(`Failed to load meal suggestions: ${err.message}`, 'error');
     });
   }, [currentSlug, addToast]);
+
+  const recommendedUpsells = React.useMemo(
+    () => sortRecommendedItems(upsellItems, allItems, upsellCategories),
+    [upsellItems, allItems, upsellCategories]
+  );
 
   const handleCheckout = async () => {
     if (allItems.length === 0) return;
@@ -203,17 +201,14 @@ export default function Checkout() {
               </div>
 
               {/* Upselling Carousel */}
-              {upsellItems.filter(ui => !allItems.some(ai => ai.id === ui.id)).length > 0 && (
+              {recommendedUpsells.length > 0 && (
                 <div className="mb-8">
                   <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-4 flex items-center gap-2">
                     <span className="material-symbols-outlined text-sm text-primary">auto_awesome</span>
-                    Complete Your Meal
+                    Recommended For This Table
                   </h3>
                   <div className="flex overflow-x-auto pb-4 gap-4 snap-x hide-scrollbar">
-                    {upsellItems
-                      .filter(ui => !allItems.some(ai => ai.id === ui.id))
-                      .slice(0, 5)
-                      .map(item => (
+                    {recommendedUpsells.slice(0, 5).map(item => (
                       <div key={item.id} className="snap-start shrink-0 w-36 md:w-44 bg-surface-container border border-outline-variant/10 rounded-2xl overflow-hidden flex flex-col hover:shadow-md transition-shadow">
                         <div className="h-24 md:h-28 bg-surface-container-high relative">
                           {item.image_url ? (

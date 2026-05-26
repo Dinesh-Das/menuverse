@@ -6,6 +6,7 @@ import BottomNav from '../components/BottomNav';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
+import { getWalletPaymentLabel, openRazorpayCheckout } from '../lib/payments';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
@@ -19,6 +20,7 @@ export default function TableSession() {
   // LF-06: "Pay at Counter" informational dialog state
   const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
   const [sessionTab, setSessionTab] = useState('active'); // 'active', 'history'
+  const walletPayment = getWalletPaymentLabel();
 
   useEffect(() => {
     if (!tableId) {
@@ -67,23 +69,39 @@ export default function TableSession() {
     }
 
     const providerName = paymentProvider === 'razorpay' ? 'Razorpay' : 'digital';
-    setPaymentState({ isOpen: true, status: 'processing', message: `Creating a secure ${providerName} payment request...` });
+    setPaymentState({ isOpen: true, status: 'processing', message: `Creating a secure ${providerName} checkout...` });
     try {
-      await createPayment({
+      const paymentOrder = await createPayment({
         table_session_token: tableSessionToken,
         amount: totalBill,
       });
-      setPaymentState({
-        isOpen: true,
-        status: 'requested',
-        message: 'Payment request created. Staff will share the verified payment link shortly.',
+
+      setPaymentState({ isOpen: false, status: 'idle', message: '' });
+      await openRazorpayCheckout({
+        paymentOrder,
+        restaurantName: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+        tableNumber,
+        onSuccess: () => {
+          setPaymentState({
+            isOpen: true,
+            status: 'submitted',
+            message: 'Payment submitted. Razorpay webhook verification will update your bill automatically.',
+          });
+        },
+        onDismiss: () => {
+          setPaymentState({
+            isOpen: true,
+            status: 'dismissed',
+            message: 'Payment was not completed. You can try again or pay at the counter.',
+          });
+        },
       });
     } catch (e) {
       console.error(e);
       setPaymentState({
         isOpen: true,
-        status: 'requested',
-        message: 'Digital payment is not configured yet. Please pay at the counter or ask staff for help.',
+        status: 'fallback',
+        message: 'Digital checkout is not available yet. Please pay at the counter or ask staff for help.',
       });
     }
   };
@@ -156,9 +174,9 @@ export default function TableSession() {
                 {paymentEnabled ? (
                   <button
                     onClick={requestPaymentLink}
-                    className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                    className="w-full bg-primary text-on-primary px-3 py-4 rounded-xl font-bold uppercase tracking-widest text-sm leading-tight shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
                   >
-                    Request Payment Link
+                    {walletPayment.headline}
                     <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
                   </button>
                 ) : (
@@ -178,6 +196,12 @@ export default function TableSession() {
                   <span className="material-symbols-outlined text-lg">storefront</span>
                   Pay at Counter
                 </button>
+                {paymentEnabled && (
+                  <div className="flex items-center justify-center gap-2 text-on-surface-variant/50">
+                    <span className="material-symbols-outlined text-sm">verified_user</span>
+                    <span className="text-[10px] uppercase tracking-widest font-bold">{walletPayment.detail}</span>
+                  </div>
+                )}
               </div>
             </div>
 

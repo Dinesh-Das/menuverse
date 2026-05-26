@@ -32,7 +32,13 @@ SUPABASE_SERVICE_ROLE_KEY=server-only-service-role-key
 RAZORPAY_KEY_ID=rzp_live_xxx
 RAZORPAY_KEY_SECRET=server-only-secret
 RAZORPAY_WEBHOOK_SECRET=server-only-webhook-secret
+ANTHROPIC_API_KEY=server-only-key
+ANTHROPIC_MODEL=claude-3-5-haiku-20241022
 WHATSAPP_ACCESS_TOKEN=server-only-token
+WHATSAPP_WEBHOOK_URL=https://provider.example/send
+KOT_WEBHOOK_URL=https://printer-provider.example/print
+POS_WEBHOOK_URL=https://pos-provider.example/orders
+APP_ORIGIN=https://your-domain.com
 ```
 
 Never expose service role, payment secret, or webhook secret values to Vite.
@@ -56,12 +62,16 @@ The secure MVP order path depends on these RPC functions:
 - `get_table_session_orders`
 - `create_staff_request_secure`
 - `submit_order_feedback_secure`
+- `upsert_guest_contact_secure`
+- `admin_feedback_insights`
+- `recalculate_menu_rankings`
 - `close_table_session`
 - `remove_staff_member_secure`
 
 ## Storage Buckets
 
 The `ar-models` bucket is created automatically by migration `20260526000000_create_ar_models_bucket.sql`.
+The `restaurant-assets` bucket is created automatically by migration `20260526000004_audit_gap_foundations.sql`.
 
 If you are using the Supabase dashboard instead of migrations:
 1. Go to Storage → New Bucket
@@ -70,20 +80,27 @@ If you are using the Supabase dashboard instead of migrations:
 4. File size limit: 20 MB
 5. Allowed MIME types: `model/gltf-binary, model/vnd.usdz+zip, application/octet-stream, image/jpeg, image/png, image/webp`
 
-This bucket stores GLB, USDZ, and thumbnail assets for the AR menu preview feature.
+The `ar-models` bucket stores GLB, USDZ, and thumbnail assets for the AR menu preview feature. The `restaurant-assets` bucket stores logos and menu photos.
 
 ## 4. Edge Functions
 
 ```bash
 supabase functions deploy create-payment-order
 supabase functions deploy verify-payment-webhook
+supabase functions deploy invite-staff
+supabase functions deploy analyse-feedback
+supabase functions deploy request-kitchen-print
+supabase functions deploy send-whatsapp-notification
+supabase functions deploy sync-to-pos
 ```
 
-`create-payment-order` is a safe placeholder until Razorpay credentials and provider API calls are added. `verify-payment-webhook` must verify Razorpay signatures before any payment or bill is marked paid.
+`create-payment-order` creates Razorpay Orders with server-side credentials. `verify-payment-webhook` verifies Razorpay signatures before any payment or bill is marked paid.
+
+`analyse-feedback` uses `ANTHROPIC_API_KEY` when configured and falls back to a deterministic rating/keyword baseline when it is not. `request-kitchen-print`, `send-whatsapp-notification`, and `sync-to-pos` queue integration jobs and forward to provider webhooks when those URLs are configured.
 
 ## 5. Storage
 
-Create a public `restaurant-assets` bucket for logos/menu photos. Keep writes authenticated and restaurant-folder scoped:
+The latest migrations create public `restaurant-assets` and `ar-models` buckets with restaurant-folder-scoped write policies. If you are not running migrations, create a public `restaurant-assets` bucket for logos/menu photos and keep writes authenticated and restaurant-folder scoped:
 
 ```sql
 create policy "restaurant_asset_upload"

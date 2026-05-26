@@ -242,12 +242,74 @@ export async function fetchPublicARAsset(itemId) {
   return asset;
 }
 
-export async function submitOrderFeedback({ orderId, tableSessionToken, rating, comment = null }) {
-  const { data, error } = await supabase.rpc('submit_order_feedback_secure', {
+export async function submitOrderFeedback({
+  orderId,
+  tableSessionToken,
+  rating,
+  comment = null,
+  foodRating = null,
+  serviceRating = null,
+  valueRating = null,
+  itemRatings = [],
+}) {
+  const extendedPayload = {
     p_order_id: orderId,
     p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
     p_rating: rating,
     p_comment: comment,
+    p_food_rating: foodRating,
+    p_service_rating: serviceRating,
+    p_value_rating: valueRating,
+    p_item_ratings: itemRatings,
+  };
+
+  let { data, error } = await supabase.rpc('submit_order_feedback_secure', extendedPayload);
+
+  if (error && /function .*submit_order_feedback_secure/i.test(error.message)) {
+    ({ data, error } = await supabase.rpc('submit_order_feedback_secure', {
+      p_order_id: extendedPayload.p_order_id,
+      p_table_session_token: extendedPayload.p_table_session_token,
+      p_rating: extendedPayload.p_rating,
+      p_comment: extendedPayload.p_comment,
+    }));
+  }
+
+  if (error) throw new Error(error.message);
+
+  if (data) {
+    supabase.functions.invoke('analyse-feedback', {
+      body: { feedback_id: data },
+    }).catch(() => {});
+  }
+
+  return data;
+}
+
+export async function saveGuestContact({
+  restaurantId,
+  tableSessionToken,
+  name = null,
+  phone = null,
+  email = null,
+  marketingConsent = false,
+}) {
+  const { data, error } = await supabase.rpc('upsert_guest_contact_secure', {
+    p_restaurant_id: requireRestaurantId(restaurantId),
+    p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+    p_name: name,
+    p_phone: phone,
+    p_email: email,
+    p_marketing_consent: Boolean(marketingConsent),
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminFetchFeedbackInsights(restaurantId, days = 30) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('admin_feedback_insights', {
+    p_restaurant_id: restaurantId,
+    p_days: days,
   });
   if (error) throw new Error(error.message);
   return data;

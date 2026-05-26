@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchTableInfo, startOrResumeTableSession } from '../lib/api';
+import { fetchTableInfo, saveGuestContact, startOrResumeTableSession } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -23,6 +23,12 @@ export default function QRLanding() {
   const { setSession } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const [table, setTable] = useState(null);
+  const [activeSessionToken, setActiveSessionToken] = useState(null);
+  const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [marketingConsent, setMarketingConsent] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -55,6 +61,7 @@ export default function QRLanding() {
           });
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
+          setActiveSessionToken(sessionPayload.tableSessionToken);
         } catch (sessionErr) {
           console.warn('[Menuverse] Table session RPC unavailable:', sessionErr.message);
         }
@@ -69,6 +76,28 @@ export default function QRLanding() {
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableId, restaurantSlug, setSession]);
+
+  const handleExploreMenu = async () => {
+    const hasContact = guestName.trim() || guestPhone.trim() || guestEmail.trim();
+    if (hasContact && table?.restaurant_id && activeSessionToken) {
+      setSavingContact(true);
+      try {
+        await saveGuestContact({
+          restaurantId: table.restaurant_id,
+          tableSessionToken: activeSessionToken,
+          name: guestName,
+          phone: guestPhone,
+          email: guestEmail,
+          marketingConsent,
+        });
+      } catch (contactErr) {
+        console.warn('[Menuverse] Guest contact capture skipped:', contactErr.message);
+      } finally {
+        setSavingContact(false);
+      }
+    }
+    navigate(`/r/${restaurantSlug}/menu`);
+  };
 
   if (loading) {
     return (
@@ -141,12 +170,46 @@ export default function QRLanding() {
         </div>
 
         <button
-          onClick={() => navigate(`/r/${restaurantSlug}/menu`)}
-          className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-all active:scale-95 hover:shadow-primary/20 hover:-translate-y-0.5 flex justify-center items-center gap-2 cursor-pointer"
+          onClick={handleExploreMenu}
+          disabled={savingContact}
+          className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-all active:scale-95 hover:shadow-primary/20 hover:-translate-y-0.5 flex justify-center items-center gap-2 cursor-pointer disabled:opacity-60"
         >
-          Explore Menu
-          <span className="material-symbols-outlined text-lg">arrow_forward</span>
+          {savingContact ? 'Saving...' : 'Explore Menu'}
+          <span className={`material-symbols-outlined text-lg ${savingContact ? 'animate-spin' : ''}`}>{savingContact ? 'progress_activity' : 'arrow_forward'}</span>
         </button>
+
+        <div className="w-full mt-5 space-y-3">
+          <input
+            type="text"
+            value={guestName}
+            onChange={event => setGuestName(event.target.value)}
+            placeholder="Name for receipt"
+            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+          />
+          <input
+            type="tel"
+            value={guestPhone}
+            onChange={event => setGuestPhone(event.target.value)}
+            placeholder="Phone for WhatsApp receipt"
+            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+          />
+          <input
+            type="email"
+            value={guestEmail}
+            onChange={event => setGuestEmail(event.target.value)}
+            placeholder="Email receipt"
+            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+          />
+          <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+            <input
+              type="checkbox"
+              checked={marketingConsent}
+              onChange={event => setMarketingConsent(event.target.checked)}
+              className="w-4 h-4 accent-primary"
+            />
+            Offers and loyalty updates
+          </label>
+        </div>
 
         <div className="mt-12 flex flex-col items-center gap-2">
           <p className="text-on-surface-variant/40 text-[9px] text-center uppercase tracking-[0.3em]">

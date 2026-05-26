@@ -132,6 +132,19 @@ serve(async (req) => {
     .update({
       status: 'captured',
       razorpay_payment_id: razorpayPaymentId,
+      payment_method: paymentEntity?.method || paymentEntity?.wallet || paymentEntity?.vpa || null,
+      provider_fee: typeof paymentEntity?.fee === 'number' ? paymentEntity.fee / 100 : null,
+      paid_at: new Date().toISOString(),
+      metadata: {
+        razorpay: {
+          method: paymentEntity?.method || null,
+          wallet: paymentEntity?.wallet || null,
+          vpa: paymentEntity?.vpa || null,
+          bank: paymentEntity?.bank || null,
+          card_id: paymentEntity?.card_id || null,
+          captured: paymentEntity?.captured ?? null,
+        },
+      },
       updated_at: new Date().toISOString(),
     })
     .eq('razorpay_order_id', razorpayOrderId);

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchOrders } from '../../lib/api';
+import { adminFetchFeedbackInsights, adminFetchOrders } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
@@ -19,6 +19,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const { addToast } = useToast();
   const [orders, setOrders] = useState([]);
+  const [insights, setInsights] = useState(null);
   const [loading, setLoading] = useState(true);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
@@ -42,9 +43,13 @@ export default function Dashboard() {
 
     const fetchAndSubscribe = async () => {
       try {
-        const { data } = await adminFetchOrders(null, user.restaurantId);
+        const [{ data }, feedbackInsights] = await Promise.all([
+          adminFetchOrders(null, user.restaurantId),
+          adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
+        ]);
         if (cancelled) return;
         setOrders(data);
+        setInsights(feedbackInsights);
         setLoading(false);
 
         const channelName = `dashboard_orders:${user.restaurantId}:${crypto.randomUUID()}`;
@@ -106,6 +111,7 @@ export default function Dashboard() {
 
   const ordersDelta = calcDelta(thisWeekCount, lastWeekCount);
   const revenueDelta = calcDelta(thisWeekRev, lastWeekRev);
+  const sentimentPct = Math.round(Number(insights?.avg_sentiment_score ?? 0.5) * 100);
 
   // Group by day for the chart (last 7 days)
   const last7Days = Array.from({length: 7}).map((_, i) => {
@@ -140,7 +146,7 @@ export default function Dashboard() {
           {[
             { label: "TODAY'S ORDERS", value: loading ? '-' : todayOrders.length, delta: loading ? '—' : ordersDelta, icon: 'shopping_cart', isUp: ordersDelta.startsWith('+') },
             { label: 'NET REVENUE',    value: loading ? '-' : `₹${netRevenue.toFixed(0)}`,  delta: loading ? '—' : revenueDelta, icon: 'attach_money', isUp: revenueDelta.startsWith('+') },
-            { label: 'AR ENGAGEMENT',  value: '—', delta: 'Coming Soon', icon: 'view_in_ar', isUp: false },
+            { label: 'AVG SENTIMENT',  value: loading ? '-' : `${sentimentPct}%`, delta: loading ? '—' : `${insights?.feedback_count || 0} reviews`, icon: 'psychology', isUp: sentimentPct >= 70 },
           ].map(kpi => (
             <div key={kpi.label} className={`relative overflow-hidden p-8 ${cardBg}`}>
               <span className="material-symbols-outlined absolute -right-6 -bottom-6 text-[8rem] pointer-events-none select-none text-on-surface opacity-[0.03]">

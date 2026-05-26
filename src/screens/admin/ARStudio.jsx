@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import '@google/model-viewer';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import { useAuth } from '../../context/AuthContext';
@@ -41,6 +40,7 @@ export default function ARStudio() {
   const [glbFile, setGlbFile] = useState(null);
   const [usdzFile, setUsdzFile] = useState(null);
   const [thumbnailFile, setThumbnailFile] = useState(null);
+  const [modelViewerReady, setModelViewerReady] = useState(false);
 
   const selectedItem = useMemo(
     () => items.find(item => item.id === selectedItemId) || null,
@@ -89,6 +89,17 @@ export default function ARStudio() {
     loadAsset(selectedItemId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItemId]);
+
+  useEffect(() => {
+    if (!asset?.model_glb_url || modelViewerReady) return undefined;
+    let mounted = true;
+    import('@google/model-viewer').then(() => {
+      if (mounted) setModelViewerReady(true);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [asset?.model_glb_url, modelViewerReady]);
 
   const handleUpload = async (event) => {
     event.preventDefault();
@@ -283,13 +294,17 @@ export default function ARStudio() {
                 <div className="h-[300px] flex items-center justify-center">
                   <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
                 </div>
-              ) : asset?.model_glb_url ? (
+              ) : asset?.model_glb_url && modelViewerReady ? (
                 <model-viewer
                   src={asset.model_glb_url}
                   camera-controls=""
                   auto-rotate=""
                   style={{ width: '100%', height: '300px', background: 'transparent' }}
                 />
+              ) : asset?.model_glb_url ? (
+                <div className="h-[300px] flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
+                </div>
               ) : (
                 <div className="h-[300px] rounded-xl border border-dashed border-outline-variant/30 bg-surface-container flex flex-col items-center justify-center text-center px-6">
                   <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-3">view_in_ar</span>

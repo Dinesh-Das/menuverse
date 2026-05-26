@@ -6,12 +6,16 @@ import BottomNav from '../components/BottomNav';
 import CartSidebar from '../components/CartSidebar';
 import { fetchMenu } from '../lib/api';
 import CallWaiterFAB from '../components/CallWaiterFAB';
+import { sortRecommendedItems } from '../lib/recommendations';
 
 const TAG_CONFIG = {
   popular: { label: 'Popular', color: 'bg-primary text-on-primary', icon: 'local_fire_department' },
   new: { label: 'New', color: 'bg-blue-500 text-white', icon: 'new_releases' },
   spicy: { label: 'Spicy', color: 'bg-red-500 text-white', icon: 'whatshot' },
   vegan: { label: 'Vegan', color: 'bg-green-600 text-white', icon: 'eco' },
+  loved: { label: 'Loved', color: 'bg-green-600 text-white', icon: 'favorite' },
+  trending: { label: 'Trending', color: 'bg-primary text-on-primary', icon: 'trending_up' },
+  ar: { label: 'AR Preview', color: 'bg-blue-600 text-white', icon: 'view_in_ar' },
 };
 
 export default function MenuHome() {
@@ -36,11 +40,10 @@ export default function MenuHome() {
         setRestaurant(data.restaurant);
         setCategories(data.categories || []);
         
-        // Prepare upsell candidates
-        const candidates = (data.categories || []).filter(cat => {
-          const name = cat.name.toLowerCase();
-          return name.includes('sweet') || name.includes('liquid') || name.includes('beverage') || name.includes('dessert');
-        }).flatMap(cat => cat.items || []).filter(item => item.available);
+        // Prepare session-aware recommendation candidates.
+        const candidates = (data.categories || [])
+          .flatMap(cat => cat.items || [])
+          .filter(item => item.available);
         setUpsellCandidates(candidates);
 
         setLoading(false);
@@ -130,7 +133,12 @@ export default function MenuHome() {
 
   const DishCard = ({ dish }) => {
     const isSoldOut = !dish.available;
-    const tag = getPrimaryTag(dish.tags_json);
+    const tag = (() => {
+      if (dish.sentiment_badge === 'loved') return TAG_CONFIG.loved;
+      if (dish.sentiment_badge === 'trending' || Number(dish.order_count_7d || 0) >= 10) return TAG_CONFIG.trending;
+      if (dish.has_ar_preview || dish.ar_preview_enabled) return TAG_CONFIG.ar;
+      return getPrimaryTag(dish.tags_json);
+    })();
     const cartItems = items.filter(i => i.id === dish.id);
     const totalQty = cartItems.reduce((sum, i) => sum + i.qty, 0);
     const hasModifiers = dish.modifier_groups && dish.modifier_groups.length > 0;
@@ -448,7 +456,7 @@ export default function MenuHome() {
                 </div>
                 
                 <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                  {upsellCandidates.filter(item => item.available).slice(0, 6).map(item => (
+                  {sortRecommendedItems(upsellCandidates, items, categories).slice(0, 6).map(item => (
                     <div key={item.id} className="flex-none w-32 bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 shadow-sm flex flex-col">
                       <div className="h-20 overflow-hidden">
                         <img 

@@ -7,6 +7,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { pendingOrdersBus } from '../../components/TopNav';
 import { useToast } from '../../components/Toast';
 import { safeParseModifiers } from '../../lib/businessRules';
+import { requestKitchenPrint } from '../../lib/integrations';
 
 const formatTime = (ms) => {
   const isNegative = ms < 0;
@@ -136,6 +137,29 @@ export default function KDS() {
     setOrders(prevOrders => prevOrders.map(o => o.id === id ? { ...o, status: newStatus } : o));
     try {
       await adminUpdateOrderStatus(id, newStatus, undefined, user.restaurantId);
+      if (newStatus === 'accepted') {
+        requestKitchenPrint({
+          restaurant_id: user.restaurantId,
+          order_id: id,
+          ticket: {
+            order_ref: prev.order_ref || prev.id,
+            table: prev.table?.number || prev.table_id?.slice(-4),
+            special_instructions: prev.special_instructions || null,
+            created_at: prev.created_at,
+            items: (prev.items || []).map(item => ({
+              name: item.name,
+              quantity: item.quantity,
+              modifiers: safeParseModifiers(item.modifiers_json).map(mod => mod.name || mod),
+            })),
+          },
+        }).then(result => {
+          if (result?.status === 'pending_configuration') {
+            addToast('KOT printer is not configured; ticket is queued for manual handling.', 'error');
+          }
+        }).catch(error => {
+          console.warn('KOT print request skipped:', error.message);
+        });
+      }
     } catch (err) {
       console.error('KDS status rollback:', err.message);
       addToast(`Failed to update order: ${err.message}`, 'error');

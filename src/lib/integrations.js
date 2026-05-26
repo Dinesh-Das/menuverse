@@ -1,24 +1,40 @@
+import { supabase } from './supabase';
+
 export const INTEGRATION_READINESS = [
   {
     key: 'payments',
     label: 'Razorpay Payments',
-    status: 'server_setup_required',
+    status: 'checkout_ready',
     icon: 'payments',
-    description: 'Live settlement must run through Edge Functions with provider keys and webhook verification.',
+    description: 'Checkout runs through Edge Functions, Razorpay Orders API, and signed webhook capture.',
+  },
+  {
+    key: 'sentiment',
+    label: 'AI Sentiment',
+    status: 'edge_ready',
+    icon: 'psychology',
+    description: 'Feedback analysis runs through an Edge Function with Anthropic support and a local baseline fallback.',
+  },
+  {
+    key: 'pos',
+    label: 'POS Sync',
+    status: 'webhook_boundary_ready',
+    icon: 'sync_alt',
+    description: 'Orders can be queued to a provider webhook without coupling POS adapters to the core order flow.',
   },
   {
     key: 'printer',
     label: 'Printer / KOT',
-    status: 'planned',
+    status: 'webhook_boundary_ready',
     icon: 'print',
-    description: 'Kitchen ticket printing should be triggered by a server-side worker or webhook endpoint.',
+    description: 'KDS can queue KOT tickets through a server-side print webhook with job tracking.',
   },
   {
     key: 'whatsapp',
     label: 'WhatsApp Alerts',
-    status: 'planned',
+    status: 'webhook_boundary_ready',
     icon: 'chat',
-    description: 'Customer and staff notifications need provider credentials stored only as Edge Function secrets.',
+    description: 'Notification requests are routed through an Edge Function and provider credentials stay server-side.',
   },
   {
     key: 'analytics',
@@ -29,10 +45,26 @@ export const INTEGRATION_READINESS = [
   },
 ];
 
-export async function requestKitchenPrint(_ticket) {
-  throw new Error('Printer/KOT integration is not configured yet.');
+export async function requestKitchenPrint(ticket) {
+  const { data, error } = await supabase.functions.invoke('request-kitchen-print', {
+    body: ticket,
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
-export async function sendWhatsAppNotification(_message) {
-  throw new Error('WhatsApp integration is not configured yet.');
+export async function sendWhatsAppNotification(message) {
+  const { data, error } = await supabase.functions.invoke('send-whatsapp-notification', {
+    body: message,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function syncOrderToPos(payload) {
+  const { data, error } = await supabase.functions.invoke('sync-to-pos', {
+    body: payload,
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
