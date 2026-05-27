@@ -57,7 +57,7 @@ export default function CartSidebar() {
           quantity: item.qty,
           price: item.price,
           modifiers: item.selectedModifiers || [],
-          notes: item.notes || null,
+          item_note: item.itemNote || item.notes || null,
         })),
       };
       const result = await placeOrder(payload);
@@ -122,7 +122,7 @@ export default function CartSidebar() {
                 )}
                 <p className="text-primary font-bold text-sm mt-0.5">₹{(item.price * item.qty).toFixed(2)}</p>
                 <textarea
-                  value={item.notes || ''}
+                  value={item.itemNote || item.notes || ''}
                   onChange={e => updateItemNote(item._cartKey || item.id, e.target.value)}
                   maxLength={200}
                   placeholder="Item note..."

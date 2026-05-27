@@ -21,11 +21,9 @@ function safeFilePart(value, fallback = 'menuverse') {
     .replace(/^-+|-+$/g, '') || fallback;
 }
 
-function getRestaurantInitials(restaurant) {
-  const name = restaurant?.name?.split(' - ')[0] || restaurant?.slug || 'Menuverse';
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return words.slice(0, 2).map(word => word[0]).join('').toUpperCase();
+function getRestaurantInitial(restaurant) {
+  const name = restaurant?.name || restaurant?.slug || 'Menuverse';
+  return name.trim().charAt(0).toUpperCase() || 'M';
 }
 
 function loadLogoImage(url) {
@@ -39,8 +37,19 @@ function loadLogoImage(url) {
   });
 }
 
+function drawInitialsFallback(ctx, restaurant, cx, cy, logoR) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, logoR, 0, Math.PI * 2);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `bold ${logoR * 0.9}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(getRestaurantInitial(restaurant), cx, cy + 1);
+}
+
 async function drawQrLogo(ctx, restaurant, cx, cy, logoR) {
-  ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, logoR + 6, 0, Math.PI * 2);
   ctx.fillStyle = '#ffffff';
@@ -48,6 +57,7 @@ async function drawQrLogo(ctx, restaurant, cx, cy, logoR) {
 
   const logo = await loadLogoImage(restaurant?.logo_url);
   if (logo) {
+    ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, logoR, 0, Math.PI * 2);
     ctx.clip();
@@ -56,16 +66,7 @@ async function drawQrLogo(ctx, restaurant, cx, cy, logoR) {
     return;
   }
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, logoR, 0, Math.PI * 2);
-  ctx.fillStyle = restaurant?.primary_color || '#1a1a1a';
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `bold ${Math.max(18, logoR * 0.65)}px serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(getRestaurantInitials(restaurant), cx, cy + 1);
-  ctx.restore();
+  drawInitialsFallback(ctx, restaurant, cx, cy, logoR);
 }
 
 // ── Renders a single QR canvas and returns download helpers ────
@@ -136,7 +137,7 @@ async function downloadStickerPng(table, restaurant) {
   ctx.fillStyle = '#171717';
   ctx.textAlign = 'center';
   ctx.font = 'bold 54px serif';
-  ctx.fillText(restaurant?.name?.split(' - ')[0] || 'Menuverse', 450, 180);
+  ctx.fillText(restaurant?.name || 'Menuverse', 450, 180);
   ctx.font = 'bold 34px sans-serif';
   ctx.fillText(`Table ${table.number}`, 450, 250);
 
@@ -385,7 +386,7 @@ export default function QRFactory() {
                           <img src={restaurant.logo_url} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <span className="font-headline text-[10px] font-bold text-white">
-                            {getRestaurantInitials(restaurant)}
+                            {getRestaurantInitial(restaurant)}
                           </span>
                         )}
                       </div>

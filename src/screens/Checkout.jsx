@@ -2,7 +2,14 @@ import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import BottomNav from '../components/BottomNav';
-import { placeOrder, fetchMenu } from '../lib/api';
+import {
+  fetchMenu,
+  fetchRecommendations,
+  getGuestProfileForSession,
+  placeOrder,
+  resolveOrCreateGuestProfile,
+  saveGuestContact,
+} from '../lib/api';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
 import { sortRecommendedItems } from '../lib/recommendations';
@@ -22,6 +29,14 @@ export default function Checkout() {
   const [upsellItems, setUpsellItems] = useState([]);
   const [upsellCategories, setUpsellCategories] = useState([]);
   const [celebration, setCelebration] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [marketingConsent, setMarketingConsent] = useState(false);
+  const [guestProfile, setGuestProfile] = useState(null);
+  const [pointsToRedeem, setPointsToRedeem] = useState(0);
+  const [serverUpsells, setServerUpsells] = useState([]);
 
   const currentSlug = restaurantSlug || sessionSlug || null;
 
@@ -30,6 +45,10 @@ export default function Checkout() {
     : Math.round(parseFloat(localStorage.getItem('mv_gst_rate') || '0.05') * 100);
 
   React.useEffect(() => {
+    if (!currentSlug) {
+      if (!restaurantId) setError('Restaurant context is required. Please scan a valid QR code.');
+      return;
+    }
     fetchMenu(currentSlug).then(data => {
       const candidates = data.categories.flatMap(cat => cat.items || []).filter(item => item.available);
       setUpsellCategories(data.categories || []);
@@ -38,12 +57,47 @@ export default function Checkout() {
       console.error("Upsell fetch error:", err);
       addToast(`Failed to load meal suggestions: ${err.message}`, 'error');
     });
-  }, [currentSlug, addToast]);
+  }, [currentSlug, restaurantId, addToast]);
 
-  const recommendedUpsells = React.useMemo(
+  React.useEffect(() => {
+    if (!tableSessionToken) return;
+    getGuestProfileForSession(tableSessionToken)
+      .then(profile => setGuestProfile(profile))
+      .catch(err => console.warn('[Menuverse] Guest profile lookup skipped:', err.message));
+  }, [tableSessionToken]);
+
+  const maxRedeemablePoints = guestProfile?.loyalty_points >= 100
+    ? Math.min(
+      Math.floor(guestProfile.loyalty_points / 100) * 100,
+      Math.max(0, Math.floor(((total * 10) - 1) / 100) * 100)
+    )
+    : 0;
+  const loyaltyDiscount = pointsToRedeem / 10;
+  const checkoutTotal = Math.max(0, total - loyaltyDiscount);
+
+  React.useEffect(() => {
+    if (pointsToRedeem > maxRedeemablePoints) setPointsToRedeem(maxRedeemablePoints);
+  }, [pointsToRedeem, maxRedeemablePoints]);
+
+  const cartItemIdsKey = allItems.map(item => item.id).join(',');
+
+  React.useEffect(() => {
+    if (!restaurantId || upsellItems.length === 0) return;
+    fetchRecommendations({
+      restaurantId,
+      cartItemIds: cartItemIdsKey ? cartItemIdsKey.split(',') : [],
+      guestProfileId: guestProfile?.id || null,
+      limit: 5,
+    })
+      .then(setServerUpsells)
+      .catch(() => setServerUpsells([]));
+  }, [restaurantId, upsellItems.length, cartItemIdsKey, guestProfile?.id]);
+
+  const fallbackUpsells = React.useMemo(
     () => sortRecommendedItems(upsellItems, allItems, upsellCategories),
     [upsellItems, allItems, upsellCategories]
   );
+  const recommendedUpsells = serverUpsells.length > 0 ? serverUpsells : fallbackUpsells;
 
   const handleCheckout = async () => {
     if (allItems.length === 0) return;
@@ -70,17 +124,39 @@ export default function Checkout() {
         table_session_token: tableSessionToken,
         special_instructions: note,
         idempotency_key: idempotencyKey,
+        points_redeemed: pointsToRedeem,
         items: allItems.map(item => ({
           menu_item_id: item.id,
           name: item.name,
           quantity: item.qty,
           price: item.price,
           modifiers: item.selectedModifiers || [],
-          notes: item.notes || null,
+          item_note: item.itemNote || item.notes || null,
         })),
       };
 
       const result = await placeOrder(payload);
+      const hasContact = guestName.trim() || guestPhone.trim() || guestEmail.trim();
+      if (hasContact && !localStorage.getItem('mv_contact_saved')) {
+        saveGuestContact({
+          restaurantId,
+          tableSessionToken,
+          name: guestName,
+          phone: guestPhone,
+          email: guestEmail,
+          marketingConsent,
+        })
+          .then(() => resolveOrCreateGuestProfile({
+            restaurantId,
+            tableSessionId,
+            name: guestName,
+            phone: guestPhone,
+            email: guestEmail,
+            marketingConsent,
+          }))
+          .then(() => localStorage.setItem('mv_contact_saved', 'true'))
+          .catch(contactErr => console.warn('[Menuverse] Checkout contact capture skipped:', contactErr.message));
+      }
       localStorage.setItem('mv_last_order_time', Date.now().toString());
       clearCart();
 
@@ -184,15 +260,15 @@ export default function Checkout() {
 
                       {!item.isRemote ? (
                         <textarea
-                          value={item.notes || ''}
+                          value={item.itemNote || item.notes || ''}
                           onChange={e => updateItemNote(item._cartKey || item.id, e.target.value)}
                           maxLength={200}
                           placeholder="Item note..."
                           className="w-full bg-surface-container-high border border-outline-variant/20 rounded-lg p-2 text-xs text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-14 mb-3"
                         />
-                      ) : item.notes ? (
+                      ) : (item.itemNote || item.notes) ? (
                         <p className="text-[10px] text-on-surface-variant mb-3 bg-surface-container-high rounded-lg px-2 py-1">
-                          Note: {item.notes}
+                          Note: {item.itemNote || item.notes}
                         </p>
                       ) : null}
 
@@ -273,12 +349,39 @@ export default function Checkout() {
                     <span>GST ({gstPct}%)</span>
                     <span className="font-headline font-bold text-on-surface">₹{tax.toFixed(2)}</span>
                   </div>
+                  {pointsToRedeem > 0 && (
+                    <div className="flex justify-between text-sm md:text-base text-green-500">
+                      <span>Loyalty discount</span>
+                      <span className="font-headline font-bold">-₹{loyaltyDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="pt-4 md:pt-6 border-t border-outline-variant/20 flex justify-between items-center">
                   <span className="font-bold text-on-surface md:text-lg">Total</span>
-                  <span className="font-headline text-2xl md:text-3xl font-bold text-primary">₹{total.toFixed(2)}</span>
+                  <span className="font-headline text-2xl md:text-3xl font-bold text-primary">₹{checkoutTotal.toFixed(2)}</span>
                 </div>
               </div>
+
+              {maxRedeemablePoints >= 100 && (
+                <div className="mb-6 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
+                  <p className="text-xs font-bold uppercase tracking-widest text-on-surface mb-2">
+                    Loyalty Points
+                  </p>
+                  <p className="text-sm text-on-surface-variant mb-4">
+                    You have {guestProfile.loyalty_points} points. Use 100 points for ₹10 off.
+                  </p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={maxRedeemablePoints}
+                    step={100}
+                    value={pointsToRedeem}
+                    onChange={e => setPointsToRedeem(Math.min(maxRedeemablePoints, Math.max(0, Number(e.target.value))))}
+                    className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary/50"
+                  />
+                  <p className="text-xs text-primary mt-2">Discount: ₹{loyaltyDiscount.toFixed(2)}</p>
+                </div>
+              )}
 
               {error && (
                 <div className="mb-4 p-4 bg-error/10 border border-error/30 rounded-xl text-error text-sm font-medium">
@@ -293,13 +396,37 @@ export default function Checkout() {
                 </div>
               )}
 
+              {!localStorage.getItem('mv_contact_saved') && (
+                <div className="mb-6 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
+                  <button
+                    type="button"
+                    onClick={() => setContactOpen(value => !value)}
+                    className="w-full flex items-center justify-between text-left"
+                  >
+                    <span className="text-xs font-bold uppercase tracking-widest text-on-surface">Save your session</span>
+                    <span className="material-symbols-outlined text-primary">{contactOpen ? 'expand_less' : 'expand_more'}</span>
+                  </button>
+                  {contactOpen && (
+                    <div className="mt-4 space-y-3">
+                      <input value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="Name for receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                      <input type="tel" value={guestPhone} onChange={e => setGuestPhone(e.target.value)} placeholder="Phone for WhatsApp receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                      <input type="email" value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="Email receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                      <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+                        <input type="checkbox" checked={marketingConsent} onChange={e => setMarketingConsent(e.target.checked)} className="w-4 h-4 accent-primary" />
+                        Offers and loyalty updates
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* CTA */}
               <button
                 onClick={() => handleCheckout()}
                 disabled={loading || !tableId}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >
-                {loading ? 'Placing Order...' : `Place Order · ₹${total.toFixed(2)}`}
+                {loading ? 'Placing Order...' : `Place Order · ₹${checkoutTotal.toFixed(2)}`}
                 <span className="material-symbols-outlined text-lg ml-1">arrow_forward</span>
               </button>
               <div className="flex items-center justify-center gap-3 text-on-surface-variant/40 mt-2 mb-8">

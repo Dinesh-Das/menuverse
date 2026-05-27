@@ -1,8 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchFeedbackInsights, adminFetchOrders } from '../../lib/api';
+import {
+  adminFetchFeedbackInsights,
+  adminFetchFlaggedFeedback,
+  adminFetchOrders,
+  adminFetchSentimentTrend,
+  adminResolveFeedback,
+} from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
@@ -20,6 +39,8 @@ export default function Dashboard() {
   const { addToast } = useToast();
   const [orders, setOrders] = useState([]);
   const [insights, setInsights] = useState(null);
+  const [sentimentTrend, setSentimentTrend] = useState([]);
+  const [flaggedFeedback, setFlaggedFeedback] = useState([]);
   const [loading, setLoading] = useState(true);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
@@ -41,15 +62,32 @@ export default function Dashboard() {
         });
     };
 
+    const refreshFeedback = () => {
+      Promise.all([
+        adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
+        adminFetchSentimentTrend(user.restaurantId).catch(() => []),
+        adminFetchFlaggedFeedback(user.restaurantId).catch(() => []),
+      ]).then(([feedbackInsights, trend, flagged]) => {
+        if (cancelled) return;
+        setInsights(feedbackInsights);
+        setSentimentTrend(trend);
+        setFlaggedFeedback(flagged);
+      });
+    };
+
     const fetchAndSubscribe = async () => {
       try {
-        const [{ data }, feedbackInsights] = await Promise.all([
+        const [{ data }, feedbackInsights, trend, flagged] = await Promise.all([
           adminFetchOrders(null, user.restaurantId),
           adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
+          adminFetchSentimentTrend(user.restaurantId).catch(() => []),
+          adminFetchFlaggedFeedback(user.restaurantId).catch(() => []),
         ]);
         if (cancelled) return;
         setOrders(data);
         setInsights(feedbackInsights);
+        setSentimentTrend(trend);
+        setFlaggedFeedback(flagged);
         setLoading(false);
 
         const channelName = `dashboard_orders:${user.restaurantId}:${crypto.randomUUID()}`;
@@ -59,6 +97,11 @@ export default function Dashboard() {
             'postgres_changes',
             { event: '*', schema: 'public', table: 'Order', filter: `restaurant_id=eq.${user.restaurantId}` },
             refreshOrders
+          )
+          .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'OrderFeedback', filter: `restaurant_id=eq.${user.restaurantId}` },
+            refreshFeedback
           );
 
         channel.subscribe();
@@ -112,6 +155,20 @@ export default function Dashboard() {
   const ordersDelta = calcDelta(thisWeekCount, lastWeekCount);
   const revenueDelta = calcDelta(thisWeekRev, lastWeekRev);
   const sentimentPct = Math.round(Number(insights?.avg_sentiment_score ?? 0.5) * 100);
+  const topicData = (insights?.top_topics || []).map(topic => ({
+    topic: String(topic.topic || '').replace(/_/g, ' '),
+    count: Number(topic.count || 0),
+  }));
+
+  const handleResolveFeedback = async (feedbackId) => {
+    try {
+      await adminResolveFeedback(feedbackId, user.restaurantId);
+      setFlaggedFeedback(prev => prev.filter(item => item.id !== feedbackId));
+      addToast('Review marked resolved.', 'success');
+    } catch (err) {
+      addToast(`Failed to resolve review: ${err.message}`, 'error');
+    }
+  };
 
   // Group by day for the chart (last 7 days)
   const last7Days = Array.from({length: 7}).map((_, i) => {
@@ -240,6 +297,85 @@ export default function Dashboard() {
             <Link to="/admin/orders" className="w-full block text-center text-[10px] font-bold uppercase tracking-[0.2em] mt-6 pt-6 border-t transition-colors cursor-pointer border-outline-variant/10 text-primary hover:text-primary-fixed">
               View All Orders
             </Link>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-10">
+          <div className={`p-8 ${cardBg}`}>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-headline text-2xl font-bold text-on-surface">Sentiment Trend</h2>
+              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Last 30 Days</span>
+            </div>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={sentimentTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                  <XAxis dataKey="day" tick={{ fill: 'currentColor', fontSize: 11 }} />
+                  <YAxis domain={[0, 1]} tick={{ fill: 'currentColor', fontSize: 11 }} />
+                  <Tooltip
+                    contentStyle={{ background: '#16161f', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }}
+                    formatter={(value, name, item) => [value, name === 'avg_score' ? `Avg score (${item.payload.review_count} reviews)` : name]}
+                  />
+                  <ReferenceLine y={0.7} stroke="#22c55e" strokeDasharray="4 4" />
+                  <ReferenceLine y={0.45} stroke="#ef4444" strokeDasharray="4 4" />
+                  <Line type="monotone" dataKey="avg_score" stroke="#B8860B" strokeWidth={3} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className={`p-8 ${cardBg}`}>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-headline text-2xl font-bold text-on-surface">Topic Breakdown</h2>
+              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Feedback Topics</span>
+            </div>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={topicData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                  <XAxis dataKey="topic" tick={{ fill: 'currentColor', fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fill: 'currentColor', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: '#16161f', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} />
+                  <Bar dataKey="count" radius={[8, 8, 0, 0]}>
+                    {topicData.map((entry, index) => (
+                      <Cell key={entry.topic} fill={['#B8860B', '#5c9ee8', '#22c55e', '#f59e0b', '#9b6cdb'][index % 5]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        <div className={`p-8 ${cardBg}`}>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="font-headline text-2xl font-bold text-on-surface">Flagged Reviews</h2>
+            <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">{flaggedFeedback.length} open</span>
+          </div>
+          <div className="space-y-4">
+            {flaggedFeedback.length === 0 ? (
+              <p className="text-sm text-on-surface-variant">No flagged low-rating reviews need attention.</p>
+            ) : flaggedFeedback.map(item => (
+              <div key={item.id} className="p-4 rounded-2xl bg-surface-container border border-outline-variant/10 flex flex-col md:flex-row md:items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="text-xs font-bold text-primary">{item.order_id}</span>
+                    <span className="text-xs text-on-surface-variant">{'★'.repeat(item.rating)}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-error/10 text-error text-[10px] uppercase tracking-widest font-bold">
+                      {item.sentiment_label || 'review'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-on-surface-variant line-clamp-2">{item.comment || 'No written comment.'}</p>
+                  <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-2">{new Date(item.created_at).toLocaleString()}</p>
+                </div>
+                <button
+                  onClick={() => handleResolveFeedback(item.id)}
+                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-bold uppercase tracking-widest"
+                >
+                  Resolved
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       </main>

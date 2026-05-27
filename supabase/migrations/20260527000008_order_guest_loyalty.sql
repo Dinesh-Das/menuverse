@@ -1,18 +1,4 @@
-alter table if exists "OrderItem"
-  add column if not exists item_note text;
-
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'OrderItem_item_note_length_check'
-  ) then
-    alter table "OrderItem"
-      add constraint "OrderItem_item_note_length_check"
-      check (item_note is null or char_length(item_note) <= 200);
-  end if;
-end $$;
+drop function if exists create_order_secure(text, text, text, jsonb, text, text);
 
 create or replace function create_order_secure(
   p_restaurant_id text,
@@ -20,7 +6,8 @@ create or replace function create_order_secure(
   p_table_session_token text default null,
   p_items jsonb default '[]'::jsonb,
   p_special_instructions text default null,
-  p_idempotency_key text default null
+  p_idempotency_key text default null,
+  p_points_redeemed integer default 0
 )
 returns table(order_ref text, status text, total_amount numeric)
 language plpgsql
@@ -46,8 +33,11 @@ declare
   v_subtotal numeric(12,2) := 0;
   v_tax_amount numeric(12,2) := 0;
   v_service_amount numeric(12,2) := 0;
+  v_loyalty_discount numeric(12,2) := 0;
   v_total numeric(12,2) := 0;
   v_pending_count integer;
+  v_points_requested integer := greatest(0, coalesce(p_points_redeemed, 0));
+  v_profile_points integer := 0;
 begin
   select * into v_table
   from "Table"
@@ -122,6 +112,7 @@ begin
     restaurant_id,
     table_id,
     table_session_id,
+    guest_profile_id,
     status,
     subtotal_amount,
     tax_amount,
@@ -137,6 +128,7 @@ begin
     p_restaurant_id,
     p_table_id,
     v_session.id,
+    v_session.guest_profile_id,
     'pending',
     0,
     0,
@@ -218,6 +210,34 @@ begin
   v_service_amount := round((v_subtotal * coalesce(v_restaurant.service_charge_rate, 0)::numeric)::numeric, 2);
   v_total := round((v_subtotal + v_tax_amount + v_service_amount)::numeric, 2);
 
+  if v_points_requested > 0 then
+    if v_session.guest_profile_id is null then
+      raise exception 'Loyalty redemption requires a linked guest profile.';
+    end if;
+
+    v_points_requested := (v_points_requested / 100) * 100;
+    select loyalty_points into v_profile_points
+    from "GuestProfile"
+    where id = v_session.guest_profile_id
+    for update;
+
+    if v_points_requested > v_profile_points then
+      raise exception 'Not enough loyalty points.';
+    end if;
+
+    v_loyalty_discount := round((v_points_requested::numeric / 10)::numeric, 2);
+    if v_loyalty_discount >= v_total then
+      raise exception 'Loyalty discount cannot exceed order total.';
+    end if;
+
+    update "GuestProfile"
+    set loyalty_points = loyalty_points - v_points_requested,
+        updated_at = now()
+    where id = v_session.guest_profile_id;
+
+    v_total := round((v_total - v_loyalty_discount)::numeric, 2);
+  end if;
+
   if v_total <= 0 then
     raise exception 'Order total must be greater than zero.';
   end if;
@@ -226,6 +246,8 @@ begin
   set subtotal_amount = v_subtotal,
       tax_amount = v_tax_amount,
       service_charge_amount = v_service_amount,
+      loyalty_discount_amount = v_loyalty_discount,
+      points_redeemed = v_points_requested,
       total_amount = v_total,
       updated_at = now()
   where id = v_order_id;
@@ -247,5 +269,5 @@ begin
 end;
 $$;
 
-grant execute on function create_order_secure(text, text, text, jsonb, text, text)
+grant execute on function create_order_secure(text, text, text, jsonb, text, text, integer)
   to anon, authenticated;

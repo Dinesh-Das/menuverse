@@ -29,7 +29,7 @@ function normalizeOrderItems(items = []) {
     modifier_option_ids: (item.modifier_option_ids || item.modifiers || item.selectedModifiers || [])
       .map(mod => typeof mod === 'string' ? mod : mod.id)
       .filter(Boolean),
-    notes: item.notes || null,
+    item_note: item.item_note || item.itemNote || item.notes || null,
   }));
 }
 
@@ -175,6 +175,7 @@ export async function placeOrder(payload) {
     p_special_instructions: payload.special_instructions || null,
     p_idempotency_key: payload.idempotency_key || crypto.randomUUID(),
     p_items: normalizeOrderItems(payload.items),
+    p_points_redeemed: Number(payload.points_redeemed || 0),
   };
 
   // Order creation must go through the create_order_secure RPC only.
@@ -214,9 +215,24 @@ export async function createPayment(payload) {
       table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
       order_id: payload.order_id || null,
       amount: payload.amount,
+      split_count: payload.split_count || 1,
+      split_index: payload.split_index || 0,
     },
   });
   if (error) throw new Error(`Payment order failed: ${error.message}`);
+  return data;
+}
+
+export async function createStripePaymentIntent(payload) {
+  const { data, error } = await supabase.functions.invoke('create-stripe-payment-intent', {
+    body: {
+      table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
+      amount: payload.amount,
+      split_count: payload.split_count || 1,
+      split_index: payload.split_index || 0,
+    },
+  });
+  if (error) throw new Error(`Stripe payment intent failed: ${error.message}`);
   return data;
 }
 
@@ -305,6 +321,50 @@ export async function saveGuestContact({
   return data;
 }
 
+export async function resolveOrCreateGuestProfile({
+  restaurantId,
+  tableSessionId = null,
+  name = null,
+  phone = null,
+  email = null,
+  marketingConsent = false,
+}) {
+  const { data, error } = await supabase.rpc('resolve_or_create_guest_profile', {
+    p_restaurant_id: requireRestaurantId(restaurantId),
+    p_name: name || null,
+    p_phone: phone || null,
+    p_email: email || null,
+    p_marketing: Boolean(marketingConsent),
+    p_session_id: tableSessionId || null,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function getGuestProfileForSession(tableSessionToken) {
+  const token = tableSessionToken || localStorage.getItem('mv_table_session_token');
+  if (!token) return null;
+  const { data, error } = await supabase.rpc('get_guest_profile_for_session', {
+    p_session_token: token,
+  });
+  if (error) throw new Error(error.message);
+  return Array.isArray(data) ? data[0] || null : data;
+}
+
+export async function fetchRecommendations({ restaurantId, cartItemIds = [], guestProfileId = null, limit = 5 }) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.functions.invoke('get-recommendations', {
+    body: {
+      restaurant_id: restaurantId,
+      cart_item_ids: cartItemIds,
+      guest_profile_id: guestProfileId,
+      limit,
+    },
+  });
+  if (error) throw new Error(error.message);
+  return data?.items || [];
+}
+
 export async function adminFetchFeedbackInsights(restaurantId, days = 30) {
   requireRestaurantId(restaurantId);
   const { data, error } = await supabase.rpc('admin_feedback_insights', {
@@ -313,6 +373,185 @@ export async function adminFetchFeedbackInsights(restaurantId, days = 30) {
   });
   if (error) throw new Error(error.message);
   return data;
+}
+
+export async function adminFetchSentimentTrend(restaurantId, days = 30) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('admin_sentiment_trend', {
+    p_restaurant_id: restaurantId,
+    p_days: days,
+  });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminFetchFlaggedFeedback(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('OrderFeedback')
+    .select('id, order_id, rating, comment, sentiment_label, created_at')
+    .eq('restaurant_id', restaurantId)
+    .eq('flag_for_review', true)
+    .lte('rating', 2)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminResolveFeedback(feedbackId, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('OrderFeedback')
+    .update({ flag_for_review: false })
+    .eq('id', feedbackId)
+    .eq('restaurant_id', restaurantId)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminFetchIntegrationJobs(restaurantId, limit = 50) {
+  requireRestaurantId(restaurantId);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const [{ data: jobs, error: jobsError }, { data: recent, error: recentError }] = await Promise.all([
+    supabase
+      .from('IntegrationJob')
+      .select('*')
+      .eq('restaurant_id', restaurantId)
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    supabase
+      .from('IntegrationJob')
+      .select('status')
+      .eq('restaurant_id', restaurantId)
+      .gte('created_at', since),
+  ]);
+  if (jobsError) throw new Error(jobsError.message);
+  if (recentError) throw new Error(recentError.message);
+  return {
+    jobs: jobs || [],
+    summary: {
+      delivered: (recent || []).filter(job => job.status === 'delivered').length,
+      failed: (recent || []).filter(job => job.status === 'failed').length,
+    },
+  };
+}
+
+export async function adminRetryIntegrationJob(jobId, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('IntegrationJob')
+    .update({ status: 'pending', error: null, updated_at: now() })
+    .eq('id', jobId)
+    .eq('restaurant_id', restaurantId)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminFetchGuests(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('GuestProfile')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .order('last_visit_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminFetchGuestOrders(restaurantId, guestProfileId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('Order')
+    .select('id, status, total_amount, created_at, items:OrderItem(name, quantity, item_note)')
+    .eq('restaurant_id', restaurantId)
+    .eq('guest_profile_id', guestProfileId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminUpdateGuestProfile(guestProfileId, restaurantId, payload) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('GuestProfile')
+    .update({ ...payload, updated_at: now() })
+    .eq('id', guestProfileId)
+    .eq('restaurant_id', restaurantId)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminFetchCampaigns(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('MarketingCampaign')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminCreateCampaign(restaurantId, payload) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('MarketingCampaign')
+    .insert({
+      restaurant_id: restaurantId,
+      name: payload.name,
+      channel: payload.channel,
+      subject: payload.subject || null,
+      message_body: payload.message_body,
+      audience_filter: payload.audience_filter || {},
+      status: payload.status || 'draft',
+      created_at: now(),
+      updated_at: now(),
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminSendCampaign(campaignId) {
+  const { data, error } = await supabase.functions.invoke('send-campaign', {
+    body: { campaign_id: campaignId },
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminEstimateCampaignRecipients(restaurantId, audienceFilter = {}) {
+  requireRestaurantId(restaurantId);
+  let query = supabase
+    .from('GuestProfile')
+    .select('id', { count: 'exact', head: true })
+    .eq('restaurant_id', restaurantId)
+    .eq('marketing_consent', true);
+  if (audienceFilter.min_visits) query = query.gte('visit_count', Number(audienceFilter.min_visits));
+  if (audienceFilter.last_visit_days) {
+    query = query.gte('last_visit_at', new Date(Date.now() - Number(audienceFilter.last_visit_days) * 86400000).toISOString());
+  }
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return count || 0;
+}
+
+export async function adminFetchBranchOverview(groupOwnerId) {
+  if (!groupOwnerId) throw new Error('Owner context is required.');
+  const { data, error } = await supabase.rpc('admin_branch_overview', {
+    p_group_owner_id: groupOwnerId,
+  });
+  if (error) throw new Error(error.message);
+  return data || [];
 }
 
 // Admin API
@@ -355,6 +594,10 @@ export async function adminUpdateOrderStatus(orderId, status, cancelReason, rest
     .select()
     .single();
   if (error) throw new Error(error.message);
+  if (status === 'completed') {
+    supabase.rpc('update_guest_profile_on_order', { p_order_id: orderId })
+      .catch(err => console.warn('Guest profile spend update skipped:', err.message));
+  }
   return data;
 }
 

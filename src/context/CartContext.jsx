@@ -16,11 +16,11 @@ function loadFromStorage() {
 
 const MAX_ITEM_QTY = 20;
 
-function makeCartKey(dishId, modifiers = [], notes = '') {
+function makeCartKey(dishId, modifiers = [], itemNote = '') {
   const modKey = modifiers.length > 0
     ? JSON.stringify(modifiers.map(m => m.id || m.name).sort())
     : '';
-  const noteKey = notes.trim().toLowerCase();
+  const noteKey = itemNote.trim().toLowerCase();
   return `${dishId}::${modKey}::${noteKey}`;
 }
 
@@ -36,6 +36,7 @@ export function CartProvider({ children }) {
   const [gstRateState, setGstRateState] = useState(localStorage.getItem('mv_gst_rate') || '0.05');
   const [paymentEnabled, setPaymentEnabled] = useState(localStorage.getItem('mv_payment_enabled') === 'true');
   const [paymentProvider, setPaymentProvider] = useState(localStorage.getItem('mv_payment_provider') || 'razorpay');
+  const [currency, setCurrency] = useState(localStorage.getItem('mv_currency') || 'inr');
 
   const deviceIdRef = useRef(localStorage.getItem('mv_device_id') || crypto.randomUUID());
   const channelRef = useRef(null);
@@ -151,17 +152,22 @@ export function CartProvider({ children }) {
       if (sessionData.paymentProvider) localStorage.setItem('mv_payment_provider', sessionData.paymentProvider);
       else localStorage.removeItem('mv_payment_provider');
     }
+    if (sessionData.currency !== undefined) {
+      setCurrency(sessionData.currency || 'inr');
+      if (sessionData.currency) localStorage.setItem('mv_currency', sessionData.currency);
+      else localStorage.removeItem('mv_currency');
+    }
   }, []);
 
-  const addItem = useCallback((dish, qty = 1, selectedModifiers = [], notes = '') => {
+  const addItem = useCallback((dish, qty = 1, selectedModifiers = [], itemNote = '') => {
     setItems(prev => {
-      const normalizedNotes = String(notes || '').trim().slice(0, 200);
-      const cartKey = makeCartKey(dish.id, selectedModifiers, normalizedNotes);
+      const normalizedItemNote = String(itemNote || '').trim().slice(0, 200);
+      const cartKey = makeCartKey(dish.id, selectedModifiers, normalizedItemNote);
       const existing = prev.find(i => i._cartKey === cartKey);
       if (existing) {
         return prev.map(i => i._cartKey === cartKey ? { ...i, qty: Math.min(MAX_ITEM_QTY, i.qty + qty) } : i);
       }
-      return [...prev, { ...dish, qty: Math.min(MAX_ITEM_QTY, qty), selectedModifiers, notes: normalizedNotes, _cartKey: cartKey }];
+      return [...prev, { ...dish, qty: Math.min(MAX_ITEM_QTY, qty), selectedModifiers, itemNote: normalizedItemNote, _cartKey: cartKey }];
     });
   }, []);
 
@@ -177,9 +183,9 @@ export function CartProvider({ children }) {
     }
   }, []);
 
-  const updateItemNote = useCallback((cartKey, notes) => {
-    const normalizedNotes = String(notes || '').slice(0, 200);
-    setItems(prev => prev.map(i => i._cartKey === cartKey ? { ...i, notes: normalizedNotes } : i));
+  const updateItemNote = useCallback((cartKey, itemNote) => {
+    const normalizedItemNote = String(itemNote || '').slice(0, 200);
+    setItems(prev => prev.map(i => i._cartKey === cartKey ? { ...i, itemNote: normalizedItemNote } : i));
   }, []);
 
   const clearCart = useCallback(() => {
@@ -211,7 +217,7 @@ export function CartProvider({ children }) {
     <CartContext.Provider value={{
       items, remoteItems, allItems, count, subtotal, tax, total,
       tableId, tableNumber, restaurantId, restaurantSlug, tableSessionToken, tableSessionId,
-      paymentEnabled, paymentProvider,
+      paymentEnabled, paymentProvider, currency,
       addItem, removeItem, updateQty, updateItemNote, clearCart, setSession
     }}>
       {children}

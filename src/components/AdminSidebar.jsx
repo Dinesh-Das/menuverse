@@ -8,6 +8,9 @@ const NAV_ITEMS = [
   { id: 'menu',      label: 'Menu Assets', icon: 'restaurant_menu', path: '/admin/menu'      },
   { id: 'orders',    label: 'Live Orders', icon: 'list_alt',        path: '/admin/orders'    },
   { id: 'kds',       label: 'Kitchen',     icon: 'receipt_long',    path: '/admin/kds'       },
+  { id: 'guests',    label: 'Guests',      icon: 'people',          path: '/admin/guests'    },
+  { id: 'campaigns', label: 'Campaigns',   icon: 'campaign',        path: '/admin/campaigns' },
+  { id: 'branches',  label: 'Branches',    icon: 'account_tree',    path: '/admin/branches', ownerOnly: true },
   { id: 'ar',        label: 'AR Pipeline', icon: 'view_in_ar',      path: '/admin/ar'        },
   { id: 'qr',        label: 'QR Factory',  icon: 'qr_code_2',       path: '/admin/qr'        },
   { id: 'settings',  label: 'Settings',    icon: 'settings',        path: '/admin/settings'  },
@@ -24,7 +27,8 @@ export default function AdminSidebar({ isOpen = false, onClose = () => {} }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const activeId = NAV_ITEMS.find(n => location.pathname.startsWith(n.path))?.id || 'dashboard';
+  const visibleNavItems = NAV_ITEMS.filter(item => !item.ownerOnly || user?.role === 'owner');
+  const activeId = visibleNavItems.find(n => location.pathname.startsWith(n.path))?.id || 'dashboard';
 
   const handleNav = (path) => {
     navigate(path);
@@ -78,7 +82,7 @@ export default function AdminSidebar({ isOpen = false, onClose = () => {} }) {
 
         {/* ── Nav ─────────────────────────────────────────────── */}
         <nav className="flex-1 flex flex-col space-y-1 px-0" role="navigation">
-          {NAV_ITEMS.map(item => {
+          {visibleNavItems.map(item => {
             const isActive = activeId === item.id;
             return (
               <button

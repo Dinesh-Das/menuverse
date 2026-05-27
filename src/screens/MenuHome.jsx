@@ -4,7 +4,7 @@ import { useCart } from '../context/CartContext';
 import { CustomerTopNav } from '../components/TopNav';
 import BottomNav from '../components/BottomNav';
 import CartSidebar from '../components/CartSidebar';
-import { fetchMenu } from '../lib/api';
+import { fetchMenu, fetchRecommendations } from '../lib/api';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { sortRecommendedItems } from '../lib/recommendations';
 
@@ -33,8 +33,14 @@ export default function MenuHome() {
   const [dietFilter, setDietFilter] = useState([]); // 'veg', 'vegan', 'non-veg'
   const [upsellModal, setUpsellModal] = useState({ isOpen: false, addedItemName: '' });
   const [upsellCandidates, setUpsellCandidates] = useState([]);
+  const [serverRecommendations, setServerRecommendations] = useState([]);
 
   useEffect(() => {
+    if (!slug) {
+      setError('Restaurant context is required. Please scan a valid QR code.');
+      setLoading(false);
+      return;
+    }
     fetchMenu(slug)
       .then(data => {
         setRestaurant(data.restaurant);
@@ -67,6 +73,21 @@ export default function MenuHome() {
   const parseTags = (json) => { try { return JSON.parse(json) || []; } catch { return []; } };
 
   const allItems = categories.flatMap(c => c.items);
+  const cartItemIdsKey = items.map(item => item.id).join(',');
+  const modalRecommendations = serverRecommendations.length > 0
+    ? serverRecommendations
+    : sortRecommendedItems(upsellCandidates, items, categories).slice(0, 6);
+
+  useEffect(() => {
+    if (!restaurant?.id || upsellCandidates.length === 0) return;
+    fetchRecommendations({
+      restaurantId: restaurant.id,
+      cartItemIds: cartItemIdsKey ? cartItemIdsKey.split(',') : [],
+      limit: 6,
+    })
+      .then(setServerRecommendations)
+      .catch(() => setServerRecommendations([]));
+  }, [restaurant?.id, upsellCandidates.length, cartItemIdsKey]);
 
   const filtered = allItems.filter(dish => {
     const catMatch = activeCategory === 'All' || categories.find(c => c.id === dish.category_id)?.name === activeCategory;
@@ -456,7 +477,7 @@ export default function MenuHome() {
                 </div>
                 
                 <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                  {sortRecommendedItems(upsellCandidates, items, categories).slice(0, 6).map(item => (
+                  {modalRecommendations.map(item => (
                     <div key={item.id} className="flex-none w-32 bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 shadow-sm flex flex-col">
                       <div className="h-20 overflow-hidden">
                         <img 

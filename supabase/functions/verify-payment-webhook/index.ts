@@ -103,7 +103,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data: payments, error: paymentReadError } = await supabase
     .from('Payment')
-    .select('id, order_id')
+    .select('id, order_id, split_index, split_total, session_bill_id')
     .eq('razorpay_order_id', razorpayOrderId);
 
   if (paymentReadError) {
@@ -126,6 +126,10 @@ serve(async (req) => {
 
   const restaurantIds = [...new Set((orders || []).map((order) => order.restaurant_id).filter(Boolean))];
   const tableSessionIds = [...new Set((orders || []).map((order) => order.table_session_id).filter(Boolean))];
+  const sessionBillIds = [...new Set((payments || []).map((payment) => payment.session_bill_id).filter(Boolean))];
+  const splitTotal = Math.max(1, ...(payments || []).map((payment) => Number(payment.split_total || 1)));
+  const isSplitPayment = splitTotal > 1;
+  const now = new Date().toISOString();
 
   const { error: paymentUpdateError } = await supabase
     .from('Payment')
@@ -134,7 +138,7 @@ serve(async (req) => {
       razorpay_payment_id: razorpayPaymentId,
       payment_method: paymentEntity?.method || paymentEntity?.wallet || paymentEntity?.vpa || null,
       provider_fee: typeof paymentEntity?.fee === 'number' ? paymentEntity.fee / 100 : null,
-      paid_at: new Date().toISOString(),
+      paid_at: now,
       metadata: {
         razorpay: {
           method: paymentEntity?.method || null,
@@ -145,7 +149,7 @@ serve(async (req) => {
           captured: paymentEntity?.captured ?? null,
         },
       },
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     })
     .eq('razorpay_order_id', razorpayOrderId);
 
@@ -153,16 +157,67 @@ serve(async (req) => {
     return Response.json({ error: paymentUpdateError.message }, { status: 500 });
   }
 
-  const { error: orderUpdateError } = await supabase
-    .from('Order')
-    .update({
-      status: 'completed',
-      updated_at: new Date().toISOString(),
-    })
-    .in('id', orderIds);
+  let allSplitSharesPaid = true;
+  if (sessionBillIds.length) {
+    for (const billId of sessionBillIds) {
+      const { data: billPayments, error: billPaymentReadError } = await supabase
+        .from('Payment')
+        .select('split_index, split_total, status')
+        .eq('session_bill_id', billId);
 
-  if (orderUpdateError) {
-    return Response.json({ error: orderUpdateError.message }, { status: 500 });
+      if (billPaymentReadError) {
+        return Response.json({ error: billPaymentReadError.message }, { status: 500 });
+      }
+
+      const billSplitTotal = Math.max(1, ...(billPayments || []).map((payment) => Number(payment.split_total || 1)));
+      const paidSplitIndexes = new Set((billPayments || [])
+        .filter((payment) => payment.status === 'captured')
+        .map((payment) => Number(payment.split_index || 0)));
+      const paidCount = Math.min(paidSplitIndexes.size, billSplitTotal);
+      const billFullyPaid = paidCount >= billSplitTotal;
+      if (!billFullyPaid) allSplitSharesPaid = false;
+
+      const { error: billUpdateError } = await supabase
+        .from('SessionBill')
+        .update({
+          split_count: billSplitTotal,
+          split_paid: paidCount,
+          split_status: billSplitTotal > 1
+            ? (billFullyPaid ? 'fully_split_paid' : 'partially_paid')
+            : 'full',
+          payment_status: billFullyPaid ? 'paid' : 'partially_paid',
+          updated_at: now,
+        })
+        .eq('id', billId);
+
+      if (billUpdateError) {
+        return Response.json({ error: billUpdateError.message }, { status: 500 });
+      }
+    }
+  }
+
+  const shouldCompleteOrders = !isSplitPayment || allSplitSharesPaid;
+  if (shouldCompleteOrders) {
+    const { error: orderUpdateError } = await supabase
+      .from('Order')
+      .update({
+        status: 'completed',
+        updated_at: now,
+      })
+      .in('id', orderIds);
+
+    if (orderUpdateError) {
+      return Response.json({ error: orderUpdateError.message }, { status: 500 });
+    }
+
+    await Promise.all(orderIds.map((orderId) =>
+      supabase.rpc('update_guest_profile_on_order', { p_order_id: orderId })
+        .then(({ error }) => {
+          if (error && !/function .*update_guest_profile_on_order/i.test(error.message)) {
+            console.warn(`Guest profile spend update failed for order ${orderId}: ${error.message}`);
+          }
+        })
+    ));
   }
 
   if (tableSessionIds.length) {
@@ -170,7 +225,7 @@ serve(async (req) => {
       .from('TableSession')
       .update({
         status: 'billing',
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       })
       .in('id', tableSessionIds);
 
@@ -189,6 +244,9 @@ serve(async (req) => {
         razorpay_payment_id: razorpayPaymentId,
         order_ids: orderIds,
         table_session_ids: tableSessionIds,
+        split_total: splitTotal,
+        split_payment: isSplitPayment,
+        fully_paid: shouldCompleteOrders,
       },
     );
     if (!delivered) {

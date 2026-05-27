@@ -12,6 +12,7 @@ model Restaurant {
   id                  String   @id @default(uuid())
   name                String
   slug                String   @unique
+  group_owner_id      String?
   description         String?
   logo_url            String?
   primary_color       String?  @default("#B8860B")
@@ -20,7 +21,9 @@ model Restaurant {
   service_charge_rate Float    @default(0)
   payment_provider    String?  @default("razorpay")
   payment_enabled     Boolean  @default(false)
+  currency            String   @default("inr")
   pos_provider        String?
+  pos_config          Json     @default("{}")
   pos_sync_enabled    Boolean  @default(false)
   printer_enabled     Boolean  @default(false)
   whatsapp_enabled    Boolean  @default(false)
@@ -40,6 +43,8 @@ model Restaurant {
   staff_invites   StaffInvite[]
   integration_jobs IntegrationJob[]
   guest_contacts  GuestContact[]
+  guest_profiles  GuestProfile[]
+  campaigns       MarketingCampaign[]
 }
 
 model User {
@@ -81,6 +86,7 @@ model TableSession {
   table_id      String
   token         String    @unique @default(uuid())
   status        String    @default("active") // active, billing, paid, closed
+  guest_profile_id String?
   opened_at     DateTime  @default(now())
   closed_at     DateTime?
   created_at    DateTime  @default(now())
@@ -91,6 +97,7 @@ model TableSession {
   orders     Order[]
   bill       SessionBill?
   guest_contact GuestContact?
+  guest_profile GuestProfile? @relation(fields: [guest_profile_id], references: [id])
 }
 
 model SessionBill {
@@ -102,6 +109,9 @@ model SessionBill {
   discount_amount  Float    @default(0)
   total_amount     Float    @default(0)
   payment_status   String   @default("unpaid") // unpaid, partially_paid, paid, refunded
+  split_count      Int      @default(1)
+  split_paid       Int      @default(0)
+  split_status     String   @default("full")
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
@@ -188,12 +198,17 @@ model Order {
   special_instructions  String?
   idempotency_key       String?  @unique
   cancel_reason         String?
+  guest_profile_id      String?
+  guest_profile_spend_recorded Boolean @default(false)
+  points_redeemed       Int      @default(0)
+  loyalty_discount_amount Float  @default(0)
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
 
   restaurant    Restaurant     @relation(fields: [restaurant_id], references: [id])
   table         Table          @relation(fields: [table_id], references: [id])
   table_session TableSession?  @relation(fields: [table_session_id], references: [id])
+  guest_profile GuestProfile?  @relation(fields: [guest_profile_id], references: [id])
   items         OrderItem[]
   payments      Payment[]
   feedback      OrderFeedback?
@@ -212,7 +227,7 @@ model OrderItem {
   quantity       Int     @default(1)
   price          Float
   modifiers_json String? // Stringified JSON
-  item_note      String?
+  item_note      String? @db.VarChar(200)
 
   order     Order    @relation(fields: [order_id], references: [id])
   menu_item MenuItem @relation(fields: [menu_item_id], references: [id])
@@ -220,9 +235,13 @@ model OrderItem {
 
 model Payment {
   id                  String   @id @default(uuid())
-  order_id            String   @unique // SEC-08: Prevent duplicate payment records for same order
+  order_id            String
+  session_bill_id     String?
+  split_index         Int      @default(0)
+  split_total         Int      @default(1)
   razorpay_order_id   String
   razorpay_payment_id String?
+  stripe_payment_intent_id String?
   status              String   @default("initiated")
   amount              Float
   provider            String   @default("razorpay")
@@ -234,6 +253,8 @@ model Payment {
   updated_at          DateTime @updatedAt
 
   order Order @relation(fields: [order_id], references: [id])
+
+  @@unique([order_id, split_index])
 }
 
 model OrderFeedback {
@@ -310,6 +331,48 @@ model GuestContact {
   table_session TableSession @relation(fields: [table_session_id], references: [id])
 
   @@index([restaurant_id, last_seen_at])
+}
+
+model GuestProfile {
+  id                 String   @id @default(uuid())
+  restaurant_id      String
+  name               String?
+  phone              String?
+  email              String?
+  visit_count        Int      @default(0)
+  total_spend        Float    @default(0)
+  loyalty_points     Int      @default(0)
+  favourite_item_ids Json     @default("[]")
+  tags               Json     @default("[]")
+  notes              String?
+  marketing_consent  Boolean  @default(false)
+  first_visit_at     DateTime @default(now())
+  last_visit_at      DateTime @default(now())
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
+  sessions   TableSession[]
+  orders     Order[]
+}
+
+model MarketingCampaign {
+  id               String   @id @default(uuid())
+  restaurant_id    String
+  name             String
+  channel          String
+  subject          String?
+  message_body     String
+  audience_filter  Json     @default("{}")
+  status           String   @default("draft")
+  recipients_count Int?
+  sent_count       Int      @default(0)
+  scheduled_at     DateTime?
+  sent_at          DateTime?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurant_id], references: [id])
 }
 
 model StaffRequest {

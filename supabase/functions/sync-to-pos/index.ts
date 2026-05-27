@@ -48,9 +48,19 @@ serve(async (req) => {
     return json({ error: 'Not authorized to sync POS orders.' }, 403);
   }
 
-  const provider = String(body.provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
+  const { data: restaurant, error: restaurantError } = await supabase
+    .from('Restaurant')
+    .select('pos_provider')
+    .eq('id', restaurantId)
+    .maybeSingle();
+  if (restaurantError) return json({ error: restaurantError.message }, 500);
+
+  const provider = String(body.provider || restaurant?.pos_provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
   const webhookUrl = Deno.env.get('POS_WEBHOOK_URL');
   const accessToken = Deno.env.get('POS_ACCESS_TOKEN');
+  const adapterMap: Record<string, string> = {
+    petpooja: 'pos-adapter-petpooja',
+  };
   const payload = {
     provider,
     order: body.order || null,
@@ -64,13 +74,31 @@ serve(async (req) => {
       order_id: orderId,
       job_type: 'pos',
       provider,
-      status: webhookUrl ? 'pending' : 'pending_configuration',
+      status: webhookUrl || adapterMap[provider] ? 'pending' : 'pending_configuration',
       payload,
     })
     .select('id')
     .single();
 
   if (insertError) return json({ error: insertError.message }, 500);
+
+  if (adapterMap[provider]) {
+    const { data: adapterData, error: adapterError } = await supabase.functions.invoke(adapterMap[provider], {
+      body: { job_id: job.id, order_id: orderId, restaurant_id: restaurantId },
+      headers: { Authorization: `Bearer ${serviceRoleKey}` },
+    });
+
+    if (adapterError || adapterData?.status === 'failed') {
+      const error = adapterError?.message || adapterData?.error || 'POS adapter failed.';
+      await supabase
+        .from('IntegrationJob')
+        .update({ status: 'failed', error, updated_at: new Date().toISOString() })
+        .eq('id', job.id);
+      return json({ queued: true, status: 'failed', job_id: job.id, error }, 502);
+    }
+
+    return json({ queued: true, status: adapterData?.status || 'delivered', job_id: job.id, response: adapterData?.response || null });
+  }
 
   if (!webhookUrl) {
     return json({

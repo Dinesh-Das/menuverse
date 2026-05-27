@@ -24,6 +24,9 @@ const ARStudio = lazy(() => import('./screens/admin/ARStudio'));
 const QRFactory = lazy(() => import('./screens/admin/QRFactory'));
 const KDS = lazy(() => import('./screens/admin/KDS'));
 const OrderMonitor = lazy(() => import('./screens/admin/OrderMonitor'));
+const GuestCRM = lazy(() => import('./screens/admin/GuestCRM'));
+const Campaigns = lazy(() => import('./screens/admin/Campaigns'));
+const BranchOverview = lazy(() => import('./screens/admin/BranchOverview'));
 
 function RouteFallback() {
   return (
@@ -58,6 +61,9 @@ export default function App() {
                       <Route path="/admin/qr"         element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><QRFactory /></ErrorBoundary></RequireAuth>} />
                       <Route path="/admin/kds"        element={<RequireAuth roles={['owner', 'manager', 'staff']}><ErrorBoundary><KDS /></ErrorBoundary></RequireAuth>} />
                       <Route path="/admin/orders"     element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><OrderMonitor /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/guests"     element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><GuestCRM /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/campaigns"  element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><Campaigns /></ErrorBoundary></RequireAuth>} />
+                      <Route path="/admin/branches"   element={<RequireAuth roles={['owner']}><ErrorBoundary><BranchOverview /></ErrorBoundary></RequireAuth>} />
                     </>
                   )}
 

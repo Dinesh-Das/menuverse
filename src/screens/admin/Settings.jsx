@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminRemoveStaffMember, adminUpdateRestaurant } from '../../lib/api';
+import {
+  adminFetchIntegrationJobs,
+  adminRemoveStaffMember,
+  adminRetryIntegrationJob,
+  adminUpdateRestaurant,
+} from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
 import { INTEGRATION_READINESS } from '../../lib/integrations';
 
-const TABS = ['Brand', 'Operations', 'Team'];
+const TABS = ['Brand', 'Operations', 'Integrations', 'Team'];
 const LOGO_SIGNATURES = {
   jpg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
   jpeg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
@@ -44,6 +49,7 @@ export default function Settings() {
   const [serviceChargeRate, setServiceChargeRate] = useState('0');
   const [paymentEnabled, setPaymentEnabled] = useState(false);
   const [paymentProvider, setPaymentProvider] = useState('razorpay');
+  const [currency, setCurrency] = useState('inr');
 
   // ── Team state ────────────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState([]);
@@ -52,6 +58,9 @@ export default function Settings() {
   const [newRole, setNewRole] = useState('staff');
   const [inviting, setInviting] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [integrationJobs, setIntegrationJobs] = useState([]);
+  const [integrationSummary, setIntegrationSummary] = useState({ delivered: 0, failed: 0 });
+  const [integrationLoading, setIntegrationLoading] = useState(false);
 
   // ── Shared ────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -85,6 +94,7 @@ export default function Settings() {
           setServiceChargeRate(String((data.service_charge_rate || 0) * 100));
           setPaymentEnabled(Boolean(data.payment_enabled));
           setPaymentProvider(data.payment_provider || 'razorpay');
+          setCurrency(data.currency || 'inr');
         }
         setLoading(false);
       })
@@ -105,9 +115,24 @@ export default function Settings() {
       });
   };
 
+  const loadIntegrationJobs = async () => {
+    if (!user?.restaurantId) return;
+    setIntegrationLoading(true);
+    try {
+      const result = await adminFetchIntegrationJobs(user.restaurantId);
+      setIntegrationJobs(result.jobs);
+      setIntegrationSummary(result.summary);
+    } catch (err) {
+      addToast(`Failed to load integration jobs: ${err.message}`, 'error');
+    } finally {
+      setIntegrationLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
     loadTeam();
+    loadIntegrationJobs();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.restaurantId]);
 
@@ -172,6 +197,7 @@ export default function Settings() {
         ...(!isNaN(serviceRate) && serviceRate >= 0 && serviceRate <= 30 ? { service_charge_rate: serviceRate / 100 } : {}),
         payment_enabled: paymentEnabled,
         payment_provider: paymentProvider,
+        currency,
       });
       if (!isNaN(rate) && rate >= 0 && rate <= 30) {
         localStorage.setItem('mv_gst_rate', String(rate / 100));
@@ -212,6 +238,16 @@ export default function Settings() {
       addToast('Member removed.', 'success');
     } catch (err) {
       addToast(`Failed: ${err.message}`, 'error');
+    }
+  };
+
+  const handleRetryIntegrationJob = async (jobId) => {
+    try {
+      await adminRetryIntegrationJob(jobId, user.restaurantId);
+      addToast('Integration job queued for retry.', 'success');
+      loadIntegrationJobs();
+    } catch (err) {
+      addToast(`Retry failed: ${err.message}`, 'error');
     }
   };
 
@@ -419,7 +455,16 @@ export default function Settings() {
                   </label>
                   <select value={paymentProvider} onChange={e => setPaymentProvider(e.target.value)} className={inputClass}>
                     <option value="razorpay">Razorpay</option>
+                    <option value="stripe">Stripe</option>
                     <option value="manual">Manual payment link</option>
+                  </select>
+                  <select value={currency} onChange={e => setCurrency(e.target.value)} className={inputClass}>
+                    <option value="inr">INR - Indian Rupee</option>
+                    <option value="usd">USD - US Dollar</option>
+                    <option value="eur">EUR - Euro</option>
+                    <option value="gbp">GBP - British Pound</option>
+                    <option value="aud">AUD - Australian Dollar</option>
+                    <option value="cad">CAD - Canadian Dollar</option>
                   </select>
                 </div>
                 <div className="grid md:grid-cols-2 gap-4">
@@ -435,6 +480,88 @@ export default function Settings() {
                       <p className="text-xs text-on-surface-variant leading-relaxed">{item.description}</p>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'Integrations' && (
+              <div className={`p-8 mb-8 ${cardBg}`}>
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                  <div>
+                    <h3 className="font-headline text-xl font-bold text-on-surface">Integration Jobs</h3>
+                    <p className="text-sm text-on-surface-variant">Recent POS, printer, and notification delivery attempts.</p>
+                  </div>
+                  <button
+                    onClick={loadIntegrationJobs}
+                    className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-xs font-bold uppercase tracking-widest"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4 mb-6">
+                  <div className="p-4 rounded-xl bg-surface-container border border-outline-variant/10">
+                    <p className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Delivered last 24h</p>
+                    <p className="text-3xl font-headline text-primary mt-1">{integrationSummary.delivered}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-surface-container border border-outline-variant/10">
+                    <p className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Failed last 24h</p>
+                    <p className="text-3xl font-headline text-error mt-1">{integrationSummary.failed}</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-outline-variant/10">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-surface-container text-[10px] uppercase tracking-widest text-on-surface-variant">
+                      <tr>
+                        <th className="px-4 py-3">Type</th>
+                        <th className="px-4 py-3">Provider</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Created</th>
+                        <th className="px-4 py-3">Retries</th>
+                        <th className="px-4 py-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/10">
+                      {integrationLoading ? (
+                        <tr><td colSpan="6" className="px-4 py-8 text-center text-on-surface-variant">Loading jobs...</td></tr>
+                      ) : integrationJobs.length === 0 ? (
+                        <tr><td colSpan="6" className="px-4 py-8 text-center text-on-surface-variant">No integration jobs yet.</td></tr>
+                      ) : integrationJobs.map(job => (
+                        <tr key={job.id} className="bg-surface-container-low">
+                          <td className="px-4 py-3">
+                            <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-widest">
+                              {job.job_type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-on-surface">{job.provider || 'webhook'}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
+                              job.status === 'delivered' ? 'bg-green-500/10 text-green-500' :
+                              job.status === 'failed' ? 'bg-error/10 text-error' :
+                              'bg-primary/10 text-primary'
+                            }`}>
+                              {job.status.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">
+                            {new Date(job.created_at).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-3 text-on-surface-variant">{job.retry_count || 0}</td>
+                          <td className="px-4 py-3 text-right">
+                            {job.status === 'failed' && (
+                              <button
+                                onClick={() => handleRetryIntegrationJob(job.id)}
+                                className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-[10px] font-bold uppercase tracking-widest"
+                              >
+                                Retry
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}

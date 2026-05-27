@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchTableInfo, saveGuestContact, startOrResumeTableSession } from '../lib/api';
+import { fetchTableInfo, resolveOrCreateGuestProfile, saveGuestContact, startOrResumeTableSession } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -24,6 +24,7 @@ export default function QRLanding() {
   const { isDark, toggleTheme } = useTheme();
   const [table, setTable] = useState(null);
   const [activeSessionToken, setActiveSessionToken] = useState(null);
+  const [activeSessionId, setActiveSessionId] = useState(null);
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
@@ -36,13 +37,16 @@ export default function QRLanding() {
   useEffect(() => {
     async function init() {
       try {
+        if (!restaurantSlug) {
+          throw new Error('Invalid QR code');
+        }
         const storedSessionToken = getStoredTableSessionToken();
         const tableData = await fetchTableInfo(tableId);
         setTable(tableData);
 
         // AQ-09: Persist restaurant name so CustomerTopNav can read it dynamically
         if (tableData.restaurant?.name) {
-          localStorage.setItem('mv_restaurant_name', tableData.restaurant.name.split(' - ')[0]);
+          localStorage.setItem('mv_restaurant_name', tableData.restaurant.name);
         }
 
         const sessionPayload = {
@@ -53,6 +57,7 @@ export default function QRLanding() {
           gstRate: tableData.restaurant?.gst_rate,
           paymentEnabled: Boolean(tableData.restaurant?.payment_enabled),
           paymentProvider: tableData.restaurant?.payment_provider || 'razorpay',
+          currency: tableData.restaurant?.currency || 'inr',
         };
 
         try {
@@ -63,6 +68,7 @@ export default function QRLanding() {
           });
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
+          setActiveSessionId(sessionPayload.tableSessionId || null);
           setActiveSessionToken(sessionPayload.tableSessionToken);
         } catch (sessionErr) {
           console.warn('[Menuverse] Table session RPC unavailable:', sessionErr.message);
@@ -97,6 +103,15 @@ export default function QRLanding() {
           email: guestEmail,
           marketingConsent,
         });
+        await resolveOrCreateGuestProfile({
+          restaurantId: table.restaurant_id,
+          tableSessionId: activeSessionId,
+          name: guestName,
+          phone: guestPhone,
+          email: guestEmail,
+          marketingConsent,
+        });
+        localStorage.setItem('mv_contact_saved', 'true');
       } catch (contactErr) {
         console.warn('[Menuverse] Guest contact capture skipped:', contactErr.message);
       } finally {
@@ -190,7 +205,7 @@ export default function QRLanding() {
           onClick={() => setShowContactForm(value => !value)}
           className="mt-4 text-[10px] uppercase tracking-[0.22em] font-bold text-on-surface-variant hover:text-primary transition-colors"
         >
-          {showContactForm ? 'Hide receipt details' : 'Add receipt details'}
+          {showContactForm ? 'Hide session details' : 'Save your session (optional)'}
         </button>
 
         {showContactForm && (

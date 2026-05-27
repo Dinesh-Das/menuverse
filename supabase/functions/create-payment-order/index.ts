@@ -10,6 +10,12 @@ function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: corsHeaders });
 }
 
+function clampSplitCount(value: unknown) {
+  const count = Number(value || 1);
+  if (!Number.isFinite(count)) return 1;
+  return Math.max(1, Math.min(10, Math.floor(count)));
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -29,6 +35,9 @@ serve(async (req) => {
     return json({ error: 'table_session_token is required.' }, 400);
   }
 
+  const splitCount = clampSplitCount(body.split_count);
+  const isSplitPayment = splitCount > 1;
+
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data, error } = await supabase.rpc('get_table_session_orders', {
     p_table_session_token: tableSessionToken,
@@ -38,37 +47,74 @@ serve(async (req) => {
 
   const orders = Array.isArray(data) ? data : [];
   const payableOrders = orders.filter((order) => !['cancelled', 'completed'].includes(order.status));
-  const amountRupees = payableOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
-  const amountPaise = Math.round(amountRupees * 100);
+  const totalAmountRupees = payableOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
+  const checkoutAmountRupees = isSplitPayment ? totalAmountRupees / splitCount : totalAmountRupees;
+  const amountPaise = Math.round(checkoutAmountRupees * 100);
 
   if (!payableOrders.length || amountPaise <= 0) {
     return json({ error: 'No payable orders found for this table session.' }, 400);
   }
 
+  const { data: tableSession, error: sessionError } = await supabase
+    .from('TableSession')
+    .select('id, restaurant_id')
+    .eq('token', tableSessionToken)
+    .maybeSingle();
+  if (sessionError) return json({ error: sessionError.message }, 500);
+  if (!tableSession) return json({ error: 'Table session not found.' }, 404);
+
+  const { data: bill, error: billError } = await supabase
+    .from('SessionBill')
+    .select('id, split_count, split_paid, split_status')
+    .eq('table_session_id', tableSession.id)
+    .maybeSingle();
+  if (billError) return json({ error: billError.message }, 500);
+
   const orderIds = payableOrders.map((order) => order.id).filter(Boolean);
   const { data: existingPayments, error: existingPaymentError } = await supabase
     .from('Payment')
-    .select('id, order_id, razorpay_order_id, status, amount')
+    .select('id, order_id, razorpay_order_id, status, amount, split_index, split_total, session_bill_id')
     .in('order_id', orderIds);
 
   if (existingPaymentError) return json({ error: existingPaymentError.message }, 500);
 
-  if ((existingPayments || []).some((payment) => payment.status === 'captured')) {
+  if (!isSplitPayment && (existingPayments || []).some((payment) => payment.status === 'captured')) {
     return json({ error: 'One or more orders in this session are already paid.' }, 409);
   }
 
-  const expectedAmounts = new Map(payableOrders.map((order) => [order.id, Number(order.total_amount || 0)]));
-  const reusableRazorpayOrderId = [...new Set((existingPayments || [])
-    .filter((payment) => payment.status === 'initiated' && payment.razorpay_order_id)
-    .map((payment) => payment.razorpay_order_id))]
-    .find((razorpayOrderId) => orderIds.every((orderId) => {
-      const payment = (existingPayments || []).find((candidate) =>
-        candidate.order_id === orderId
-        && candidate.razorpay_order_id === razorpayOrderId
-        && candidate.status === 'initiated'
-      );
-      return payment && Math.abs(Number(payment.amount || 0) - Number(expectedAmounts.get(orderId) || 0)) < 0.01;
-    }));
+  let splitIndex = 0;
+  if (isSplitPayment) {
+    const usedIndexes = new Set((existingPayments || [])
+      .filter((payment) => Number(payment.split_total || 1) === splitCount)
+      .map((payment) => Number(payment.split_index || 0)));
+    while (usedIndexes.has(splitIndex) && splitIndex < splitCount) splitIndex += 1;
+    if (splitIndex >= splitCount) {
+      return json({ error: 'All split payment slots are already in progress or paid.' }, 409);
+    }
+  }
+
+  const expectedAmounts = new Map(payableOrders.map((order) => [
+    order.id,
+    isSplitPayment ? Number(order.total_amount || 0) / splitCount : Number(order.total_amount || 0),
+  ]));
+
+  const reusableRazorpayOrderId = isSplitPayment
+    ? null
+    : [...new Set((existingPayments || [])
+      .filter((payment) =>
+        payment.status === 'initiated'
+        && payment.razorpay_order_id
+        && Number(payment.split_index || 0) === 0
+        && Number(payment.split_total || 1) === 1)
+      .map((payment) => payment.razorpay_order_id))]
+      .find((razorpayOrderId) => orderIds.every((orderId) => {
+        const payment = (existingPayments || []).find((candidate) =>
+          candidate.order_id === orderId
+          && candidate.razorpay_order_id === razorpayOrderId
+          && candidate.status === 'initiated'
+        );
+        return payment && Math.abs(Number(payment.amount || 0) - Number(expectedAmounts.get(orderId) || 0)) < 0.01;
+      }));
 
   if (reusableRazorpayOrderId) {
     return json({
@@ -76,6 +122,8 @@ serve(async (req) => {
       amount: amountPaise,
       currency: 'INR',
       key_id: razorpayKeyId,
+      split_index: 0,
+      split_total: 1,
     });
   }
 
@@ -88,9 +136,12 @@ serve(async (req) => {
     body: JSON.stringify({
       amount: amountPaise,
       currency: 'INR',
-      receipt: tableSessionToken,
+      receipt: `${tableSession.id.slice(0, 20)}-${Date.now()}`,
       notes: {
         table_session_token: tableSessionToken,
+        table_session_id: tableSession.id,
+        split_index: splitIndex,
+        split_total: splitCount,
       },
     }),
   });
@@ -102,23 +153,29 @@ serve(async (req) => {
     }, 502);
   }
 
-  const existingByOrderId = new Map((existingPayments || []).map((payment) => [payment.order_id, payment]));
+  const existingByOrderId = new Map((existingPayments || [])
+    .filter((payment) => Number(payment.split_index || 0) === splitIndex)
+    .map((payment) => [payment.order_id, payment]));
   const now = new Date().toISOString();
-  const newPaymentRows = payableOrders
-    .filter((order) => !existingByOrderId.has(order.id))
-    .map((order) => ({
-      id: crypto.randomUUID(),
-      order_id: order.id,
-      razorpay_order_id: razorpayOrder.id,
-      status: 'initiated',
-      provider: 'razorpay',
-      amount: Number(order.total_amount || 0),
-      metadata: {
-        table_session_token: tableSessionToken,
-        razorpay_receipt: razorpayOrder.receipt || null,
-      },
-    }));
+  const paymentRows = payableOrders.map((order) => ({
+    id: crypto.randomUUID(),
+    order_id: order.id,
+    session_bill_id: bill?.id || null,
+    split_index: splitIndex,
+    split_total: splitCount,
+    razorpay_order_id: razorpayOrder.id,
+    status: 'initiated',
+    provider: 'razorpay',
+    amount: Number(expectedAmounts.get(order.id) || 0),
+    metadata: {
+      table_session_token: tableSessionToken,
+      table_session_id: tableSession.id,
+      razorpay_receipt: razorpayOrder.receipt || null,
+      split_payment: isSplitPayment,
+    },
+  }));
 
+  const newPaymentRows = paymentRows.filter((row) => !existingByOrderId.has(row.order_id));
   if (newPaymentRows.length) {
     const { error: insertPaymentError } = await supabase
       .from('Payment')
@@ -127,30 +184,45 @@ serve(async (req) => {
     if (insertPaymentError) return json({ error: insertPaymentError.message }, 500);
   }
 
-  const updateResults = await Promise.all(payableOrders
-    .filter((order) => existingByOrderId.has(order.id))
-    .map((order) => supabase
+  const updateResults = await Promise.all(paymentRows
+    .filter((row) => existingByOrderId.has(row.order_id))
+    .map((row) => supabase
       .from('Payment')
       .update({
-        razorpay_order_id: razorpayOrder.id,
-        status: 'initiated',
-        provider: 'razorpay',
-        amount: Number(order.total_amount || 0),
-        metadata: {
-          table_session_token: tableSessionToken,
-          razorpay_receipt: razorpayOrder.receipt || null,
-        },
+        session_bill_id: row.session_bill_id,
+        split_index: row.split_index,
+        split_total: row.split_total,
+        razorpay_order_id: row.razorpay_order_id,
+        status: row.status,
+        provider: row.provider,
+        amount: row.amount,
+        metadata: row.metadata,
         updated_at: now,
       })
-      .eq('id', existingByOrderId.get(order.id).id)));
+      .eq('id', existingByOrderId.get(row.order_id).id)));
 
   const updatePaymentError = updateResults.find((result) => result.error)?.error;
   if (updatePaymentError) return json({ error: updatePaymentError.message }, 500);
+
+  if (isSplitPayment && bill?.id) {
+    await supabase
+      .from('SessionBill')
+      .update({
+        split_count: splitCount,
+        split_status: 'splitting',
+        payment_status: 'partially_paid',
+        updated_at: now,
+      })
+      .eq('id', bill.id);
+  }
 
   return json({
     razorpay_order_id: razorpayOrder.id,
     amount: razorpayOrder.amount,
     currency: razorpayOrder.currency || 'INR',
     key_id: razorpayKeyId,
+    split_index: splitIndex,
+    split_total: splitCount,
+    share_amount: checkoutAmountRupees,
   });
 });
