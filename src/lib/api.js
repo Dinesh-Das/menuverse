@@ -644,6 +644,7 @@ export async function adminUpdateOrderStatus(orderId, status, cancelReason, rest
     .maybeSingle();
   if (readError) throw new Error(readError.message);
   if (!current) throw new Error('Order not found for this restaurant.');
+  if (current.status === status) return current;
   if (!canTransitionOrderStatus(current.status, status)) {
     throw new Error(`Invalid order status transition: ${current.status} -> ${status}`);
   }
@@ -657,8 +658,12 @@ export async function adminUpdateOrderStatus(orderId, status, cancelReason, rest
     .single();
   if (error) throw new Error(error.message);
   if (status === 'completed') {
-    supabase.rpc('update_guest_profile_on_order', { p_order_id: orderId })
-      .catch(err => console.warn('Guest profile spend update skipped:', err.message));
+    try {
+      const { error: spendError } = await supabase.rpc('update_guest_profile_on_order', { p_order_id: orderId });
+      if (spendError) console.warn('Guest profile spend update skipped:', spendError.message);
+    } catch (err) {
+      console.warn('Guest profile spend update skipped:', err.message);
+    }
   }
   return data;
 }
