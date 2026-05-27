@@ -16,11 +16,12 @@ function loadFromStorage() {
 
 const MAX_ITEM_QTY = 20;
 
-function makeCartKey(dishId, modifiers = []) {
+function makeCartKey(dishId, modifiers = [], notes = '') {
   const modKey = modifiers.length > 0
     ? JSON.stringify(modifiers.map(m => m.id || m.name).sort())
     : '';
-  return `${dishId}::${modKey}`;
+  const noteKey = notes.trim().toLowerCase();
+  return `${dishId}::${modKey}::${noteKey}`;
 }
 
 export function CartProvider({ children }) {
@@ -152,14 +153,15 @@ export function CartProvider({ children }) {
     }
   }, []);
 
-  const addItem = useCallback((dish, qty = 1, selectedModifiers = []) => {
+  const addItem = useCallback((dish, qty = 1, selectedModifiers = [], notes = '') => {
     setItems(prev => {
-      const cartKey = makeCartKey(dish.id, selectedModifiers);
+      const normalizedNotes = String(notes || '').trim().slice(0, 200);
+      const cartKey = makeCartKey(dish.id, selectedModifiers, normalizedNotes);
       const existing = prev.find(i => i._cartKey === cartKey);
       if (existing) {
         return prev.map(i => i._cartKey === cartKey ? { ...i, qty: Math.min(MAX_ITEM_QTY, i.qty + qty) } : i);
       }
-      return [...prev, { ...dish, qty: Math.min(MAX_ITEM_QTY, qty), selectedModifiers, _cartKey: cartKey }];
+      return [...prev, { ...dish, qty: Math.min(MAX_ITEM_QTY, qty), selectedModifiers, notes: normalizedNotes, _cartKey: cartKey }];
     });
   }, []);
 
@@ -173,6 +175,11 @@ export function CartProvider({ children }) {
     } else {
       setItems(prev => prev.map(i => i._cartKey === cartKey ? { ...i, qty: Math.min(MAX_ITEM_QTY, qty) } : i));
     }
+  }, []);
+
+  const updateItemNote = useCallback((cartKey, notes) => {
+    const normalizedNotes = String(notes || '').slice(0, 200);
+    setItems(prev => prev.map(i => i._cartKey === cartKey ? { ...i, notes: normalizedNotes } : i));
   }, []);
 
   const clearCart = useCallback(() => {
@@ -205,7 +212,7 @@ export function CartProvider({ children }) {
       items, remoteItems, allItems, count, subtotal, tax, total,
       tableId, tableNumber, restaurantId, restaurantSlug, tableSessionToken, tableSessionId,
       paymentEnabled, paymentProvider,
-      addItem, removeItem, updateQty, clearCart, setSession
+      addItem, removeItem, updateQty, updateItemNote, clearCart, setSession
     }}>
       {children}
     </CartContext.Provider>

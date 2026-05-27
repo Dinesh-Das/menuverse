@@ -150,6 +150,7 @@ export default function KDS() {
               name: item.name,
               quantity: item.quantity,
               modifiers: safeParseModifiers(item.modifiers_json).map(mod => mod.name || mod),
+              note: item.item_note || null,
             })),
           },
         }).then(result => {
@@ -319,6 +320,11 @@ export default function KDS() {
                                     </li>
                                   ))}
                                 </ul>
+                              )}
+                              {item.item_note && (
+                                <p className="kds-body-text text-primary font-bold mt-2">
+                                  NOTE: {item.item_note}
+                                </p>
                               )}
                             </div>
                           </div>

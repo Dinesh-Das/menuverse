@@ -7,10 +7,11 @@ import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
 import { getWalletPaymentLabel, openRazorpayCheckout } from '../lib/payments';
+import { supabase } from '../lib/supabase';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, paymentEnabled, paymentProvider } = useCart();
+  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, tableSessionId, paymentEnabled, paymentProvider } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
@@ -27,23 +28,41 @@ export default function TableSession() {
       setLoading(false);
       return;
     }
+    let cancelled = false;
 
     const loadOrders = async () => {
       try {
         const data = await fetchTableOrders(tableId);
+        if (cancelled) return;
         setOrders(data);
+        setError(null);
       } catch (err) {
+        if (cancelled) return;
         setError(err.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     loadOrders();
-    // Poll for updates every 30s
-    const interval = setInterval(loadOrders, 30000);
-    return () => clearInterval(interval);
-  }, [tableId]);
+
+    const orderFilter = tableSessionId
+      ? `table_session_id=eq.${tableSessionId}`
+      : `table_id=eq.${tableId}`;
+    const channel = supabase
+      .channel(`table-session-orders:${tableSessionId || tableId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Order', filter: orderFilter },
+        () => loadOrders()
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [tableId, tableSessionId]);
 
   const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
   const historyOrders = orders.filter(o => ['completed', 'cancelled'].includes(o.status));
@@ -56,7 +75,7 @@ export default function TableSession() {
     order.items.forEach(item => {
       if (item.menu_item) {
         const modifiers = safeParseModifiers(item.modifiers_json);
-        addItem(item.menu_item, item.quantity, modifiers);
+        addItem(item.menu_item, item.quantity, modifiers, item.item_note || '');
       }
     });
     navigate(restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout');
@@ -263,6 +282,9 @@ export default function TableSession() {
                               {item.name}
                               {modifiers.length > 0 && (
                                 <span className="block text-[10px] mt-0.5">{modifiers.map(mod => mod.name).filter(Boolean).join(', ')}</span>
+                              )}
+                              {item.item_note && (
+                                <span className="block text-[10px] mt-0.5 text-primary">Note: {item.item_note}</span>
                               )}
                             </span>
                             <span className="font-medium text-on-surface whitespace-nowrap">₹{lineTotal.toFixed(2)}</span>

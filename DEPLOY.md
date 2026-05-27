@@ -98,6 +98,8 @@ supabase functions deploy sync-to-pos
 
 `analyse-feedback` uses `ANTHROPIC_API_KEY` when configured and falls back to a deterministic rating/keyword baseline when it is not. `request-kitchen-print`, `send-whatsapp-notification`, and `sync-to-pos` queue integration jobs and forward to provider webhooks when those URLs are configured.
 
+If the dashboard shows a CORS preflight error for `invite-staff`, redeploy the functions after `supabase/config.toml` is present. The function-level `verify_jwt = false` lets browser `OPTIONS` preflight reach the handler; the function still validates the caller's JWT and owner role before sending any invite.
+
 ## 5. Storage
 
 The latest migrations create public `restaurant-assets` and `ar-models` buckets with restaurant-folder-scoped write policies. If you are not running migrations, create a public `restaurant-assets` bucket for logos/menu photos and keep writes authenticated and restaurant-folder scoped:

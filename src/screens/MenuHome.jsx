@@ -22,7 +22,7 @@ export default function MenuHome() {
   const { restaurantSlug } = useParams();
   const { addItem, items, count, total, restaurantSlug: sessionSlug, setSession, updateQty } = useCart();
   const navigate = useNavigate();
-  const slug = restaurantSlug || sessionSlug || 'zaika-zindagi';
+  const slug = restaurantSlug || sessionSlug || null;
 
   const [restaurant, setRestaurant] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -265,8 +265,8 @@ export default function MenuHome() {
             <span className="text-[10px] font-bold uppercase tracking-[0.4em] text-primary">Est. 2024</span>
           </div>
           <h1 className="font-headline text-4xl lg:text-5xl font-bold tracking-tight text-on-surface mb-3 leading-tight">
-            {restaurant?.name?.split(' - ')[0] || 'Zaika Zindagi'}{' '}
-            <span className="text-primary italic block sm:inline">{restaurant?.name?.split(' - ')[1] || 'Taste of Life'}</span>
+            {restaurant?.name?.split(' - ')[0] || 'Menuverse'}{' '}
+            <span className="text-primary italic block sm:inline">{restaurant?.name?.split(' - ')[1] || 'Digital Dining'}</span>
           </h1>
           <p className="text-on-surface-variant font-body text-sm max-w-[90%] leading-relaxed opacity-80 border-l-2 border-primary/20 pl-4 mb-6">
             {restaurant?.description || 'Experience the fusion of high-end culinary art and immersive digital precision.'}

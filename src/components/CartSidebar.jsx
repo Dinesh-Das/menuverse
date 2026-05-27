@@ -18,7 +18,7 @@ export default function CartSidebar() {
   const { restaurantSlug } = useParams();
   const {
     items, allItems, subtotal, tax, total,
-    removeItem, updateQty, clearCart,
+    removeItem, updateQty, updateItemNote, clearCart,
     tableId, tableNumber, restaurantId, tableSessionToken, tableSessionId,
   } = useCart();
   const navigate = useNavigate();
@@ -57,6 +57,7 @@ export default function CartSidebar() {
           quantity: item.qty,
           price: item.price,
           modifiers: item.selectedModifiers || [],
+          notes: item.notes || null,
         })),
       };
       const result = await placeOrder(payload);
@@ -120,6 +121,13 @@ export default function CartSidebar() {
                   </p>
                 )}
                 <p className="text-primary font-bold text-sm mt-0.5">₹{(item.price * item.qty).toFixed(2)}</p>
+                <textarea
+                  value={item.notes || ''}
+                  onChange={e => updateItemNote(item._cartKey || item.id, e.target.value)}
+                  maxLength={200}
+                  placeholder="Item note..."
+                  className="mt-2 w-full bg-surface-container-high border border-outline-variant/20 rounded-lg p-2 text-[11px] text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-12"
+                />
                 <div className="flex items-center gap-2 mt-2 bg-surface-container-high rounded-full px-1.5 py-0.5 w-max border border-outline-variant/20">
                   <button
                     onClick={() => updateQty(item._cartKey || item.id, item.qty - 1)}

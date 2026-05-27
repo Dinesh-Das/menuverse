@@ -6,7 +6,7 @@ import { useTheme } from '../../context/ThemeContext';
 export default function AdminLogin() {
   // const [email, setEmail] = useState('');
   // const [password, setPassword] = useState('');
-  const [email, setEmail] = useState('admin@zaikazindagi.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('password123');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -56,7 +56,7 @@ export default function AdminLogin() {
           <div className="hidden lg:flex lg:col-span-7 flex-col justify-between">
             <div>
               <h1 className="font-headline text-6xl font-bold tracking-tighter mb-4 text-on-surface drop-shadow-2xl">
-                Zaika Zindagi
+                Menuverse
               </h1>
               <p className="text-[12px] uppercase font-bold tracking-[0.4em] text-primary">
                 Kitchen Command Portal
@@ -90,7 +90,7 @@ export default function AdminLogin() {
           <div className="col-span-12 lg:col-span-5 flex flex-col justify-center">
             {/* Mobile Header (Hidden on large screens) */}
             <div className="lg:hidden mb-10 text-center">
-              <h1 className="font-headline text-4xl font-bold tracking-tight mb-3 text-on-surface">Zaika Zindagi</h1>
+              <h1 className="font-headline text-4xl font-bold tracking-tight mb-3 text-on-surface">Menuverse</h1>
               <p className="text-[10px] uppercase font-bold tracking-[0.2em] text-primary">Kitchen Command Portal</p>
             </div>
 
@@ -174,7 +174,7 @@ export default function AdminLogin() {
 
             {/* Footer */}
             <div className="mt-12 flex justify-between items-center text-on-surface-variant/40 text-[9px] uppercase tracking-widest font-bold">
-              <span>© 2026 Zaika Zindagi</span>
+              <span>© 2026 Menuverse</span>
               <span className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
                 v4.2.0 • Secure

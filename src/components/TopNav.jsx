@@ -26,7 +26,7 @@ export function CustomerTopNav({ showBack = false, title, logo }) {
   const homePath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/';
 
   // AQ-09: Pull restaurant name dynamically; fallback to stored name or brand default
-  const restaurantName = title || localStorage.getItem('mv_restaurant_name') || 'Zaika Zindagi';
+  const restaurantName = title || localStorage.getItem('mv_restaurant_name') || 'Menuverse';
 
   return (
     <header className="fixed top-0 w-full z-50 glass-nav-dark h-[72px] flex items-center shadow-sm">

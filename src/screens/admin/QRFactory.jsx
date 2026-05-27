@@ -9,8 +9,63 @@ import { useToast } from '../../components/Toast';
 // ── Build the URL a customer will land on when they scan ───────
 function buildQrUrl(table, restaurant) {
   const base = import.meta.env.VITE_CUSTOMER_APP_URL || window.location.origin;
-  const slug = restaurant?.slug || 'zaika-zindagi';
+  const slug = restaurant?.slug || 'menuverse';
   return `${base}/r/${slug}/t/${table.id}`;
+}
+
+function safeFilePart(value, fallback = 'menuverse') {
+  return String(value || fallback)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || fallback;
+}
+
+function getRestaurantInitials(restaurant) {
+  const name = restaurant?.name?.split(' - ')[0] || restaurant?.slug || 'Menuverse';
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return words.slice(0, 2).map(word => word[0]).join('').toUpperCase();
+}
+
+function loadLogoImage(url) {
+  if (!url) return Promise.resolve(null);
+  return new Promise(resolve => {
+    const image = document.createElement('img');
+    image.crossOrigin = 'anonymous';
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = url;
+  });
+}
+
+async function drawQrLogo(ctx, restaurant, cx, cy, logoR) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, logoR + 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+
+  const logo = await loadLogoImage(restaurant?.logo_url);
+  if (logo) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, logoR, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(logo, cx - logoR, cy - logoR, logoR * 2, logoR * 2);
+    ctx.restore();
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, logoR, 0, Math.PI * 2);
+  ctx.fillStyle = restaurant?.primary_color || '#1a1a1a';
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `bold ${Math.max(18, logoR * 0.65)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(getRestaurantInitials(restaurant), cx, cy + 1);
+  ctx.restore();
 }
 
 // ── Renders a single QR canvas and returns download helpers ────
@@ -30,7 +85,7 @@ function QrCanvas({ url, size = 180 }) {
   return <canvas ref={canvasRef} width={size} height={size} className="rounded-lg" />;
 }
 
-// ── Download QR as PNG with a Zaika Zindagi logo overlay ───────
+// ── Download QR as PNG with a restaurant logo overlay ───────
 async function downloadQrPng(table, restaurant) {
   const url = buildQrUrl(table, restaurant);
   const SIZE = 512;
@@ -46,36 +101,19 @@ async function downloadQrPng(table, restaurant) {
     errorCorrectionLevel: 'H',
   });
 
-  // 2. Stamp a white circle logo in the centre
+  // 2. Stamp the restaurant logo or initials in the centre.
   const ctx = canvas.getContext('2d');
   const logoR = SIZE * 0.09;
   const cx = SIZE / 2;
   const cy = SIZE / 2;
-
-  ctx.beginPath();
-  ctx.arc(cx, cy, logoR + 4, 0, Math.PI * 2);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(cx, cy, logoR, 0, Math.PI * 2);
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fill();
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `bold ${logoR * 0.9}px serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('Z', cx, cy + 1);
+  await drawQrLogo(ctx, restaurant, cx, cy, logoR);
 
   // 3. Trigger download
   canvas.toBlob(blob => {
+    if (!blob) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `zaika-zindagi-table-${table.number}-qr.png`;
+    a.download = `${safeFilePart(restaurant?.slug)}-table-${safeFilePart(table.number, table.id)}-qr.png`;
     a.click();
     URL.revokeObjectURL(a.href);
   }, 'image/png');
@@ -109,6 +147,7 @@ async function downloadStickerPng(table, restaurant) {
     color: { dark: '#171717', light: '#ffffff' },
     errorCorrectionLevel: 'H',
   });
+  await drawQrLogo(qrCanvas.getContext('2d'), restaurant, 280, 280, 54);
   ctx.drawImage(qrCanvas, 170, 320, 560, 560);
 
   ctx.font = 'bold 30px sans-serif';
@@ -118,9 +157,10 @@ async function downloadStickerPng(table, restaurant) {
   ctx.fillText(url.replace(/^https?:\/\//, ''), 450, 1000);
 
   canvas.toBlob(blob => {
+    if (!blob) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `menuverse-table-${table.number}-sticker.png`;
+    a.download = `${safeFilePart(restaurant?.slug)}-table-${safeFilePart(table.number, table.id)}-sticker.png`;
     a.click();
     URL.revokeObjectURL(a.href);
   }, 'image/png');
@@ -340,8 +380,14 @@ export default function QRFactory() {
                     </div>
                     {/* Branded centre dot */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="w-9 h-9 bg-black rounded-full flex items-center justify-center border-2 border-white shadow">
-                        <span className="font-headline text-[11px] font-bold text-white italic">Z</span>
+                      <div className="w-9 h-9 bg-black rounded-full flex items-center justify-center border-2 border-white shadow overflow-hidden">
+                        {restaurant?.logo_url ? (
+                          <img src={restaurant.logo_url} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="font-headline text-[10px] font-bold text-white">
+                            {getRestaurantInitials(restaurant)}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

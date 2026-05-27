@@ -306,6 +306,9 @@ export default function OrderStatus() {
                       {mods.length > 0 && (
                         <span className="text-on-surface-variant text-[10px] mt-0.5">{mods.map(m => m.name).join(', ')}</span>
                       )}
+                      {item.item_note && (
+                        <span className="text-primary text-[10px] mt-0.5">Note: {item.item_note}</span>
+                      )}
                       <span className="text-on-surface-variant text-[10px] uppercase tracking-widest font-medium">Qty: {item.quantity}</span>
                     </div>
                   </div>

@@ -28,6 +28,7 @@ export default function QRLanding() {
   const [guestPhone, setGuestPhone] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(false);
+  const [showContactForm, setShowContactForm] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -35,6 +36,7 @@ export default function QRLanding() {
   useEffect(() => {
     async function init() {
       try {
+        const storedSessionToken = getStoredTableSessionToken();
         const tableData = await fetchTableInfo(tableId);
         setTable(tableData);
 
@@ -57,7 +59,7 @@ export default function QRLanding() {
           const tableSession = await startOrResumeTableSession({
             restaurantId: tableData.restaurant_id,
             tableId,
-            existingToken: getStoredTableSessionToken(),
+            existingToken: storedSessionToken,
           });
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
@@ -67,6 +69,11 @@ export default function QRLanding() {
         }
 
         setSession(sessionPayload);
+
+        if (storedSessionToken && sessionPayload.tableSessionToken) {
+          navigate(`/r/${restaurantSlug}/menu`, { replace: true });
+          return;
+        }
       } catch (err) {
         setError(err.message);
       } finally {
@@ -75,7 +82,7 @@ export default function QRLanding() {
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableId, restaurantSlug, setSession]);
+  }, [navigate, tableId, restaurantSlug, setSession]);
 
   const handleExploreMenu = async () => {
     const hasContact = guestName.trim() || guestPhone.trim() || guestEmail.trim();
@@ -141,7 +148,7 @@ export default function QRLanding() {
         
         <div className="mb-10 text-center">
           <h1 className="font-headline text-4xl font-bold tracking-tight text-on-surface leading-tight">
-            {table?.restaurant?.name?.split(' - ')[0] || 'Zaika Zindagi'}
+            {table?.restaurant?.name?.split(' - ')[0] || 'Menuverse'}
           </h1>
           {table?.restaurant?.name?.includes(' - ') && (
             <p className="text-primary italic font-serif text-lg mt-1 opacity-90">
@@ -151,7 +158,7 @@ export default function QRLanding() {
         </div>
 
         <p className="text-on-surface-variant font-body text-[10px] uppercase tracking-[0.2em] text-center mb-12 opacity-70">
-          Table {table?.number} <span className="mx-2">·</span> {table?.section}
+          Table {table?.number} <span className="mx-2">-</span> {table?.section}
         </p>
 
         <div className="w-52 h-52 rounded-full bg-[#0F0F0F] border border-outline-variant/10 flex items-center justify-center mb-14 relative shadow-2xl overflow-hidden group">
@@ -174,46 +181,56 @@ export default function QRLanding() {
           disabled={savingContact}
           className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-all active:scale-95 hover:shadow-primary/20 hover:-translate-y-0.5 flex justify-center items-center gap-2 cursor-pointer disabled:opacity-60"
         >
-          {savingContact ? 'Saving...' : 'Explore Menu'}
+          {savingContact ? 'Saving...' : 'Browse Menu'}
           <span className={`material-symbols-outlined text-lg ${savingContact ? 'animate-spin' : ''}`}>{savingContact ? 'progress_activity' : 'arrow_forward'}</span>
         </button>
 
-        <div className="w-full mt-5 space-y-3">
-          <input
-            type="text"
-            value={guestName}
-            onChange={event => setGuestName(event.target.value)}
-            placeholder="Name for receipt"
-            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-          />
-          <input
-            type="tel"
-            value={guestPhone}
-            onChange={event => setGuestPhone(event.target.value)}
-            placeholder="Phone for WhatsApp receipt"
-            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-          />
-          <input
-            type="email"
-            value={guestEmail}
-            onChange={event => setGuestEmail(event.target.value)}
-            placeholder="Email receipt"
-            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-          />
-          <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+        <button
+          type="button"
+          onClick={() => setShowContactForm(value => !value)}
+          className="mt-4 text-[10px] uppercase tracking-[0.22em] font-bold text-on-surface-variant hover:text-primary transition-colors"
+        >
+          {showContactForm ? 'Hide receipt details' : 'Add receipt details'}
+        </button>
+
+        {showContactForm && (
+          <div className="w-full mt-5 space-y-3">
             <input
-              type="checkbox"
-              checked={marketingConsent}
-              onChange={event => setMarketingConsent(event.target.checked)}
-              className="w-4 h-4 accent-primary"
+              type="text"
+              value={guestName}
+              onChange={event => setGuestName(event.target.value)}
+              placeholder="Name for receipt"
+              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
             />
-            Offers and loyalty updates
-          </label>
-        </div>
+            <input
+              type="tel"
+              value={guestPhone}
+              onChange={event => setGuestPhone(event.target.value)}
+              placeholder="Phone for WhatsApp receipt"
+              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+            />
+            <input
+              type="email"
+              value={guestEmail}
+              onChange={event => setGuestEmail(event.target.value)}
+              placeholder="Email receipt"
+              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+            />
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+              <input
+                type="checkbox"
+                checked={marketingConsent}
+                onChange={event => setMarketingConsent(event.target.checked)}
+                className="w-4 h-4 accent-primary"
+              />
+              Offers and loyalty updates
+            </label>
+          </div>
+        )}
 
         <div className="mt-12 flex flex-col items-center gap-2">
           <p className="text-on-surface-variant/40 text-[9px] text-center uppercase tracking-[0.3em]">
-            Powered by Zaika Zindagi OS
+            Powered by Menuverse
           </p>
           <div className="w-1 h-1 rounded-full bg-primary/30" />
         </div>

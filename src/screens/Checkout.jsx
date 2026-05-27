@@ -10,7 +10,7 @@ import { sortRecommendedItems } from '../lib/recommendations';
 export default function Checkout() {
   const { restaurantSlug } = useParams();
   const {
-    allItems, subtotal, tax, total, removeItem, updateQty, clearCart, addItem,
+    allItems, subtotal, tax, total, removeItem, updateQty, updateItemNote, clearCart, addItem,
     tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug, tableSessionToken, tableSessionId,
   } = useCart();
   const { isDark, toggleTheme } = useTheme();
@@ -23,14 +23,13 @@ export default function Checkout() {
   const [upsellCategories, setUpsellCategories] = useState([]);
   const [celebration, setCelebration] = useState(false);
 
-  const currentSlug = restaurantSlug || sessionSlug || 'zaika-zindagi';
+  const currentSlug = restaurantSlug || sessionSlug || null;
 
   const gstPct = subtotal > 0
     ? Math.round((tax / subtotal) * 100)
     : Math.round(parseFloat(localStorage.getItem('mv_gst_rate') || '0.05') * 100);
 
   React.useEffect(() => {
-    if (!currentSlug) return;
     fetchMenu(currentSlug).then(data => {
       const candidates = data.categories.flatMap(cat => cat.items || []).filter(item => item.available);
       setUpsellCategories(data.categories || []);
@@ -77,6 +76,7 @@ export default function Checkout() {
           quantity: item.qty,
           price: item.price,
           modifiers: item.selectedModifiers || [],
+          notes: item.notes || null,
         })),
       };
 
@@ -118,7 +118,7 @@ export default function Checkout() {
           </button>
           <div className="text-right">
             <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-              {(restaurantSlug || sessionSlug || '').replace(/-/g, ' ') || 'Zaika Zindagi'}
+              {(restaurantSlug || sessionSlug || '').replace(/-/g, ' ') || 'Menuverse'}
             </p>
             <p className="text-primary font-bold text-xs uppercase tracking-widest mt-0.5">Table {tableNumber || '?'}</p>
           </div>
@@ -181,6 +181,20 @@ export default function Checkout() {
                           ))}
                         </div>
                       )}
+
+                      {!item.isRemote ? (
+                        <textarea
+                          value={item.notes || ''}
+                          onChange={e => updateItemNote(item._cartKey || item.id, e.target.value)}
+                          maxLength={200}
+                          placeholder="Item note..."
+                          className="w-full bg-surface-container-high border border-outline-variant/20 rounded-lg p-2 text-xs text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-14 mb-3"
+                        />
+                      ) : item.notes ? (
+                        <p className="text-[10px] text-on-surface-variant mb-3 bg-surface-container-high rounded-lg px-2 py-1">
+                          Note: {item.notes}
+                        </p>
+                      ) : null}
 
                       {!item.isRemote ? (
                         <div className="flex items-center gap-3 bg-surface-container rounded-full px-2 py-1 w-max border border-outline-variant/20 mt-auto">

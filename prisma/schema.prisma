@@ -212,6 +212,7 @@ model OrderItem {
   quantity       Int     @default(1)
   price          Float
   modifiers_json String? // Stringified JSON
+  item_note      String?
 
   order     Order    @relation(fields: [order_id], references: [id])
   menu_item MenuItem @relation(fields: [menu_item_id], references: [id])

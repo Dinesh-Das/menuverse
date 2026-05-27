@@ -1,0 +1,20 @@
+[functions.invite-staff]
+verify_jwt = false
+
+[functions.analyse-feedback]
+verify_jwt = false
+
+[functions.create-payment-order]
+verify_jwt = false
+
+[functions.request-kitchen-print]
+verify_jwt = false
+
+[functions.send-whatsapp-notification]
+verify_jwt = false
+
+[functions.sync-to-pos]
+verify_jwt = false
+
+[functions.verify-payment-webhook]
+verify_jwt = false

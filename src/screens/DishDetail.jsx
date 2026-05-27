@@ -14,6 +14,7 @@ export default function DishDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedModifiers, setSelectedModifiers] = useState({});
+  const [itemNote, setItemNote] = useState('');
   const [addedFeedback, setAddedFeedback] = useState(false);
   const [arAsset, setArAsset] = useState(null);
   const [showARModal, setShowARModal] = useState(false);
@@ -100,7 +101,7 @@ export default function DishDetail() {
   const handleAdd = () => {
     if (!dish?.available) return;
     if (!allRequiredSelected) return;
-    addItem(dish, qty, modifiersForCart);
+    addItem(dish, qty, modifiersForCart, itemNote);
     setAddedFeedback(true);
     setTimeout(() => setAddedFeedback(false), 2000);
   };
@@ -249,7 +250,20 @@ export default function DishDetail() {
             </div>
           )}
 
-          {/* ── Fixed Bottom Action Bar (Becomes static on desktop) ───────────────────────── */}
+          <div className="mb-8">
+            <label className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-3 block">
+              Item Note
+            </label>
+            <textarea
+              value={itemNote}
+              onChange={e => setItemNote(e.target.value.slice(0, 200))}
+              maxLength={200}
+              placeholder="No onion, extra spicy, sauce on side..."
+              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl p-4 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-20"
+              disabled={isUnavailable}
+            />
+          </div>
+
           <div className="fixed bottom-0 left-0 w-full p-6 glass-bottom-dark rounded-t-3xl z-50 flex items-center justify-between gap-6 md:static md:bg-transparent md:backdrop-blur-none md:p-0 md:mt-8 md:justify-start md:border-none md:shadow-none">
             <div className="flex items-center gap-4 bg-surface-container-high md:bg-surface-container-low rounded-full px-2 py-1.5 border border-outline-variant/20 md:border-outline-variant md:scale-110 md:origin-left">
               <button

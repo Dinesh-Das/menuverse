@@ -3,11 +3,13 @@ import { useNavigate } from 'react-router-dom';
 
 export default function Directory() {
   const navigate = useNavigate();
+  const sampleRestaurantSlug = import.meta.env.VITE_SAMPLE_RESTAURANT_SLUG || 'menuverse';
+  const sampleTableId = import.meta.env.VITE_SAMPLE_TABLE_ID || 'replace-with-table-id';
 
   const customerScreens = [
-    { name: 'QR Landing', path: '/r/zaika-zindagi/t/207525d6-cc04-4d9d-8b12-91a267f5152b', desc: 'Entry point (requires /api/seed)' },
-    { name: 'Menu Home', path: '/r/zaika-zindagi/menu', desc: 'Main category and dish grid' },
-    { name: 'Checkout', path: '/r/zaika-zindagi/checkout', desc: 'Cart and payment summary' },
+    { name: 'QR Landing', path: `/r/${sampleRestaurantSlug}/t/${sampleTableId}`, desc: 'Entry point (set VITE_SAMPLE_TABLE_ID)' },
+    { name: 'Menu Home', path: '/menu', desc: 'Main category and dish grid' },
+    { name: 'Checkout', path: '/checkout', desc: 'Cart and payment summary' },
     { name: 'Order Status', path: '/order/SF-EXAMPLE-1234', desc: 'Live tracker (requires active orderId)' },
   ];
 
@@ -31,7 +33,7 @@ export default function Directory() {
       <div className="relative z-10 max-w-5xl mx-auto pt-10">
         <header className="mb-16 text-center">
           <h1 className="font-headline text-5xl font-bold tracking-tight text-on-surface mb-4">
-            Zaika Zindagi
+            Menuverse
           </h1>
           <p className="text-[12px] uppercase font-bold tracking-[0.2em] text-primary">
             Prototype Directory

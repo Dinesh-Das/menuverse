@@ -159,9 +159,12 @@ export default function OrderMonitor() {
 
                   <div className="space-y-2 mb-5 pl-2 border-l-2 border-outline-variant/20">
                     {order.items?.map((item, i) => (
-                      <div key={i} className="flex justify-between text-sm">
+                      <div key={i} className="flex justify-between text-sm gap-4">
                         <span className="text-on-surface font-medium">
                           <span className="text-primary font-bold mr-2">×{item.quantity}</span>{item.name}
+                          {item.item_note && (
+                            <span className="block text-[10px] text-primary mt-0.5">Note: {item.item_note}</span>
+                          )}
                         </span>
                         <span className="text-primary font-bold">₹{(item.price * item.quantity).toFixed(2)}</span>
                       </div>

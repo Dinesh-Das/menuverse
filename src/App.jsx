@@ -65,7 +65,7 @@ export default function App() {
                   {(appType === 'user' || appType === 'all') && (
                     <>
                       {/* LF-3: Directory only accessible in dev mode; production redirects to menu */}
-                      <Route path="/" element={isDev ? <Directory /> : <Navigate to="/r/zaika-zindagi/menu" replace />} />
+                      <Route path="/" element={isDev ? <Directory /> : <Navigate to="/menu" replace />} />
                       <Route path="/r/:restaurantSlug/t/:tableId"    element={<QRLanding />} />
                       <Route path="/r/:restaurantSlug/menu"          element={<MenuHome />} />
                       <Route path="/r/:restaurantSlug/dish/:dishId"  element={<DishDetail />} />
