@@ -7,7 +7,19 @@ verify_jwt = false
 [functions.create-payment-order]
 verify_jwt = false
 
+[functions.create-stripe-payment-intent]
+verify_jwt = false
+
+[functions.get-recommendations]
+verify_jwt = false
+
 [functions.request-kitchen-print]
+verify_jwt = false
+
+[functions.pos-adapter-petpooja]
+verify_jwt = false
+
+[functions.send-campaign]
 verify_jwt = false
 
 [functions.send-whatsapp-notification]
@@ -17,4 +29,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.verify-payment-webhook]
+verify_jwt = false
+
+[functions.verify-stripe-webhook]
 verify_jwt = false
