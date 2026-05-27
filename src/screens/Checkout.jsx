@@ -9,16 +9,19 @@ import {
   placeOrder,
   resolveOrCreateGuestProfile,
   saveGuestContact,
+  createStaffRequest,
 } from '../lib/api';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
 import { sortRecommendedItems } from '../lib/recommendations';
+import { supabase } from '../lib/supabase';
 
 export default function Checkout() {
   const { restaurantSlug } = useParams();
   const {
     allItems, subtotal, tax, total, removeItem, updateQty, updateItemNote, clearCart, addItem,
     tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug, tableSessionToken, tableSessionId,
+    paymentEnabled,
   } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const { addToast } = useToast();
@@ -37,6 +40,9 @@ export default function Checkout() {
   const [guestProfile, setGuestProfile] = useState(null);
   const [pointsToRedeem, setPointsToRedeem] = useState(0);
   const [serverUpsells, setServerUpsells] = useState([]);
+  const [splitCount, setSplitCount] = useState(1);
+  const [billRequested, setBillRequested] = useState(false);
+  const [billRequesting, setBillRequesting] = useState(false);
 
   const currentSlug = restaurantSlug || sessionSlug || null;
 
@@ -98,6 +104,51 @@ export default function Checkout() {
     [upsellItems, allItems, upsellCategories]
   );
   const recommendedUpsells = serverUpsells.length > 0 ? serverUpsells : fallbackUpsells;
+
+  React.useEffect(() => {
+    if (!tableSessionId) return;
+    setBillRequested(localStorage.getItem(`mv_bill_requested_${tableSessionId}`) === 'true');
+  }, [tableSessionId]);
+
+  const updateSplitCount = (nextCount) => {
+    setSplitCount(Math.max(1, Math.min(10, nextCount)));
+  };
+
+  const handleRequestBill = async () => {
+    if (billRequested || billRequesting) return;
+    if (!restaurantId || !tableId || !tableSessionToken || !tableSessionId) {
+      addToast('Please scan your table QR before requesting the bill.', 'error');
+      return;
+    }
+
+    setBillRequesting(true);
+    setError(null);
+    try {
+      await createStaffRequest({
+        restaurantId,
+        tableId,
+        tableSessionToken,
+        requestType: 'bill',
+        message: 'Customer has requested the bill.',
+      });
+
+      const { error: sessionError } = await supabase
+        .from('TableSession')
+        .update({ status: 'billing' })
+        .eq('id', tableSessionId);
+
+      if (sessionError) throw new Error(sessionError.message);
+
+      localStorage.setItem(`mv_bill_requested_${tableSessionId}`, 'true');
+      setBillRequested(true);
+      addToast('Bill requested. Your server is on the way.', 'success');
+    } catch (err) {
+      console.error(err);
+      addToast(err.message || 'Failed to request bill. Try again.', 'error');
+    } finally {
+      setBillRequesting(false);
+    }
+  };
 
   const handleCheckout = async () => {
     if (allItems.length === 0) return;
@@ -360,6 +411,39 @@ export default function Checkout() {
                   <span className="font-bold text-on-surface md:text-lg">Total</span>
                   <span className="font-headline text-2xl md:text-3xl font-bold text-primary">₹{checkoutTotal.toFixed(2)}</span>
                 </div>
+                <div className="mt-5 pt-5 border-t border-outline-variant/20">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Split this bill.</p>
+                    <div className="flex items-center gap-3 rounded-full bg-surface-container border border-outline-variant/20 p-1">
+                      <button
+                        type="button"
+                        onClick={() => updateSplitCount(splitCount - 1)}
+                        className="min-w-[40px] min-h-[40px] rounded-full bg-surface-container-high text-on-surface font-bold flex items-center justify-center disabled:opacity-40"
+                        disabled={splitCount <= 1}
+                        aria-label="Decrease split count"
+                      >
+                        -
+                      </button>
+                      <span className="min-w-[72px] text-center text-sm font-bold text-on-surface">
+                        {splitCount} {splitCount === 1 ? 'person' : 'people'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateSplitCount(splitCount + 1)}
+                        className="min-w-[40px] min-h-[40px] rounded-full bg-surface-container-high text-on-surface font-bold flex items-center justify-center disabled:opacity-40"
+                        disabled={splitCount >= 10}
+                        aria-label="Increase split count"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  {splitCount > 1 && (
+                    <p className="mt-3 text-sm text-on-surface-variant">
+                      Your share: &#8377;{(checkoutTotal / splitCount).toFixed(2)} of &#8377;{checkoutTotal.toFixed(2)} total
+                    </p>
+                  )}
+                </div>
               </div>
 
               {maxRedeemablePoints >= 100 && (
@@ -434,6 +518,23 @@ export default function Checkout() {
                 <span className="text-[10px] uppercase tracking-widest font-bold">Secure Order</span>
                 <span className="material-symbols-outlined text-sm">verified_user</span>
               </div>
+              {!paymentEnabled && tableSessionId && (
+                <button
+                  type="button"
+                  onClick={handleRequestBill}
+                  disabled={billRequested || billRequesting}
+                  className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-60 flex justify-center items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-lg">receipt_long</span>
+                  {billRequested ? (
+                    <>Bill requested &#8212; your server is on the way &#10003;</>
+                  ) : billRequesting ? (
+                    'Requesting Bill...'
+                  ) : (
+                    'Request Bill'
+                  )}
+                </button>
+              )}
             </div>
 
           </div>

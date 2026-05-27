@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchOrderStatus, submitOrderFeedback } from '../lib/api';
+import { fetchOrderStatus, getGuestProfileForSession, submitOrderFeedback } from '../lib/api';
 import { getSocket, joinOrderRoom } from '../lib/socket';
 import { useToast } from '../components/Toast';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
+import { supabase } from '../lib/supabase';
 
 const STATUS_STEPS = ['pending', 'accepted', 'preparing', 'ready', 'served'];
 const STATUS_LABELS = {
@@ -49,7 +50,11 @@ export default function OrderStatus() {
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackGiven, setFeedbackGiven] = useState(false);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [guestPhone, setGuestPhone] = useState('');
   const refreshTimerRef = useRef(null);
+  const orderRef = useRef(null);
+  const feedbackNudgeSentRef = useRef(false);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -67,6 +72,51 @@ export default function OrderStatus() {
     loadOrder();
   }, [loadOrder]);
 
+  useEffect(() => {
+    orderRef.current = order;
+  }, [order]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('mv_table_session_token');
+    if (!token) return;
+    getGuestProfileForSession(token)
+      .then(profile => setGuestPhone(profile?.phone || ''))
+      .catch(err => console.warn('[Menuverse] Guest phone lookup skipped:', err.message));
+  }, []);
+
+  const triggerServedFeedbackNudge = useCallback((servedOrder) => {
+    if (feedbackGiven) return;
+    setShowFeedbackModal(true);
+
+    if (feedbackNudgeSentRef.current) return;
+    feedbackNudgeSentRef.current = true;
+
+    Promise.resolve().then(async () => {
+      const token = localStorage.getItem('mv_table_session_token');
+      const profile = guestPhone
+        ? { phone: guestPhone }
+        : token
+          ? await getGuestProfileForSession(token).catch(() => null)
+          : null;
+      const phone = profile?.phone;
+      const restaurantId = servedOrder?.restaurant_id || orderRef.current?.restaurant_id;
+      if (!phone || !restaurantId) return;
+
+      const { error } = await supabase.functions.invoke('send-whatsapp-notification', {
+        body: {
+          restaurant_id: restaurantId,
+          phone,
+          template: 'feedback_nudge',
+          variables: {
+            restaurant_name: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+            order_url: window.location.href,
+          },
+        },
+      });
+      if (error) console.warn('[Menuverse] Feedback WhatsApp nudge skipped:', error.message);
+    }).catch(err => console.warn('[Menuverse] Feedback WhatsApp nudge skipped:', err.message));
+  }, [feedbackGiven, guestPhone]);
+
   // Supabase Realtime updates via socket.js, with token-based refresh as a fallback.
   useEffect(() => {
     if (!orderId) return;
@@ -83,15 +133,28 @@ export default function OrderStatus() {
 
     const handleStatusUpdate = ({ orderId: id, status }) => {
       if (id === orderId) {
+        const previousOrder = orderRef.current;
+        if (status === 'served' && previousOrder?.status !== 'served') {
+          triggerServedFeedbackNudge(previousOrder);
+        }
         setOrder(prev => prev ? { ...prev, status } : prev);
         setSocketConnected(true);
         loadOrder();
       }
     };
+    const handleOrderUpdated = (updatedOrder) => {
+      if (updatedOrder?.id !== orderId) return;
+      const previousOrder = orderRef.current;
+      if (updatedOrder.status === 'served' && previousOrder?.status !== 'served') {
+        triggerServedFeedbackNudge(updatedOrder);
+      }
+      setOrder(prev => prev ? { ...prev, ...updatedOrder } : updatedOrder);
+    };
     const handleConnect = () => setSocketConnected(true);
     const handleDisconnect = () => setSocketConnected(false);
 
     socket.on('order:status_update', handleStatusUpdate);
+    socket.on('order:updated', handleOrderUpdated);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
 
@@ -101,6 +164,7 @@ export default function OrderStatus() {
     return () => {
       cancelled = true;
       socket.off('order:status_update', handleStatusUpdate);
+      socket.off('order:updated', handleOrderUpdated);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       if (refreshTimerRef.current) {
@@ -108,7 +172,7 @@ export default function OrderStatus() {
         refreshTimerRef.current = null;
       }
     };
-  }, [orderId, loadOrder]);
+  }, [orderId, loadOrder, triggerServedFeedbackNudge]);
 
   const handleRating = (val) => {
     if (feedbackSaving || feedbackGiven) return;
@@ -143,6 +207,8 @@ export default function OrderStatus() {
         })),
       });
       setFeedbackGiven(true);
+      setShowFeedbackModal(false);
+      addToast('Thanks for your feedback.', 'success');
     } catch(e) {
       addToast(`Failed to save feedback: ${e.message}`, 'error');
     } finally {
@@ -193,6 +259,68 @@ export default function OrderStatus() {
           {option}
         </button>
       ))}
+    </div>
+  );
+
+  const renderFeedbackForm = (submitLabel = 'Send Feedback') => (
+    <div className="space-y-6">
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">Overall</p>
+          <span className="text-[10px] text-on-surface-variant">1 poor - 5 excellent</span>
+        </div>
+        <RatingScale value={rating} onChange={handleRating} />
+      </div>
+
+      {rating > 0 && (
+        <>
+          <div className="grid grid-cols-1 gap-3">
+            {[
+              ['Food', foodRating, setFoodRating],
+              ['Service', serviceRating, setServiceRating],
+              ['Value', valueRating, setValueRating],
+            ].map(([label, value, setter]) => (
+              <div key={label} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-surface-container border border-outline-variant/10">
+                <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">{label}</span>
+                <RatingScale value={value} onChange={setter} compact />
+              </div>
+            ))}
+          </div>
+
+          {order.items?.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant mb-3">Dish Ratings</p>
+              <div className="space-y-2">
+                {order.items.map(item => (
+                  <div key={item.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container border border-outline-variant/10">
+                    <span className="text-xs font-bold text-on-surface line-clamp-1">{item.name}</span>
+                    <RatingScale value={itemRatings[item.id] || 0} onChange={val => handleItemRating(item.id, val)} compact />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <textarea
+            value={feedbackComment}
+            onChange={e => setFeedbackComment(e.target.value)}
+            placeholder="What stood out today?"
+            className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl p-4 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-24"
+          />
+        </>
+      )}
+      <button
+        onClick={handleFeedbackSubmit}
+        disabled={feedbackSaving || !rating}
+        className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2"
+      >
+        {feedbackSaving ? (
+          <span className="material-symbols-outlined animate-spin text-lg">progress_activity</span>
+        ) : (
+          <span className="material-symbols-outlined text-lg">send</span>
+        )}
+        {feedbackSaving ? 'Saving Feedback' : submitLabel}
+      </button>
     </div>
   );
 
@@ -365,66 +493,7 @@ export default function OrderStatus() {
               <p className="text-sm text-on-surface-variant">Your feedback helps the menu improve automatically.</p>
             </div>
 
-            <div className="space-y-6">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">Overall</p>
-                  <span className="text-[10px] text-on-surface-variant">1 poor - 5 excellent</span>
-                </div>
-                <RatingScale value={rating} onChange={handleRating} />
-              </div>
-
-              {rating > 0 && (
-                <>
-                  <div className="grid grid-cols-1 gap-3">
-                    {[
-                      ['Food', foodRating, setFoodRating],
-                      ['Service', serviceRating, setServiceRating],
-                      ['Value', valueRating, setValueRating],
-                    ].map(([label, value, setter]) => (
-                      <div key={label} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-surface-container border border-outline-variant/10">
-                        <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">{label}</span>
-                        <RatingScale value={value} onChange={setter} compact />
-                      </div>
-                    ))}
-                  </div>
-
-                  {order.items?.length > 0 && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant mb-3">Dish Ratings</p>
-                      <div className="space-y-2">
-                        {order.items.map(item => (
-                          <div key={item.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container border border-outline-variant/10">
-                            <span className="text-xs font-bold text-on-surface line-clamp-1">{item.name}</span>
-                            <RatingScale value={itemRatings[item.id] || 0} onChange={val => handleItemRating(item.id, val)} compact />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <textarea
-                    value={feedbackComment}
-                    onChange={e => setFeedbackComment(e.target.value)}
-                    placeholder="What stood out today?"
-                    className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl p-4 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-24"
-                  />
-
-                  <button
-                    onClick={handleFeedbackSubmit}
-                    disabled={feedbackSaving || !rating}
-                    className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2"
-                  >
-                    {feedbackSaving ? (
-                      <span className="material-symbols-outlined animate-spin text-lg">progress_activity</span>
-                    ) : (
-                      <span className="material-symbols-outlined text-lg">send</span>
-                    )}
-                    {feedbackSaving ? 'Saving Feedback' : 'Send Feedback'}
-                  </button>
-                </>
-              )}
-            </div>
+            {renderFeedbackForm('Send Feedback')}
           </div>
         )}
         {false && (order.status === 'served' || order.status === 'completed') && !feedbackGiven && (
@@ -453,6 +522,27 @@ export default function OrderStatus() {
           </div>
         )}
       </main>
+
+      {showFeedbackModal && !feedbackGiven && (
+        <div className="fixed inset-0 z-[120] flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/60" />
+          <div className="relative w-full max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-surface-container-low border border-outline-variant/10 shadow-luxury p-6 transition-transform duration-300 ease-out translate-y-0">
+            <div className="mx-auto mb-5 h-1.5 w-12 rounded-full bg-outline-variant/40" />
+            <div className="text-center mb-6">
+              <h3 className="font-headline text-2xl font-bold text-on-surface mb-2">How was your meal? &#127869;&#65039;</h3>
+              <p className="text-sm text-on-surface-variant">Your feedback helps the menu improve automatically.</p>
+            </div>
+            {renderFeedbackForm('Submit Feedback')}
+            <button
+              type="button"
+              onClick={() => setShowFeedbackModal(false)}
+              className="mt-4 w-full py-3 text-xs font-bold uppercase tracking-widest text-on-surface-variant hover:text-on-surface"
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
 
       <CallWaiterFAB />
     </div>

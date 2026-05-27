@@ -1,6 +1,15 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? 'https://menuverse.app',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-razorpay-signature',
+};
+
+function json(body: unknown, status = 200) {
+  return Response.json(body, { status, headers: corsHeaders });
+}
+
 function toHex(buffer: ArrayBuffer) {
   return [...new Uint8Array(buffer)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -64,15 +73,16 @@ async function sendRestaurantBroadcast(
 }
 
 serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') {
-    return Response.json({ error: 'Method not allowed' }, { status: 405 });
+    return json({ error: 'Method not allowed' }, 405);
   }
 
   const webhookSecret = Deno.env.get('RAZORPAY_WEBHOOK_SECRET');
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!webhookSecret || !supabaseUrl || !serviceRoleKey) {
-    return Response.json({ error: 'Payment webhook is not configured.' }, { status: 503 });
+    return json({ error: 'Payment webhook is not configured.' }, 503);
   }
 
   const rawBody = await req.text();
@@ -80,24 +90,24 @@ serve(async (req) => {
   const expectedSignature = await hmacSha256Hex(webhookSecret, rawBody);
 
   if (!timingSafeEqual(expectedSignature, providedSignature)) {
-    return Response.json({ error: 'Invalid signature.' }, { status: 400 });
+    return json({ error: 'Invalid signature.' }, 400);
   }
 
   let event;
   try {
     event = JSON.parse(rawBody);
   } catch {
-    return Response.json({ error: 'Invalid JSON.' }, { status: 400 });
+    return json({ error: 'Invalid JSON.' }, 400);
   }
   if (event.event !== 'payment.captured') {
-    return Response.json({ received: true, ignored: event.event || null });
+    return json({ received: true, ignored: event.event || null });
   }
 
   const paymentEntity = event.payload?.payment?.entity;
   const razorpayOrderId = paymentEntity?.order_id;
   const razorpayPaymentId = paymentEntity?.id;
   if (!razorpayOrderId || !razorpayPaymentId) {
-    return Response.json({ error: 'Missing Razorpay payment identifiers.' }, { status: 400 });
+    return json({ error: 'Missing Razorpay payment identifiers.' }, 400);
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -107,12 +117,12 @@ serve(async (req) => {
     .eq('razorpay_order_id', razorpayOrderId);
 
   if (paymentReadError) {
-    return Response.json({ error: paymentReadError.message }, { status: 500 });
+    return json({ error: paymentReadError.message }, 500);
   }
 
   const orderIds = (payments || []).map((payment) => payment.order_id);
   if (!orderIds.length) {
-    return Response.json({ error: 'No local payment records found.' }, { status: 404 });
+    return json({ error: 'No local payment records found.' }, 404);
   }
 
   const { data: orders, error: orderReadError } = await supabase
@@ -121,7 +131,7 @@ serve(async (req) => {
     .in('id', orderIds);
 
   if (orderReadError) {
-    return Response.json({ error: orderReadError.message }, { status: 500 });
+    return json({ error: orderReadError.message }, 500);
   }
 
   const restaurantIds = [...new Set((orders || []).map((order) => order.restaurant_id).filter(Boolean))];
@@ -154,7 +164,7 @@ serve(async (req) => {
     .eq('razorpay_order_id', razorpayOrderId);
 
   if (paymentUpdateError) {
-    return Response.json({ error: paymentUpdateError.message }, { status: 500 });
+    return json({ error: paymentUpdateError.message }, 500);
   }
 
   let allSplitSharesPaid = true;
@@ -166,7 +176,7 @@ serve(async (req) => {
         .eq('session_bill_id', billId);
 
       if (billPaymentReadError) {
-        return Response.json({ error: billPaymentReadError.message }, { status: 500 });
+        return json({ error: billPaymentReadError.message }, 500);
       }
 
       const billSplitTotal = Math.max(1, ...(billPayments || []).map((payment) => Number(payment.split_total || 1)));
@@ -191,7 +201,7 @@ serve(async (req) => {
         .eq('id', billId);
 
       if (billUpdateError) {
-        return Response.json({ error: billUpdateError.message }, { status: 500 });
+        return json({ error: billUpdateError.message }, 500);
       }
     }
   }
@@ -207,7 +217,7 @@ serve(async (req) => {
       .in('id', orderIds);
 
     if (orderUpdateError) {
-      return Response.json({ error: orderUpdateError.message }, { status: 500 });
+      return json({ error: orderUpdateError.message }, 500);
     }
 
     await Promise.all(orderIds.map((orderId) =>
@@ -230,7 +240,7 @@ serve(async (req) => {
       .in('id', tableSessionIds);
 
     if (sessionUpdateError) {
-      return Response.json({ error: sessionUpdateError.message }, { status: 500 });
+      return json({ error: sessionUpdateError.message }, 500);
     }
   }
 
@@ -254,5 +264,5 @@ serve(async (req) => {
     }
   }));
 
-  return Response.json({ received: true });
+  return json({ received: true });
 });

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { fetchTableOrders, createPayment, createStripePaymentIntent } from '../lib/api';
+import { fetchTableOrders, createPayment, createStripePaymentIntent, createStaffRequest } from '../lib/api';
 import BottomNav from '../components/BottomNav';
 import { useTheme } from '../context/ThemeContext';
+import { useToast } from '../components/Toast';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
 import { getWalletPaymentLabel, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
@@ -11,8 +12,9 @@ import { supabase } from '../lib/supabase';
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, paymentEnabled, paymentProvider } = useCart();
+  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, tableSessionId, restaurantId, paymentEnabled, paymentProvider } = useCart();
   const { isDark, toggleTheme } = useTheme();
+  const { addToast } = useToast();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,8 +23,9 @@ export default function TableSession() {
   // LF-06: "Pay at Counter" informational dialog state
   const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
   const [sessionTab, setSessionTab] = useState('active'); // 'active', 'history'
-  const [splitOpen, setSplitOpen] = useState(false);
-  const [splitCount, setSplitCount] = useState(2);
+  const [splitCount, setSplitCount] = useState(1);
+  const [billRequested, setBillRequested] = useState(false);
+  const [billRequesting, setBillRequesting] = useState(false);
   const walletPayment = paymentProvider === 'stripe'
     ? { headline: 'Pay by Card or Wallet', detail: 'Apple Pay, Google Pay and cards through Stripe' }
     : getWalletPaymentLabel();
@@ -76,12 +79,22 @@ export default function TableSession() {
     };
   }, [tableId]);
 
+  useEffect(() => {
+    if (!tableSessionId) return;
+    setBillRequested(localStorage.getItem(`mv_bill_requested_${tableSessionId}`) === 'true');
+  }, [tableSessionId]);
+
   const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
   const historyOrders = orders.filter(o => ['completed', 'cancelled'].includes(o.status));
 
   const billableOrders = orders.filter(order => order.status !== 'cancelled');
   const totalBill = billableOrders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
+  const shareAmount = splitCount > 1 ? totalBill / splitCount : totalBill;
+
+  const updateSplitCount = (nextCount) => {
+    setSplitCount(Math.max(1, Math.min(10, nextCount)));
+  };
 
   const handleReorder = (order) => {
     order.items.forEach(item => {
@@ -93,92 +106,59 @@ export default function TableSession() {
     navigate(restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout');
   };
 
+  const handleRequestBill = async () => {
+    if (billRequested || billRequesting) return;
+    if (!restaurantId || !tableId || !tableSessionToken || !tableSessionId) {
+      addToast('Please scan your table QR before requesting the bill.', 'error');
+      return;
+    }
+
+    setBillRequesting(true);
+    setError(null);
+    try {
+      await createStaffRequest({
+        restaurantId,
+        tableId,
+        tableSessionToken,
+        requestType: 'bill',
+        message: 'Customer has requested the bill.',
+      });
+
+      const { error: sessionError } = await supabase
+        .from('TableSession')
+        .update({ status: 'billing' })
+        .eq('id', tableSessionId);
+
+      if (sessionError) throw new Error(sessionError.message);
+
+      localStorage.setItem(`mv_bill_requested_${tableSessionId}`, 'true');
+      setBillRequested(true);
+      addToast('Bill requested. Your server is on the way.', 'success');
+    } catch (e) {
+      console.error(e);
+      addToast(e.message || 'Failed to request bill. Try again.', 'error');
+    } finally {
+      setBillRequesting(false);
+    }
+  };
+
   const requestPaymentLink = async () => {
     if (!paymentEnabled) {
-      setPayAtCounterOpen(true);
+      await handleRequestBill();
       return;
     }
 
     const providerName = paymentProvider === 'stripe' ? 'Stripe' : 'Razorpay';
-    setPaymentState({ isOpen: true, status: 'processing', message: `Creating a secure ${providerName} checkout...` });
+    const checkoutMessage = splitCount > 1
+      ? `Creating a secure ${providerName} checkout for your share...`
+      : `Creating a secure ${providerName} checkout...`;
+    setPaymentState({ isOpen: true, status: 'processing', message: checkoutMessage });
     try {
       if (paymentProvider === 'stripe') {
         const paymentIntent = await createStripePaymentIntent({
           table_session_token: tableSessionToken,
-          amount: totalBill,
-        });
-
-        setPaymentState({ isOpen: false, status: 'idle', message: '' });
-        await openStripeCheckout({
-          clientSecret: paymentIntent.client_secret,
-          publishableKey: paymentIntent.publishable_key,
-          onSuccess: () => {
-            setPaymentState({
-              isOpen: true,
-              status: 'submitted',
-              message: 'Payment submitted. Stripe webhook verification will update your bill automatically.',
-            });
-          },
-          onDismiss: () => {
-            setPaymentState({
-              isOpen: true,
-              status: 'dismissed',
-              message: 'Payment was not completed. You can try again or pay at the counter.',
-            });
-          },
-        });
-        return;
-      }
-
-      const paymentOrder = await createPayment({
-        table_session_token: tableSessionToken,
-        amount: totalBill,
-      });
-
-      setPaymentState({ isOpen: false, status: 'idle', message: '' });
-      await openRazorpayCheckout({
-        paymentOrder,
-        restaurantName: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
-        tableNumber,
-        onSuccess: () => {
-          setPaymentState({
-            isOpen: true,
-            status: 'submitted',
-            message: 'Payment submitted. Razorpay webhook verification will update your bill automatically.',
-          });
-        },
-        onDismiss: () => {
-          setPaymentState({
-            isOpen: true,
-            status: 'dismissed',
-            message: 'Payment was not completed. You can try again or pay at the counter.',
-          });
-        },
-      });
-    } catch (e) {
-      console.error(e);
-      setPaymentState({
-        isOpen: true,
-        status: 'fallback',
-        message: 'Digital checkout is not available yet. Please pay at the counter or ask staff for help.',
-      });
-    }
-  };
-
-  const handleSplitPayment = async (count) => {
-    if (!paymentEnabled) {
-      setPayAtCounterOpen(true);
-      return;
-    }
-
-    const perPerson = totalBill / count;
-    setPaymentState({ isOpen: true, status: 'processing', message: 'Creating split payment...' });
-    try {
-      if (paymentProvider === 'stripe') {
-        const paymentIntent = await createStripePaymentIntent({
-          table_session_token: tableSessionToken,
-          amount: perPerson,
-          split_count: count,
+          amount: shareAmount,
+          split_count: splitCount,
           split_index: 0,
         });
 
@@ -190,14 +170,18 @@ export default function TableSession() {
             setPaymentState({
               isOpen: true,
               status: 'submitted',
-              message: 'Your split payment was submitted. We will update the bill as each share is confirmed.',
+              message: splitCount > 1
+                ? 'Your split payment was submitted. We will update the bill as each share is confirmed.'
+                : 'Payment submitted. Stripe webhook verification will update your bill automatically.',
             });
           },
           onDismiss: () => {
             setPaymentState({
               isOpen: true,
               status: 'dismissed',
-              message: 'Split payment was not completed. You can try again or pay at the counter.',
+              message: splitCount > 1
+                ? 'Split payment was not completed. You can try again or pay at the counter.'
+                : 'Payment was not completed. You can try again or pay at the counter.',
             });
           },
         });
@@ -206,8 +190,8 @@ export default function TableSession() {
 
       const paymentOrder = await createPayment({
         table_session_token: tableSessionToken,
-        amount: perPerson,
-        split_count: count,
+        amount: shareAmount,
+        split_count: splitCount,
         split_index: 0,
       });
 
@@ -220,14 +204,18 @@ export default function TableSession() {
           setPaymentState({
             isOpen: true,
             status: 'submitted',
-            message: 'Your split payment was submitted. We will update the bill as each share is confirmed.',
+            message: splitCount > 1
+              ? 'Your split payment was submitted. We will update the bill as each share is confirmed.'
+              : 'Payment submitted. Razorpay webhook verification will update your bill automatically.',
           });
         },
         onDismiss: () => {
           setPaymentState({
             isOpen: true,
             status: 'dismissed',
-            message: 'Split payment was not completed. You can try again or pay at the counter.',
+            message: splitCount > 1
+              ? 'Split payment was not completed. You can try again or pay at the counter.'
+              : 'Payment was not completed. You can try again or pay at the counter.',
           });
         },
       });
@@ -236,7 +224,7 @@ export default function TableSession() {
       setPaymentState({
         isOpen: true,
         status: 'fallback',
-        message: `Split payment error: ${e.message}`,
+        message: 'Digital checkout is not available yet. Please pay at the counter or ask staff for help.',
       });
     }
   };
@@ -305,6 +293,40 @@ export default function TableSession() {
               <p className="text-[10px] uppercase font-bold tracking-[0.25em] text-on-surface-variant mb-2">Total Amount to Pay</p>
               <h2 className="font-headline text-4xl font-bold text-primary tracking-tight mb-6">₹{totalBill.toFixed(2)}</h2>
               
+              <div className="mb-4 p-4 bg-surface-container rounded-2xl border border-outline-variant/20 text-left">
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Split this bill.</p>
+                  <div className="flex items-center gap-3 rounded-full bg-surface-container-low border border-outline-variant/20 p-1">
+                    <button
+                      type="button"
+                      onClick={() => updateSplitCount(splitCount - 1)}
+                      className="min-w-[40px] min-h-[40px] rounded-full bg-surface-container-highest flex items-center justify-center text-lg font-bold text-on-surface disabled:opacity-40"
+                      disabled={splitCount <= 1}
+                      aria-label="Decrease split count"
+                    >
+                      -
+                    </button>
+                    <span className="min-w-[72px] text-center text-sm font-bold text-on-surface">
+                      {splitCount} {splitCount === 1 ? 'person' : 'people'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateSplitCount(splitCount + 1)}
+                      className="min-w-[40px] min-h-[40px] rounded-full bg-surface-container-highest flex items-center justify-center text-lg font-bold text-on-surface disabled:opacity-40"
+                      disabled={splitCount >= 10}
+                      aria-label="Increase split count"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                {splitCount > 1 && (
+                  <p className="mt-3 text-sm text-on-surface-variant">
+                    Your share: &#8377;{shareAmount.toFixed(2)} of &#8377;{totalBill.toFixed(2)} total
+                  </p>
+                )}
+              </div>
+
               <div className="flex flex-col gap-3">
                 {paymentEnabled ? (
                   <>
@@ -312,24 +334,28 @@ export default function TableSession() {
                       onClick={requestPaymentLink}
                       className="w-full bg-primary text-on-primary px-3 py-4 rounded-xl font-bold uppercase tracking-widest text-sm leading-tight shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
                     >
-                      {walletPayment.headline}
+                      {splitCount > 1 ? (
+                        <>Pay My Share (&#8377;{shareAmount.toFixed(2)})</>
+                      ) : (
+                        walletPayment.headline
+                      )}
                       <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
-                    </button>
-                    <button
-                      onClick={() => setSplitOpen(open => !open)}
-                      className="w-full bg-surface-container-high border border-outline-variant/20 text-on-surface py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform hover:bg-surface-container-highest active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-lg">call_split</span>
-                      Split Bill
                     </button>
                   </>
                 ) : (
                   <button
-                    onClick={() => setPayAtCounterOpen(true)}
-                    className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                    onClick={handleRequestBill}
+                    disabled={billRequested || billRequesting}
+                    className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-60 flex justify-center items-center gap-2 cursor-pointer"
                   >
-                    Ask Staff for Payment Link
-                    <span className="material-symbols-outlined text-lg ml-1">support_agent</span>
+                    <span className="material-symbols-outlined text-lg">receipt_long</span>
+                    {billRequested ? (
+                      <>Bill requested &#8212; your server is on the way &#10003;</>
+                    ) : billRequesting ? (
+                      'Requesting Bill...'
+                    ) : (
+                      'Request Bill'
+                    )}
                   </button>
                 )}
                 {/* LF-06: Pay at Counter — opens informational dialog instead of doing nothing */}
@@ -348,37 +374,6 @@ export default function TableSession() {
                 )}
               </div>
 
-              {paymentEnabled && totalBill > 0 && splitOpen && (
-                <div className="mt-4 p-4 bg-surface-container rounded-2xl border border-outline-variant/20 text-left">
-                  <p className="text-sm font-medium text-on-surface mb-3">Split between how many guests?</p>
-                  <div className="flex items-center gap-4 mb-4">
-                    <button
-                      onClick={() => setSplitCount(count => Math.max(2, count - 1))}
-                      className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-lg font-bold text-on-surface"
-                      aria-label="Decrease split count"
-                    >
-                      -
-                    </button>
-                    <span className="text-2xl font-bold text-on-surface w-8 text-center">{splitCount}</span>
-                    <button
-                      onClick={() => setSplitCount(count => Math.min(10, count + 1))}
-                      className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-lg font-bold text-on-surface"
-                      aria-label="Increase split count"
-                    >
-                      +
-                    </button>
-                  </div>
-                  <p className="text-sm text-secondary mb-4">
-                    Each person pays: <strong className="text-on-surface">₹{(totalBill / splitCount).toFixed(2)}</strong>
-                  </p>
-                  <button
-                    onClick={() => handleSplitPayment(splitCount)}
-                    className="w-full py-3 rounded-2xl bg-primary text-on-primary font-semibold text-sm"
-                  >
-                    Pay My Share (₹{(totalBill / splitCount).toFixed(2)})
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* Tabs */}

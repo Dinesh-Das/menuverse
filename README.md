@@ -75,6 +75,7 @@ npm audit --omit=dev
 - Verify owners, managers, and staff have `User.restaurant_id` set correctly.
 - Use session-specific table links/tokens for occupied tables; static table QR scans no longer expose an active bill unless `open_session_join_enabled` is intentionally enabled.
 - Keep service role keys only in Supabase Edge Function secrets.
+- Set `APP_ORIGIN` in Supabase Edge Function secrets before production deploys so Edge Function CORS only allows your app domain.
 - Configure Razorpay credentials only in Edge Function secrets.
 - Confirm storage policies restrict writes by restaurant folder.
 - Configure `ANTHROPIC_API_KEY` for LLM sentiment analysis; otherwise the app uses the built-in rating/keyword baseline.

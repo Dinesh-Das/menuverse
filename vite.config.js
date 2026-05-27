@@ -20,6 +20,23 @@ export default defineConfig({
         icons: [
           { src: '/images/logo.png', sizes: '192x192', type: 'image/png' },
           { src: '/images/logo.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icon-maskable-1024.png', sizes: '1024x1024', type: 'image/png', purpose: 'maskable' },
+          { src: 'icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+        ],
+        // TODO: replace with real app screenshots
+        screenshots: [
+          {
+            src: 'screenshot-menu.png',
+            sizes: '390x844',
+            type: 'image/png',
+            label: 'Browse the interactive menu',
+          },
+          {
+            src: 'screenshot-order.png',
+            sizes: '390x844',
+            type: 'image/png',
+            label: 'Track your order in real time',
+          },
         ],
       },
       workbox: {
