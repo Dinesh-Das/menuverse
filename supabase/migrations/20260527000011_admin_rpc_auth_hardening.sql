@@ -1,3 +1,6 @@
+alter table if exists "Restaurant"
+  add column if not exists group_owner_id text;
+
 create or replace function admin_sentiment_trend(p_restaurant_id text, p_days int default 30)
 returns table(day date, avg_score numeric, review_count bigint)
 language sql
