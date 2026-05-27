@@ -301,13 +301,13 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-10">
-          <div className={`p-8 ${cardBg}`}>
+          <div className={`p-8 min-w-0 overflow-hidden ${cardBg}`}>
             <div className="flex items-center justify-between mb-6">
               <h2 className="font-headline text-2xl font-bold text-on-surface">Sentiment Trend</h2>
               <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Last 30 Days</span>
             </div>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="h-72 min-h-[18rem] w-full min-w-0">
+              <ResponsiveContainer width="100%" height={288} minWidth={0} minHeight={240}>
                 <LineChart data={sentimentTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                   <XAxis dataKey="day" tick={{ fill: 'currentColor', fontSize: 11 }} />
@@ -324,13 +324,13 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className={`p-8 ${cardBg}`}>
+          <div className={`p-8 min-w-0 overflow-hidden ${cardBg}`}>
             <div className="flex items-center justify-between mb-6">
               <h2 className="font-headline text-2xl font-bold text-on-surface">Topic Breakdown</h2>
               <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Feedback Topics</span>
             </div>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="h-72 min-h-[18rem] w-full min-w-0">
+              <ResponsiveContainer width="100%" height={288} minWidth={0} minHeight={240}>
                 <BarChart data={topicData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                   <XAxis dataKey="topic" tick={{ fill: 'currentColor', fontSize: 11 }} />

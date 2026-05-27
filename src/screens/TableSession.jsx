@@ -33,6 +33,7 @@ export default function TableSession() {
       return;
     }
     let cancelled = false;
+    let refreshTimer = null;
 
     const loadOrders = async () => {
       try {
@@ -48,7 +49,15 @@ export default function TableSession() {
       }
     };
 
+    const scheduleRefreshFallback = () => {
+      refreshTimer = window.setTimeout(async () => {
+        await loadOrders();
+        if (!cancelled) scheduleRefreshFallback();
+      }, 5000);
+    };
+
     loadOrders();
+    scheduleRefreshFallback();
 
     const channelName = `table_orders:${tableId}:${crypto.randomUUID()}`;
     const channel = supabase
@@ -62,6 +71,7 @@ export default function TableSession() {
 
     return () => {
       cancelled = true;
+      if (refreshTimer) window.clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, [tableId]);

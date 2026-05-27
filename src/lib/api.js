@@ -412,6 +412,32 @@ export async function adminResolveFeedback(feedbackId, restaurantId) {
   return data;
 }
 
+export async function adminFetchPendingStaffRequests(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('StaffRequest')
+    .select('*, table:Table(number, section)')
+    .eq('restaurant_id', restaurantId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminResolveStaffRequest(requestId, restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('StaffRequest')
+    .update({ status: 'resolved', updated_at: now() })
+    .eq('id', requestId)
+    .eq('restaurant_id', restaurantId)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function adminFetchIntegrationJobs(restaurantId, limit = 50) {
   requireRestaurantId(restaurantId);
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -596,6 +622,20 @@ export async function adminFetchOrders(status, restaurantId, limit = 100, offset
 
 export async function adminUpdateOrderStatus(orderId, status, cancelReason, restaurantId) {
   requireRestaurantId(restaurantId);
+  const rpcResult = await supabase.rpc('update_order_status_secure', {
+    p_restaurant_id: restaurantId,
+    p_order_id: orderId,
+    p_status: status,
+    p_cancel_reason: cancelReason || null,
+  });
+
+  if (!rpcResult.error) {
+    return normalizeRpcJson(rpcResult.data);
+  }
+
+  const missingRpc = /function .*update_order_status_secure|could not find.*update_order_status_secure/i.test(rpcResult.error.message);
+  if (!missingRpc) throw new Error(rpcResult.error.message);
+
   const { data: current, error: readError } = await supabase
     .from('Order')
     .select('id, status')

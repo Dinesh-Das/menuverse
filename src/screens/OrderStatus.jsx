@@ -49,7 +49,7 @@ export default function OrderStatus() {
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackGiven, setFeedbackGiven] = useState(false);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
-  const pollIntervalRef = useRef(null);
+  const refreshTimerRef = useRef(null);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -67,41 +67,45 @@ export default function OrderStatus() {
     loadOrder();
   }, [loadOrder]);
 
-  // Supabase Realtime updates via socket.js
+  // Supabase Realtime updates via socket.js, with token-based refresh as a fallback.
   useEffect(() => {
     if (!orderId) return;
     const socket = getSocket();
+    let cancelled = false;
     joinOrderRoom(orderId);
+
+    const scheduleRefresh = () => {
+      refreshTimerRef.current = window.setTimeout(async () => {
+        await loadOrder();
+        if (!cancelled) scheduleRefresh();
+      }, 5000);
+    };
 
     const handleStatusUpdate = ({ orderId: id, status }) => {
       if (id === orderId) {
         setOrder(prev => prev ? { ...prev, status } : prev);
         setSocketConnected(true);
+        loadOrder();
       }
     };
     const handleConnect = () => setSocketConnected(true);
-    const handleDisconnect = () => {
-      setSocketConnected(false);
-      // Start polling fallback every 30s
-      if (!pollIntervalRef.current) {
-        pollIntervalRef.current = setInterval(loadOrder, 30000);
-      }
-    };
+    const handleDisconnect = () => setSocketConnected(false);
 
     socket.on('order:status_update', handleStatusUpdate);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
 
-    // Supabase Realtime is always connected (no handshake delay like socket.io)
     setSocketConnected(socket.connected);
+    scheduleRefresh();
 
     return () => {
+      cancelled = true;
       socket.off('order:status_update', handleStatusUpdate);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
       }
     };
   }, [orderId, loadOrder]);
