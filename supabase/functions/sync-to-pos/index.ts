@@ -39,11 +39,27 @@ serve(async (req) => {
   if (!supabaseUrl || !serviceRoleKey) return json({ error: 'POS sync service is not configured.' }, 503);
 
   const body = await req.json().catch(() => ({}));
-  const restaurantId = String(body.restaurant_id || '').trim();
-  const orderId = String(body.order_id || '').trim() || null;
-  if (!restaurantId) return json({ error: 'restaurant_id is required.' }, 400);
+  const jobId = String(body.job_id || '').trim();
+  let restaurantId = String(body.restaurant_id || '').trim();
+  let orderId = String(body.order_id || '').trim() || null;
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+  let existingJob: Record<string, unknown> | null = null;
+  if (jobId) {
+    const { data: jobRecord, error: jobReadError } = await supabase
+      .from('IntegrationJob')
+      .select('*')
+      .eq('id', jobId)
+      .maybeSingle();
+    if (jobReadError) return json({ error: jobReadError.message }, 500);
+    if (!jobRecord) return json({ error: 'Integration job not found.' }, 404);
+    existingJob = jobRecord;
+    restaurantId = restaurantId || String(jobRecord.restaurant_id || '');
+    orderId = orderId || (jobRecord.order_id ? String(jobRecord.order_id) : null);
+  }
+
+  if (!restaurantId) return json({ error: 'restaurant_id is required.' }, 400);
+
   if (!(await isAuthorized(supabase, req, restaurantId))) {
     return json({ error: 'Not authorized to sync POS orders.' }, 403);
   }
@@ -55,7 +71,7 @@ serve(async (req) => {
     .maybeSingle();
   if (restaurantError) return json({ error: restaurantError.message }, 500);
 
-  const provider = String(body.provider || restaurant?.pos_provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
+  const provider = String(body.provider || existingJob?.provider || restaurant?.pos_provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
   const webhookUrl = Deno.env.get('POS_WEBHOOK_URL');
   const accessToken = Deno.env.get('POS_ACCESS_TOKEN');
   const adapterMap: Record<string, string> = {
@@ -67,25 +83,49 @@ serve(async (req) => {
     requested_at: new Date().toISOString(),
   };
 
-  const { data: job, error: insertError } = await supabase
-    .from('IntegrationJob')
-    .insert({
-      restaurant_id: restaurantId,
-      order_id: orderId,
-      job_type: 'pos',
-      provider,
-      status: webhookUrl || adapterMap[provider] ? 'pending' : 'pending_configuration',
-      payload,
-    })
-    .select('id')
-    .single();
+  let job = existingJob;
+  if (job) {
+    const { data: updatedJob, error: updateJobError } = await supabase
+      .from('IntegrationJob')
+      .update({
+        provider,
+        status: webhookUrl || adapterMap[provider] ? 'pending' : 'pending_configuration',
+        payload,
+        retry_count: Number(job.retry_count || 0) + 1,
+        error: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id)
+      .select('id')
+      .single();
+    if (updateJobError) return json({ error: updateJobError.message }, 500);
+    job = updatedJob;
+  } else {
+    const { data: insertedJob, error: insertError } = await supabase
+      .from('IntegrationJob')
+      .insert({
+        restaurant_id: restaurantId,
+        order_id: orderId,
+        job_type: 'pos',
+        provider,
+        status: webhookUrl || adapterMap[provider] ? 'pending' : 'pending_configuration',
+        payload,
+      })
+      .select('id')
+      .single();
 
-  if (insertError) return json({ error: insertError.message }, 500);
+    if (insertError) return json({ error: insertError.message }, 500);
+    job = insertedJob;
+  }
 
   if (adapterMap[provider]) {
+    const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
     const { data: adapterData, error: adapterError } = await supabase.functions.invoke(adapterMap[provider], {
       body: { job_id: job.id, order_id: orderId, restaurant_id: restaurantId },
-      headers: { Authorization: `Bearer ${serviceRoleKey}` },
+      headers: {
+        Authorization: `Bearer ${serviceRoleKey}`,
+        ...(internalSecret ? { 'X-Menuverse-Internal-Secret': internalSecret } : {}),
+      },
     });
 
     if (adapterError || adapterData?.status === 'failed') {

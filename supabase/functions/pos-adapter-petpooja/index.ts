@@ -21,6 +21,33 @@ function parseModifiers(value: unknown) {
   }
 }
 
+async function isAuthorized(
+  supabase: ReturnType<typeof createClient>,
+  req: Request,
+  restaurantId: string,
+  serviceRoleKey: string,
+) {
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (bearer && bearer === serviceRoleKey) return true;
+
+  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
+  const providedSecret = req.headers.get('X-Menuverse-Internal-Secret');
+  if (internalSecret && providedSecret === internalSecret) return true;
+
+  if (!bearer) return false;
+  const { data: userData, error: userError } = await supabase.auth.getUser(bearer);
+  if (userError || !userData.user) return false;
+
+  const { data, error } = await supabase
+    .from('User')
+    .select('id')
+    .eq('id', userData.user.id)
+    .eq('restaurant_id', restaurantId)
+    .in('role', ['owner', 'manager'])
+    .maybeSingle();
+  return !error && Boolean(data);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -41,6 +68,10 @@ serve(async (req) => {
   if (!orderId || !restaurantId) return json({ error: 'order_id and restaurant_id are required.' }, 400);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+  if (!(await isAuthorized(supabase, req, restaurantId, serviceRoleKey))) {
+    return json({ error: 'Not authorized to run the Petpooja adapter.' }, 403);
+  }
+
   const { data: restaurant, error: restaurantError } = await supabase
     .from('Restaurant')
     .select('id, name, pos_config')

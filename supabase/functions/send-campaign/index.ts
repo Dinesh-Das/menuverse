@@ -14,6 +14,22 @@ function renderTemplate(template: string, values: Record<string, string>) {
   return template.replace(/\{\{(name|restaurant_name)\}\}/g, (_, key) => values[key] || '');
 }
 
+async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Request, restaurantId: string) {
+  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!jwt) return false;
+  const { data: userData, error: userError } = await supabase.auth.getUser(jwt);
+  if (userError || !userData.user) return false;
+
+  const { data, error } = await supabase
+    .from('User')
+    .select('id')
+    .eq('id', userData.user.id)
+    .eq('restaurant_id', restaurantId)
+    .in('role', ['owner', 'manager'])
+    .maybeSingle();
+  return !error && Boolean(data);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -34,6 +50,9 @@ serve(async (req) => {
     .maybeSingle();
   if (campaignError) return json({ error: campaignError.message }, 500);
   if (!campaign) return json({ error: 'Campaign not found.' }, 404);
+  if (!(await isAuthorized(supabase, req, campaign.restaurant_id))) {
+    return json({ error: 'Not authorized to send this campaign.' }, 403);
+  }
 
   const filter = campaign.audience_filter || {};
   let audienceQuery = supabase

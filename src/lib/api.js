@@ -441,6 +441,15 @@ export async function adminFetchIntegrationJobs(restaurantId, limit = 50) {
 
 export async function adminRetryIntegrationJob(jobId, restaurantId) {
   requireRestaurantId(restaurantId);
+  const { data: job, error: readError } = await supabase
+    .from('IntegrationJob')
+    .select('*')
+    .eq('id', jobId)
+    .eq('restaurant_id', restaurantId)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+  if (!job) throw new Error('Integration job not found.');
+
   const { data, error } = await supabase
     .from('IntegrationJob')
     .update({ status: 'pending', error: null, updated_at: now() })
@@ -449,6 +458,19 @@ export async function adminRetryIntegrationJob(jobId, restaurantId) {
     .select()
     .single();
   if (error) throw new Error(error.message);
+
+  if (job.job_type === 'pos') {
+    const { error: retryError } = await supabase.functions.invoke('sync-to-pos', {
+      body: {
+        job_id: job.id,
+        restaurant_id: restaurantId,
+        order_id: job.order_id,
+        provider: job.provider,
+      },
+    });
+    if (retryError) throw new Error(retryError.message);
+  }
+
   return data;
 }
 
