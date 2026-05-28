@@ -24,6 +24,11 @@ function makeCartKey(dishId, modifiers = [], itemNote = '') {
   return `${dishId}::${modKey}::${noteKey}`;
 }
 
+function sendRealtimeMessage(channel, payload) {
+  if (typeof channel.httpSend === 'function') return channel.httpSend(payload);
+  return channel.send(payload);
+}
+
 export function CartProvider({ children }) {
   const [items, setItems] = useState(loadFromStorage);
   const [remoteCarts, setRemoteCarts] = useState({});
@@ -64,7 +69,7 @@ export function CartProvider({ children }) {
       })
       .on('broadcast', { event: 'request_sync' }, () => {
         // Someone joined, send them our current cart
-        channel.send({
+        sendRealtimeMessage(channel, {
           type: 'broadcast',
           event: 'cart_sync',
           payload: { deviceId: deviceIdRef.current, items: itemsRef.current }
@@ -73,9 +78,9 @@ export function CartProvider({ children }) {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           // Ask for others' carts
-          channel.send({ type: 'broadcast', event: 'request_sync' });
+          sendRealtimeMessage(channel, { type: 'broadcast', event: 'request_sync' });
           // Send our cart initially
-          channel.send({
+          sendRealtimeMessage(channel, {
             type: 'broadcast',
             event: 'cart_sync',
             payload: { deviceId: deviceIdRef.current, items: itemsRef.current }
@@ -93,7 +98,7 @@ export function CartProvider({ children }) {
   // Separate effect to broadcast on item changes
   useEffect(() => {
     if (!channelRef.current || !tableId) return;
-    channelRef.current.send({
+    sendRealtimeMessage(channelRef.current, {
       type: 'broadcast',
       event: 'cart_sync',
       payload: { deviceId: deviceIdRef.current, items }
@@ -192,7 +197,7 @@ export function CartProvider({ children }) {
     setItems([]);
     localStorage.removeItem(STORAGE_KEY);
     if (channelRef.current) {
-      channelRef.current.send({
+      sendRealtimeMessage(channelRef.current, {
         type: 'broadcast',
         event: 'cart_sync',
         payload: { deviceId: deviceIdRef.current, items: [] }

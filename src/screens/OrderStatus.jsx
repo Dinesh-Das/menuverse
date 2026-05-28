@@ -6,7 +6,7 @@ import { useToast } from '../components/Toast';
 import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
-import { supabase } from '../lib/supabase';
+import { sendWhatsAppNotification } from '../lib/integrations';
 
 const STATUS_STEPS = ['pending', 'accepted', 'preparing', 'ready', 'served'];
 const STATUS_LABELS = {
@@ -111,18 +111,16 @@ export default function OrderStatus() {
       const restaurantId = servedOrder?.restaurant_id || orderRef.current?.restaurant_id;
       if (!phone || !restaurantId) return;
 
-      const { error } = await supabase.functions.invoke('send-whatsapp-notification', {
-        body: {
-          restaurant_id: restaurantId,
-          phone,
-          template: 'feedback_nudge',
-          variables: {
-            restaurant_name: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
-            order_url: window.location.href,
-          },
+      const result = await sendWhatsAppNotification({
+        restaurant_id: restaurantId,
+        phone,
+        template: 'feedback_nudge',
+        variables: {
+          restaurant_name: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+          order_url: window.location.href,
         },
       });
-      if (error) console.warn('[Menuverse] Feedback WhatsApp nudge skipped:', error.message);
+      if (result?.status === 'disabled') return;
     }).catch(err => console.warn('[Menuverse] Feedback WhatsApp nudge skipped:', err.message));
   }, [feedbackGiven, guestPhone]);
 

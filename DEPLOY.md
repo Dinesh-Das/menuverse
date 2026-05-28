@@ -22,7 +22,16 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-public-anon-key
 VITE_APP_TYPE=all
 VITE_CUSTOMER_APP_URL=https://your-domain.com
+VITE_ENABLE_SERVER_RECOMMENDATIONS=false
+VITE_ENABLE_CLIENT_FEEDBACK_ANALYSIS=false
+VITE_ENABLE_KOT_EDGE_PRINT=false
+VITE_ENABLE_WHATSAPP_EDGE_NOTIFICATIONS=false
+VITE_ENABLE_POS_EDGE_SYNC=false
+VITE_ENABLE_AR_EDGE_PROCESSING=false
+VITE_ENABLE_DELIVERY_QUOTE_EDGE=false
 ```
+
+Keep the optional Edge Function flags `false` until the matching functions are deployed to the active Supabase project. This prevents browser CORS noise for non-critical features such as recommendations, KOT print queueing, local feedback-analysis fallback, and delivery quoting.
 
 Edge Function secrets:
 

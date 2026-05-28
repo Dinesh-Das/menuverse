@@ -20,6 +20,16 @@ const USDZ_MIME_TYPES = new Set([
 const THUMBNAIL_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const AR_VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', '']);
 
+function viteFlag(name) {
+  return String(import.meta.env?.[name] || '').toLowerCase() === 'true';
+}
+
+const ENABLE_SERVER_RECOMMENDATIONS = viteFlag('VITE_ENABLE_SERVER_RECOMMENDATIONS');
+const ENABLE_CLIENT_FEEDBACK_ANALYSIS = viteFlag('VITE_ENABLE_CLIENT_FEEDBACK_ANALYSIS');
+const ENABLE_AR_EDGE_PROCESSING = viteFlag('VITE_ENABLE_AR_EDGE_PROCESSING');
+const ENABLE_DELIVERY_QUOTE_EDGE = viteFlag('VITE_ENABLE_DELIVERY_QUOTE_EDGE');
+const ENABLE_POS_EDGE_SYNC = viteFlag('VITE_ENABLE_POS_EDGE_SYNC');
+
 function requireRestaurantId(restaurantId) {
   if (!restaurantId) throw new Error('Restaurant context is required for this operation.');
   return restaurantId;
@@ -324,8 +334,8 @@ export async function submitOrderFeedback({
 
   if (error) throw new Error(error.message);
 
-  if (data) {
-    // The RPC enqueues analysis with pg_net; this keeps local projects working before that URL is configured.
+  if (data && ENABLE_CLIENT_FEEDBACK_ANALYSIS) {
+    // The RPC enqueues production analysis with pg_net; this flag is only a local fallback.
     supabase.functions.invoke('analyse-feedback', {
       body: { feedback_id: data },
     }).catch(() => {});
@@ -386,6 +396,8 @@ export async function getGuestProfileForSession(tableSessionToken) {
 
 export async function fetchRecommendations({ restaurantId, cartItemIds = [], guestProfileId = null, limit = 5 }) {
   requireRestaurantId(restaurantId);
+  if (!ENABLE_SERVER_RECOMMENDATIONS) return [];
+
   const { data, error } = await supabase.functions.invoke('get-recommendations', {
     body: {
       restaurant_id: restaurantId,
@@ -400,6 +412,10 @@ export async function fetchRecommendations({ restaurantId, cartItemIds = [], gue
 
 export async function fetchDeliveryQuote({ restaurantId, address, orderValue = 0 }) {
   requireRestaurantId(restaurantId);
+  if (!ENABLE_DELIVERY_QUOTE_EDGE) {
+    return { serviceable: true, provider: 'local', fee: null, address, order_value: orderValue };
+  }
+
   const { data, error } = await supabase.functions.invoke('delivery-quote', {
     body: {
       restaurant_id: restaurantId,
@@ -531,7 +547,7 @@ export async function adminRetryIntegrationJob(jobId, restaurantId) {
     .single();
   if (error) throw new Error(error.message);
 
-  if (job.job_type === 'pos') {
+  if (job.job_type === 'pos' && ENABLE_POS_EDGE_SYNC) {
     const { error: retryError } = await supabase.functions.invoke('sync-to-pos', {
       body: {
         job_id: job.id,
@@ -831,13 +847,15 @@ export async function adminUploadARSourceVideo(itemId, file) {
     .single();
   if (error) throw new Error(error.message);
 
-  supabase.functions.invoke('process-ar-asset', {
-    body: {
-      asset_id: asset.id,
-      source_video_url: publicUrl,
-      storage_path: path,
-    },
-  }).catch(err => console.warn('[Menuverse] AR processing enqueue skipped:', err.message));
+  if (ENABLE_AR_EDGE_PROCESSING) {
+    supabase.functions.invoke('process-ar-asset', {
+      body: {
+        asset_id: asset.id,
+        source_video_url: publicUrl,
+        storage_path: path,
+      },
+    }).catch(err => console.warn('[Menuverse] AR processing enqueue skipped:', err.message));
+  }
 
   return asset;
 }

@@ -1,5 +1,13 @@
 import { supabase } from './supabase';
 
+function viteFlag(name) {
+  return String(import.meta.env?.[name] || '').toLowerCase() === 'true';
+}
+
+const ENABLE_KOT_EDGE_PRINT = viteFlag('VITE_ENABLE_KOT_EDGE_PRINT');
+const ENABLE_WHATSAPP_EDGE_NOTIFICATIONS = viteFlag('VITE_ENABLE_WHATSAPP_EDGE_NOTIFICATIONS');
+const ENABLE_POS_EDGE_SYNC = viteFlag('VITE_ENABLE_POS_EDGE_SYNC');
+
 export const INTEGRATION_READINESS = [
   {
     key: 'payments',
@@ -46,6 +54,10 @@ export const INTEGRATION_READINESS = [
 ];
 
 export async function requestKitchenPrint(ticket) {
+  if (!ENABLE_KOT_EDGE_PRINT) {
+    return { queued: false, status: 'disabled' };
+  }
+
   const { data, error } = await supabase.functions.invoke('request-kitchen-print', {
     body: ticket,
   });
@@ -54,6 +66,10 @@ export async function requestKitchenPrint(ticket) {
 }
 
 export async function sendWhatsAppNotification(message) {
+  if (!ENABLE_WHATSAPP_EDGE_NOTIFICATIONS) {
+    return { queued: false, status: 'disabled' };
+  }
+
   const { data, error } = await supabase.functions.invoke('send-whatsapp-notification', {
     body: message,
   });
@@ -62,6 +78,10 @@ export async function sendWhatsAppNotification(message) {
 }
 
 export async function syncOrderToPos(payload) {
+  if (!ENABLE_POS_EDGE_SYNC) {
+    return { queued: false, status: 'disabled' };
+  }
+
   const { data, error } = await supabase.functions.invoke('sync-to-pos', {
     body: payload,
   });
