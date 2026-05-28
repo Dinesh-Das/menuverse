@@ -15,8 +15,53 @@ const TAG_CONFIG = {
   vegan: { label: 'Vegan', color: 'bg-green-600 text-white', icon: 'eco' },
   loved: { label: 'Loved', color: 'bg-green-600 text-white', icon: 'favorite' },
   trending: { label: 'Trending', color: 'bg-primary text-on-primary', icon: 'trending_up' },
+  needs_review: { label: 'Needs Review', color: 'bg-error text-on-error', icon: 'priority_high' },
   ar: { label: 'AR Preview', color: 'bg-blue-600 text-white', icon: 'view_in_ar' },
 };
+const MENU_IMAGE_TRANSFORM = 'width=400&quality=75&format=webp';
+
+function getMenuImageUrl(src) {
+  if (!src) return '';
+  if (src.startsWith('/images/') || src.startsWith('/public/images/')) return src;
+
+  try {
+    const url = new URL(src, window.location.origin);
+    if (!url.pathname.includes('/storage/v1/') || !url.pathname.includes('/menu-images/')) {
+      return src;
+    }
+
+    url.pathname = url.pathname.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
+    url.search = MENU_IMAGE_TRANSFORM;
+    return url.toString();
+  } catch {
+    return src;
+  }
+}
+
+function DishImage({ src, alt }) {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <>
+      {!loaded && <div className="menu-image-skeleton absolute inset-0" />}
+      {src ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          className={`h-full w-full object-cover transition-all duration-500 group-hover:scale-105 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setLoaded(true)}
+          onError={() => setLoaded(true)}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-primary/5">
+          <span className="material-symbols-outlined text-primary/40 text-4xl">restaurant</span>
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function MenuHome() {
   const { restaurantSlug } = useParams();
@@ -70,7 +115,15 @@ export default function MenuHome() {
   }, [slug, sessionSlug, setSession]);
 
   // Safe JSON parse helper for tags
-  const parseTags = (json) => { try { return JSON.parse(json) || []; } catch { return []; } };
+  const parseTags = (value) => {
+    if (Array.isArray(value)) return value;
+    try {
+      const parsed = JSON.parse(value || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
 
   const allItems = categories.flatMap(c => c.items);
   const cartItemIdsKey = items.map(item => item.id).join(',');
@@ -93,7 +146,7 @@ export default function MenuHome() {
     const catMatch = activeCategory === 'All' || categories.find(c => c.id === dish.category_id)?.name === activeCategory;
     const searchMatch = !search || (() => {
       const q = search.toLowerCase();
-      const tags = (() => { try { return JSON.parse(dish.tags_json || '[]'); } catch { return []; } })();
+      const tags = parseTags(dish.tags_json);
       return (
         dish.name.toLowerCase().includes(q) ||
         (dish.description || '').toLowerCase().includes(q) ||
@@ -146,7 +199,7 @@ export default function MenuHome() {
 
   const getPrimaryTag = (tagsJson) => {
     const tags = parseTags(tagsJson);
-    for (const key of ['popular', 'new', 'spicy', 'vegan']) {
+    for (const key of ['loved', 'trending', 'needs_review', 'popular', 'new', 'spicy', 'vegan']) {
       if (tags.includes(key)) return TAG_CONFIG[key];
     }
     return null;
@@ -154,9 +207,10 @@ export default function MenuHome() {
 
   const DishCard = ({ dish }) => {
     const isSoldOut = !dish.available;
+    const imageUrl = getMenuImageUrl(dish.image_url);
     const tag = (() => {
-      if (dish.sentiment_badge === 'loved') return TAG_CONFIG.loved;
-      if (dish.sentiment_badge === 'trending' || Number(dish.order_count_7d || 0) >= 10) return TAG_CONFIG.trending;
+      if (dish.sentiment_badge && TAG_CONFIG[dish.sentiment_badge]) return TAG_CONFIG[dish.sentiment_badge];
+      if (Number(dish.order_count_7d || 0) >= 10) return TAG_CONFIG.trending;
       if (dish.has_ar_preview || dish.ar_preview_enabled) return TAG_CONFIG.ar;
       return getPrimaryTag(dish.tags_json);
     })();
@@ -174,15 +228,8 @@ export default function MenuHome() {
         }`}
         onClick={() => !isSoldOut && navigate(getDishPath(dish.id))}
       >
-        <div className="h-48 overflow-hidden relative">
-          <img
-            src={dish.image_url}
-            alt={dish.name}
-            loading="lazy"
-            decoding="async"
-            className="h-full w-full object-cover transition-all duration-500 group-hover:scale-105 opacity-0"
-            onLoad={e => e.target.classList.remove('opacity-0')}
-          />
+        <div className="h-48 overflow-hidden relative bg-surface-container">
+          <DishImage src={imageUrl} alt={dish.name} />
           <div className="absolute inset-0 bg-gradient-to-t from-surface-dim/80 via-transparent to-transparent opacity-80" />
           
           {isSoldOut && (
@@ -298,7 +345,7 @@ export default function MenuHome() {
             if (!hero) return null;
             return (
               <div className="relative rounded-3xl overflow-hidden h-64 md:h-80 cursor-pointer group shadow-xl" onClick={() => navigate(getDishPath(hero.id))}>
-                <img src={hero.image_url} alt={hero.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                <img src={getMenuImageUrl(hero.image_url)} alt={hero.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
                 <div className="absolute bottom-6 left-6 right-6 flex justify-between items-end">
                   <div>
@@ -481,7 +528,7 @@ export default function MenuHome() {
                     <div key={item.id} className="flex-none w-32 bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 shadow-sm flex flex-col">
                       <div className="h-20 overflow-hidden">
                         <img 
-                          src={item.image_url} 
+                          src={getMenuImageUrl(item.image_url)} 
                           alt={item.name} 
                           loading="lazy" 
                           decoding="async" 

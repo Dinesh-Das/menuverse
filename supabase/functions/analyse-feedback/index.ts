@@ -1,10 +1,6 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? 'https://menuverse.app',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 
 type Analysis = {
   sentiment_label: 'positive' | 'neutral' | 'negative';
@@ -14,10 +10,6 @@ type Analysis = {
   flag_for_review: boolean;
   analysis_source: string;
 };
-
-function json(body: unknown, status = 200) {
-  return Response.json(body, { status, headers: corsHeaders });
-}
 
 function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
@@ -115,8 +107,10 @@ Return JSON with:
   };
 }
 
+// Trigger contract: database webhook or submit_order_feedback_secure posts { feedback_id: "<OrderFeedback.id>" }.
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
+  if (req.method === 'OPTIONS') return preflightResponse(req);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -164,6 +158,10 @@ serve(async (req) => {
 
   await supabase.rpc('recalculate_menu_rankings', {
     p_restaurant_id: feedback.restaurant_id,
+  }).catch(() => null);
+
+  await supabase.rpc('update_guest_preferences', {
+    p_feedback_id: feedback.id,
   }).catch(() => null);
 
   return json({ analysed: true, feedback_id: feedback.id, ...finalAnalysis });

@@ -10,6 +10,26 @@ import { safeParseModifiers } from '../lib/businessRules';
 import { getWalletPaymentLabel, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
 import { supabase } from '../lib/supabase';
 
+function humanizePaymentFailure(error, providerName) {
+  const raw = `${error?.code || ''} ${error?.reason || ''} ${error?.description || ''} ${error?.message || error || ''}`.toLowerCase();
+  if (raw.includes('card_declined') || raw.includes('card declined') || raw.includes('declined')) {
+    return 'Your card was declined. Try another card or pay at the counter.';
+  }
+  if (raw.includes('insufficient') || raw.includes('fund')) {
+    return 'The payment method does not have enough funds. Try another method or pay at the counter.';
+  }
+  if (raw.includes('upi') && (raw.includes('timeout') || raw.includes('timed out'))) {
+    return 'The UPI request timed out. You can retry after dismissing this message or pay at the counter.';
+  }
+  if (raw.includes('network') || raw.includes('fetch') || raw.includes('load') || raw.includes('offline')) {
+    return 'A network issue interrupted checkout. Check your connection or pay at the counter.';
+  }
+  if (raw.includes('dismiss') || raw.includes('cancel')) {
+    return `${providerName} checkout was closed before payment finished. You can retry or pay at the counter.`;
+  }
+  return `${providerName} payment could not be completed. You can retry or pay at the counter.`;
+}
+
 export default function TableSession() {
   const { restaurantSlug } = useParams();
   const { tableId, tableNumber, clearCart, addItem, tableSessionToken, tableSessionId, restaurantId, paymentEnabled, paymentProvider } = useCart();
@@ -20,6 +40,7 @@ export default function TableSession() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [paymentState, setPaymentState] = useState({ isOpen: false, status: 'idle', message: '' });
+  const [paymentFailure, setPaymentFailure] = useState(null);
   // LF-06: "Pay at Counter" informational dialog state
   const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
   const [sessionTab, setSessionTab] = useState('active'); // 'active', 'history'
@@ -167,6 +188,7 @@ export default function TableSession() {
           clientSecret: paymentIntent.client_secret,
           publishableKey: paymentIntent.publishable_key,
           onSuccess: () => {
+            setPaymentFailure(null);
             setPaymentState({
               isOpen: true,
               status: 'submitted',
@@ -176,13 +198,8 @@ export default function TableSession() {
             });
           },
           onDismiss: () => {
-            setPaymentState({
-              isOpen: true,
-              status: 'dismissed',
-              message: splitCount > 1
-                ? 'Split payment was not completed. You can try again or pay at the counter.'
-                : 'Payment was not completed. You can try again or pay at the counter.',
-            });
+            setPaymentFailure(humanizePaymentFailure({ code: 'payment_cancelled' }, providerName));
+            setPaymentState({ isOpen: false, status: 'idle', message: '' });
           },
         });
         return;
@@ -201,6 +218,7 @@ export default function TableSession() {
         restaurantName: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
         tableNumber,
         onSuccess: () => {
+          setPaymentFailure(null);
           setPaymentState({
             isOpen: true,
             status: 'submitted',
@@ -210,22 +228,14 @@ export default function TableSession() {
           });
         },
         onDismiss: () => {
-          setPaymentState({
-            isOpen: true,
-            status: 'dismissed',
-            message: splitCount > 1
-              ? 'Split payment was not completed. You can try again or pay at the counter.'
-              : 'Payment was not completed. You can try again or pay at the counter.',
-          });
+          setPaymentFailure(humanizePaymentFailure({ code: 'payment_cancelled' }, providerName));
+          setPaymentState({ isOpen: false, status: 'idle', message: '' });
         },
       });
     } catch (e) {
       console.error(e);
-      setPaymentState({
-        isOpen: true,
-        status: 'fallback',
-        message: 'Digital checkout is not available yet. Please pay at the counter or ask staff for help.',
-      });
+      setPaymentFailure(humanizePaymentFailure(e, providerName));
+      setPaymentState({ isOpen: false, status: 'idle', message: '' });
     }
   };
 
@@ -330,17 +340,54 @@ export default function TableSession() {
               <div className="flex flex-col gap-3">
                 {paymentEnabled ? (
                   <>
-                    <button
-                      onClick={requestPaymentLink}
-                      className="w-full bg-primary text-on-primary px-3 py-4 rounded-xl font-bold uppercase tracking-widest text-sm leading-tight shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
-                    >
-                      {splitCount > 1 ? (
-                        <>Pay My Share (&#8377;{shareAmount.toFixed(2)})</>
-                      ) : (
-                        walletPayment.headline
-                      )}
-                      <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
-                    </button>
+                    {paymentFailure ? (
+                      <div className="rounded-2xl border border-error/30 bg-error/10 p-4 text-left">
+                        <div className="flex items-start gap-3">
+                          <span className="material-symbols-outlined text-error mt-0.5">error</span>
+                          <div className="flex-1">
+                            <p className="text-sm font-bold text-error">Payment did not go through</p>
+                            <p className="mt-1 text-sm text-on-surface-variant leading-relaxed">{paymentFailure}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setPaymentFailure(null)}
+                            className="material-symbols-outlined text-on-surface-variant hover:text-on-surface"
+                            aria-label="Dismiss payment error"
+                          >
+                            close
+                          </button>
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPayAtCounterOpen(true)}
+                            className="w-full bg-primary text-on-primary py-3 rounded-xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2"
+                          >
+                            <span className="material-symbols-outlined text-base">storefront</span>
+                            Pay at Counter
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPaymentFailure(null)}
+                            className="w-full bg-surface-container-high border border-outline-variant/20 text-on-surface py-3 rounded-xl font-bold uppercase tracking-widest text-xs"
+                          >
+                            Dismiss and retry digital payment
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={requestPaymentLink}
+                        className="w-full bg-primary text-on-primary px-3 py-4 rounded-xl font-bold uppercase tracking-widest text-sm leading-tight shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                      >
+                        {splitCount > 1 ? (
+                          <>Pay My Share (&#8377;{shareAmount.toFixed(2)})</>
+                        ) : (
+                          walletPayment.headline
+                        )}
+                        <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
+                      </button>
+                    )}
                   </>
                 ) : (
                   <button
@@ -359,13 +406,15 @@ export default function TableSession() {
                   </button>
                 )}
                 {/* LF-06: Pay at Counter — opens informational dialog instead of doing nothing */}
-                <button
-                  onClick={() => setPayAtCounterOpen(true)}
-                  className="w-full bg-surface-container-high border border-outline-variant/20 text-on-surface py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform hover:bg-surface-container-highest active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-lg">storefront</span>
-                  Pay at Counter
-                </button>
+                {!paymentFailure && (
+                  <button
+                    onClick={() => setPayAtCounterOpen(true)}
+                    className="w-full bg-surface-container-high border border-outline-variant/20 text-on-surface py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform hover:bg-surface-container-highest active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-lg">storefront</span>
+                    Pay at Counter
+                  </button>
+                )}
                 {paymentEnabled && (
                   <div className="flex items-center justify-center gap-2 text-on-surface-variant/50">
                     <span className="material-symbols-outlined text-sm">verified_user</span>

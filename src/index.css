@@ -176,6 +176,17 @@ body {
 .hide-scrollbar::-webkit-scrollbar { display: none; }
 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+.menu-image-skeleton {
+  background: linear-gradient(90deg, var(--color-surface-container-high) 0%, var(--color-surface-container-highest) 45%, var(--color-surface-container-high) 90%);
+  background-size: 220% 100%;
+  animation: menu-image-shimmer 1.15s ease-in-out infinite;
+}
+
+@keyframes menu-image-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
 /* ─── Material Symbols ───────────────────────────────────── */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';

@@ -30,7 +30,6 @@ export default [
       'node_modules/**',
       'scratch/**',
       'server/**',
-      'prisma/**',
       'supabase/functions/**',
     ],
   },

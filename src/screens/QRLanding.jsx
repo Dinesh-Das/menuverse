@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchTableInfo, resolveOrCreateGuestProfile, saveGuestContact, startOrResumeTableSession } from '../lib/api';
+import { fetchTableInfo, getGuestProfileForSession, startOrResumeTableSession } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -20,17 +20,11 @@ function getStoredTableSessionToken() {
 export default function QRLanding() {
   const { restaurantSlug, tableId } = useParams();
   const navigate = useNavigate();
-  const { setSession } = useCart();
+  const { setSession, count } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const [table, setTable] = useState(null);
   const [activeSessionToken, setActiveSessionToken] = useState(null);
-  const [activeSessionId, setActiveSessionId] = useState(null);
-  const [guestName, setGuestName] = useState('');
-  const [guestPhone, setGuestPhone] = useState('');
-  const [guestEmail, setGuestEmail] = useState('');
-  const [marketingConsent, setMarketingConsent] = useState(false);
-  const [showContactForm, setShowContactForm] = useState(false);
-  const [savingContact, setSavingContact] = useState(false);
+  const [returningGuest, setReturningGuest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -68,18 +62,18 @@ export default function QRLanding() {
           });
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
-          setActiveSessionId(sessionPayload.tableSessionId || null);
           setActiveSessionToken(sessionPayload.tableSessionToken);
         } catch (sessionErr) {
           console.warn('[Menuverse] Table session RPC unavailable:', sessionErr.message);
         }
 
         setSession(sessionPayload);
-
-        if (storedSessionToken && sessionPayload.tableSessionToken) {
-          navigate(`/r/${restaurantSlug}/menu`, { replace: true });
-          return;
+        if (sessionPayload.tableSessionToken) {
+          getGuestProfileForSession(sessionPayload.tableSessionToken)
+            .then(profile => setReturningGuest(profile))
+            .catch(() => setReturningGuest(null));
         }
+
       } catch (err) {
         setError(err.message);
       } finally {
@@ -88,36 +82,9 @@ export default function QRLanding() {
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, tableId, restaurantSlug, setSession]);
+  }, [tableId, restaurantSlug, setSession]);
 
-  const handleExploreMenu = async () => {
-    const hasContact = guestName.trim() || guestPhone.trim() || guestEmail.trim();
-    if (hasContact && table?.restaurant_id && activeSessionToken) {
-      setSavingContact(true);
-      try {
-        await saveGuestContact({
-          restaurantId: table.restaurant_id,
-          tableSessionToken: activeSessionToken,
-          name: guestName,
-          phone: guestPhone,
-          email: guestEmail,
-          marketingConsent,
-        });
-        await resolveOrCreateGuestProfile({
-          restaurantId: table.restaurant_id,
-          tableSessionId: activeSessionId,
-          name: guestName,
-          phone: guestPhone,
-          email: guestEmail,
-          marketingConsent,
-        });
-        localStorage.setItem('mv_contact_saved', 'true');
-      } catch (contactErr) {
-        console.warn('[Menuverse] Guest contact capture skipped:', contactErr.message);
-      } finally {
-        setSavingContact(false);
-      }
-    }
+  const handleExploreMenu = () => {
     navigate(`/r/${restaurantSlug}/menu`);
   };
 
@@ -170,11 +137,30 @@ export default function QRLanding() {
               {table.restaurant.name.split(' - ')[1]}
             </p>
           )}
+          {returningGuest?.loyalty_tier && (
+            <p className="mt-4 inline-flex items-center rounded-full bg-primary-container px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-on-primary-container">
+              Welcome back, {returningGuest.loyalty_tier.charAt(0).toUpperCase() + returningGuest.loyalty_tier.slice(1)} member &#127942;
+            </p>
+          )}
         </div>
 
-        <p className="text-on-surface-variant font-body text-[10px] uppercase tracking-[0.2em] text-center mb-12 opacity-70">
-          Table {table?.number} <span className="mx-2">-</span> {table?.section}
-        </p>
+        <div className="w-full mb-10 rounded-2xl border border-outline-variant/10 bg-surface-container-low px-5 py-4 text-center shadow-sm">
+          <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-on-surface-variant">Your Table</p>
+          <p className="font-headline text-5xl font-bold text-primary mt-1">{table?.number}</p>
+          {table?.section && (
+            <p className="text-xs uppercase tracking-widest text-on-surface-variant mt-1">{table.section}</p>
+          )}
+          {activeSessionToken && count > 0 && (
+            <button
+              type="button"
+              onClick={() => navigate(`/r/${restaurantSlug}/checkout`)}
+              className="mt-4 w-full rounded-xl bg-primary-container px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-primary-container flex items-center justify-center gap-2"
+            >
+              <span className="material-symbols-outlined text-base">shopping_bag</span>
+              Your session has {count} {count === 1 ? 'item' : 'items'} · Resume order
+            </button>
+          )}
+        </div>
 
         <div className="w-52 h-52 rounded-full bg-[#0F0F0F] border border-outline-variant/10 flex items-center justify-center mb-14 relative shadow-2xl overflow-hidden group">
           {table?.restaurant?.logo_url ? (
@@ -193,55 +179,11 @@ export default function QRLanding() {
 
         <button
           onClick={handleExploreMenu}
-          disabled={savingContact}
-          className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-all active:scale-95 hover:shadow-primary/20 hover:-translate-y-0.5 flex justify-center items-center gap-2 cursor-pointer disabled:opacity-60"
+          className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm shadow-luxury transition-all active:scale-95 hover:shadow-primary/20 hover:-translate-y-0.5 flex justify-center items-center gap-2 cursor-pointer"
         >
-          {savingContact ? 'Saving...' : 'Browse Menu'}
-          <span className={`material-symbols-outlined text-lg ${savingContact ? 'animate-spin' : ''}`}>{savingContact ? 'progress_activity' : 'arrow_forward'}</span>
+          Browse Menu
+          <span className="material-symbols-outlined text-lg">arrow_forward</span>
         </button>
-
-        <button
-          type="button"
-          onClick={() => setShowContactForm(value => !value)}
-          className="mt-4 text-[10px] uppercase tracking-[0.22em] font-bold text-on-surface-variant hover:text-primary transition-colors"
-        >
-          {showContactForm ? 'Hide session details' : 'Save your session (optional)'}
-        </button>
-
-        {showContactForm && (
-          <div className="w-full mt-5 space-y-3">
-            <input
-              type="text"
-              value={guestName}
-              onChange={event => setGuestName(event.target.value)}
-              placeholder="Name for receipt"
-              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-            />
-            <input
-              type="tel"
-              value={guestPhone}
-              onChange={event => setGuestPhone(event.target.value)}
-              placeholder="Phone for WhatsApp receipt"
-              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-            />
-            <input
-              type="email"
-              value={guestEmail}
-              onChange={event => setGuestEmail(event.target.value)}
-              placeholder="Email receipt"
-              className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-            />
-            <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
-              <input
-                type="checkbox"
-                checked={marketingConsent}
-                onChange={event => setMarketingConsent(event.target.checked)}
-                className="w-4 h-4 accent-primary"
-              />
-              Offers and loyalty updates
-            </label>
-          </div>
-        )}
 
         <div className="mt-12 flex flex-col items-center gap-2">
           <p className="text-on-surface-variant/40 text-[9px] text-center uppercase tracking-[0.3em]">

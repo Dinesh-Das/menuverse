@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchOrderStatus, getGuestProfileForSession, submitOrderFeedback } from '../lib/api';
+import { fetchOrderStatus, getGuestProfileForSession, resolveOrCreateGuestProfile, saveGuestContact, submitOrderFeedback } from '../lib/api';
 import { getSocket, joinOrderRoom } from '../lib/socket';
 import { useToast } from '../components/Toast';
 import { useTheme } from '../context/ThemeContext';
@@ -33,6 +33,8 @@ const STATUS_MESSAGES = {
   served:    'Enjoy your meal! Let us know if you need anything.',
   cancelled: 'This order was cancelled. Please contact your server.',
 };
+const MAX_FEEDBACK_COMMENT_LENGTH = 200;
+const CONTACT_CAPTURE_STATUSES = new Set(['accepted', 'preparing', 'ready', 'served', 'completed']);
 
 export default function OrderStatus() {
   const { orderId, restaurantSlug } = useParams();
@@ -52,6 +54,13 @@ export default function OrderStatus() {
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [guestPhone, setGuestPhone] = useState('');
+  const [receiptContactOpen, setReceiptContactOpen] = useState(false);
+  const [receiptName, setReceiptName] = useState('');
+  const [receiptPhone, setReceiptPhone] = useState('');
+  const [receiptEmail, setReceiptEmail] = useState('');
+  const [receiptMarketingConsent, setReceiptMarketingConsent] = useState(false);
+  const [receiptSaving, setReceiptSaving] = useState(false);
+  const [receiptSaved, setReceiptSaved] = useState(localStorage.getItem('mv_contact_saved') === 'true');
   const refreshTimerRef = useRef(null);
   const orderRef = useRef(null);
   const feedbackNudgeSentRef = useRef(false);
@@ -177,9 +186,6 @@ export default function OrderStatus() {
   const handleRating = (val) => {
     if (feedbackSaving || feedbackGiven) return;
     setRating(val);
-    if (!foodRating) setFoodRating(val);
-    if (!serviceRating) setServiceRating(val);
-    if (!valueRating) setValueRating(val);
   };
 
   const handleItemRating = (itemId, val) => {
@@ -195,10 +201,10 @@ export default function OrderStatus() {
         orderId: order.id,
         tableSessionToken: localStorage.getItem('mv_table_session_token'),
         rating,
-        comment: feedbackComment,
-        foodRating: foodRating || rating,
-        serviceRating: serviceRating || rating,
-        valueRating: valueRating || rating,
+        comment: feedbackComment.trim(),
+        foodRating: foodRating || null,
+        serviceRating: serviceRating || null,
+        valueRating: valueRating || null,
         itemRatings: (order.items || []).map(item => ({
           order_item_id: item.id,
           menu_item_id: item.menu_item_id,
@@ -213,6 +219,43 @@ export default function OrderStatus() {
       addToast(`Failed to save feedback: ${e.message}`, 'error');
     } finally {
       setFeedbackSaving(false);
+    }
+  };
+
+  const handleReceiptContactSubmit = async () => {
+    if (receiptSaving || receiptSaved || !order?.restaurant_id) return;
+    const hasContact = receiptName.trim() || receiptPhone.trim() || receiptEmail.trim();
+    if (!hasContact) {
+      addToast('Add a phone number or email for your receipt.', 'error');
+      return;
+    }
+
+    setReceiptSaving(true);
+    try {
+      await saveGuestContact({
+        restaurantId: order.restaurant_id,
+        tableSessionToken: localStorage.getItem('mv_table_session_token'),
+        name: receiptName,
+        phone: receiptPhone,
+        email: receiptEmail,
+        marketingConsent: receiptMarketingConsent,
+      });
+      await resolveOrCreateGuestProfile({
+        restaurantId: order.restaurant_id,
+        tableSessionId: order.table_session_id,
+        name: receiptName,
+        phone: receiptPhone,
+        email: receiptEmail,
+        marketingConsent: receiptMarketingConsent,
+      });
+      localStorage.setItem('mv_contact_saved', 'true');
+      setReceiptSaved(true);
+      setReceiptContactOpen(false);
+      addToast('Receipt details saved.', 'success');
+    } catch (e) {
+      addToast(`Failed to save receipt details: ${e.message}`, 'error');
+    } finally {
+      setReceiptSaving(false);
     }
   };
 
@@ -242,7 +285,7 @@ export default function OrderStatus() {
   const isCancelled = order.status === 'cancelled';
   const ratingOptions = [1, 2, 3, 4, 5];
 
-  const RatingScale = ({ value, onChange, compact = false }) => (
+  const RatingScale = ({ value, onChange, compact = false, label = 'rating' }) => (
     <div className={`flex ${compact ? 'gap-1' : 'justify-center gap-2'}`}>
       {ratingOptions.map(option => (
         <button
@@ -250,13 +293,16 @@ export default function OrderStatus() {
           type="button"
           onClick={() => onChange(option)}
           disabled={feedbackSaving}
-          className={`${compact ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-sm'} rounded-full border font-bold transition-all ${
-            value === option
+          aria-label={`${option} star ${label}`}
+          className={`${compact ? 'w-8 h-8' : 'w-11 h-11'} rounded-full border transition-all flex items-center justify-center ${
+            value >= option
               ? 'bg-primary text-on-primary border-primary shadow-md'
               : 'bg-surface-container border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
           } disabled:opacity-60`}
         >
-          {option}
+          <span className={`material-symbols-outlined ${compact ? 'text-base' : 'text-xl'}`} style={{ fontVariationSettings: value >= option ? "'FILL' 1" : "'FILL' 0" }}>
+            star
+          </span>
         </button>
       ))}
     </div>
@@ -269,7 +315,7 @@ export default function OrderStatus() {
           <p className="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">Overall</p>
           <span className="text-[10px] text-on-surface-variant">1 poor - 5 excellent</span>
         </div>
-        <RatingScale value={rating} onChange={handleRating} />
+        <RatingScale value={rating} onChange={handleRating} label="overall rating" />
       </div>
 
       {rating > 0 && (
@@ -282,7 +328,7 @@ export default function OrderStatus() {
             ].map(([label, value, setter]) => (
               <div key={label} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-surface-container border border-outline-variant/10">
                 <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">{label}</span>
-                <RatingScale value={value} onChange={setter} compact />
+                <RatingScale value={value} onChange={setter} compact label={`${label.toLowerCase()} rating`} />
               </div>
             ))}
           </div>
@@ -294,7 +340,7 @@ export default function OrderStatus() {
                 {order.items.map(item => (
                   <div key={item.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container border border-outline-variant/10">
                     <span className="text-xs font-bold text-on-surface line-clamp-1">{item.name}</span>
-                    <RatingScale value={itemRatings[item.id] || 0} onChange={val => handleItemRating(item.id, val)} compact />
+                    <RatingScale value={itemRatings[item.id] || 0} onChange={val => handleItemRating(item.id, val)} compact label={`${item.name} rating`} />
                   </div>
                 ))}
               </div>
@@ -303,10 +349,14 @@ export default function OrderStatus() {
 
           <textarea
             value={feedbackComment}
-            onChange={e => setFeedbackComment(e.target.value)}
+            onChange={e => setFeedbackComment(e.target.value.slice(0, MAX_FEEDBACK_COMMENT_LENGTH))}
             placeholder="What stood out today?"
+            maxLength={MAX_FEEDBACK_COMMENT_LENGTH}
             className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl p-4 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-colors resize-none h-24"
           />
+          <p className="text-right text-[10px] text-on-surface-variant">
+            {feedbackComment.length}/{MAX_FEEDBACK_COMMENT_LENGTH}
+          </p>
         </>
       )}
       <button
@@ -408,6 +458,48 @@ export default function OrderStatus() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {CONTACT_CAPTURE_STATUSES.has(order.status) && (
+          <div className="mb-8 p-5 rounded-2xl bg-surface-container-low border border-outline-variant/10">
+            {receiptSaved ? (
+              <div className="flex items-center gap-3 text-green-500">
+                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                <p className="text-sm font-bold">Receipt details saved</p>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setReceiptContactOpen(value => !value)}
+                  className="w-full flex items-center justify-between gap-4 text-left"
+                >
+                  <span className="text-xs font-bold uppercase tracking-widest text-on-surface">Get your receipt by WhatsApp or email</span>
+                  <span className="material-symbols-outlined text-primary">{receiptContactOpen ? 'expand_less' : 'expand_more'}</span>
+                </button>
+                {receiptContactOpen && (
+                  <div className="mt-4 space-y-3">
+                    <input value={receiptName} onChange={e => setReceiptName(e.target.value)} placeholder="Name for receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                    <input type="tel" value={receiptPhone} onChange={e => setReceiptPhone(e.target.value)} placeholder="WhatsApp phone" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                    <input type="email" value={receiptEmail} onChange={e => setReceiptEmail(e.target.value)} placeholder="Email address" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+                      <input type="checkbox" checked={receiptMarketingConsent} onChange={e => setReceiptMarketingConsent(e.target.checked)} className="w-4 h-4 accent-primary" />
+                      Offers and loyalty updates
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleReceiptContactSubmit}
+                      disabled={receiptSaving}
+                      className="w-full bg-primary text-on-primary py-3 rounded-xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      {receiptSaving && <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>}
+                      Save receipt details
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -516,7 +608,7 @@ export default function OrderStatus() {
         )}
         {(order.status === 'served' || order.status === 'completed') && feedbackGiven && (
           <div className="mt-8 p-6 bg-green-500/10 border border-green-500/20 rounded-2xl text-center animate-in fade-in zoom-in duration-300">
-             <span className="text-4xl mb-2 block">🎉</span>
+             <span className="material-symbols-outlined text-4xl mb-2 block text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
             <h3 className="font-headline text-lg font-bold text-green-500 mb-1">Thank you!</h3>
             <p className="text-xs text-green-600/80 uppercase tracking-widest font-bold">Your feedback is appreciated</p>
           </div>
@@ -529,7 +621,7 @@ export default function OrderStatus() {
           <div className="relative w-full max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-surface-container-low border border-outline-variant/10 shadow-luxury p-6 transition-transform duration-300 ease-out translate-y-0">
             <div className="mx-auto mb-5 h-1.5 w-12 rounded-full bg-outline-variant/40" />
             <div className="text-center mb-6">
-              <h3 className="font-headline text-2xl font-bold text-on-surface mb-2">How was your meal? &#127869;&#65039;</h3>
+              <h3 className="font-headline text-2xl font-bold text-on-surface mb-2">How was your meal?</h3>
               <p className="text-sm text-on-surface-variant">Your feedback helps the menu improve automatically.</p>
             </div>
             {renderFeedbackForm('Submit Feedback')}

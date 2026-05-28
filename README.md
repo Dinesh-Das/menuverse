@@ -13,7 +13,7 @@ Menuverse is a React 18 + Vite single-page app backed by Supabase:
 - Supabase Realtime through `src/lib/socket.js`, which keeps a socket-like interface for existing screens
 - Sentiment/ranking fields on menu items and feedback records for AI-assisted recommendations
 
-The old `server/` Express and `prisma/` code is legacy reference material. It is not used by the active Vite app or production deployment.
+The Supabase JS client is the sole data access layer for the active app. Database writes that need trust boundaries go through Supabase RPC functions or Edge Functions.
 
 ## Local Setup
 
@@ -76,6 +76,7 @@ npm audit --omit=dev
 - Use session-specific table links/tokens for occupied tables; static table QR scans no longer expose an active bill unless `open_session_join_enabled` is intentionally enabled.
 - Keep service role keys only in Supabase Edge Function secrets.
 - Set `APP_ORIGIN` in Supabase Edge Function secrets before production deploys so Edge Function CORS only allows your app domain.
+- Set `ALLOWED_ORIGINS` in Supabase Edge Function secrets when you need more than the default Vercel deployment and Supabase project origins.
 - Configure Razorpay credentials only in Edge Function secrets.
 - Confirm storage policies restrict writes by restaurant folder.
 - Configure `ANTHROPIC_API_KEY` for LLM sentiment analysis; otherwise the app uses the built-in rating/keyword baseline.

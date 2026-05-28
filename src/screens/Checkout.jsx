@@ -4,6 +4,7 @@ import { useCart } from '../context/CartContext';
 import BottomNav from '../components/BottomNav';
 import {
   fetchMenu,
+  fetchDeliveryQuote,
   fetchRecommendations,
   getGuestProfileForSession,
   placeOrder,
@@ -43,8 +44,21 @@ export default function Checkout() {
   const [splitCount, setSplitCount] = useState(1);
   const [billRequested, setBillRequested] = useState(false);
   const [billRequesting, setBillRequesting] = useState(false);
+  const [restaurant, setRestaurant] = useState(null);
+  const [orderType, setOrderType] = useState('dine_in');
+  const [deliveryAddress, setDeliveryAddress] = useState({
+    street: '',
+    city: '',
+    pincode: '',
+    phone: '',
+    latitude: null,
+    longitude: null,
+  });
+  const [deliveryQuote, setDeliveryQuote] = useState(null);
+  const [deliveryQuoteLoading, setDeliveryQuoteLoading] = useState(false);
 
   const currentSlug = restaurantSlug || sessionSlug || null;
+  const currentRestaurantId = restaurantId || restaurant?.id || null;
 
   const gstPct = subtotal > 0
     ? Math.round((tax / subtotal) * 100)
@@ -56,6 +70,7 @@ export default function Checkout() {
       return;
     }
     fetchMenu(currentSlug).then(data => {
+      setRestaurant(data.restaurant || null);
       const candidates = data.categories.flatMap(cat => cat.items || []).filter(item => item.available);
       setUpsellCategories(data.categories || []);
       setUpsellItems(candidates);
@@ -79,7 +94,12 @@ export default function Checkout() {
     )
     : 0;
   const loyaltyDiscount = pointsToRedeem / 10;
-  const checkoutTotal = Math.max(0, total - loyaltyDiscount);
+  const deliveryFee = orderType === 'delivery'
+    ? Number(deliveryQuote?.fee ?? restaurant?.delivery_fee_flat ?? 0)
+    : 0;
+  const checkoutTotal = Math.max(0, total - loyaltyDiscount + deliveryFee);
+  const deliveryAddressComplete = ['street', 'city', 'pincode'].every(key => deliveryAddress[key].trim());
+  const canPlaceWithoutTable = orderType === 'takeaway' || orderType === 'delivery';
 
   React.useEffect(() => {
     if (pointsToRedeem > maxRedeemablePoints) setPointsToRedeem(maxRedeemablePoints);
@@ -88,16 +108,16 @@ export default function Checkout() {
   const cartItemIdsKey = allItems.map(item => item.id).join(',');
 
   React.useEffect(() => {
-    if (!restaurantId || upsellItems.length === 0) return;
+    if (!currentRestaurantId || upsellItems.length === 0) return;
     fetchRecommendations({
-      restaurantId,
+      restaurantId: currentRestaurantId,
       cartItemIds: cartItemIdsKey ? cartItemIdsKey.split(',') : [],
       guestProfileId: guestProfile?.id || null,
       limit: 5,
     })
       .then(setServerUpsells)
       .catch(() => setServerUpsells([]));
-  }, [restaurantId, upsellItems.length, cartItemIdsKey, guestProfile?.id]);
+  }, [currentRestaurantId, upsellItems.length, cartItemIdsKey, guestProfile?.id]);
 
   const fallbackUpsells = React.useMemo(
     () => sortRecommendedItems(upsellItems, allItems, upsellCategories),
@@ -114,9 +134,56 @@ export default function Checkout() {
     setSplitCount(Math.max(1, Math.min(10, nextCount)));
   };
 
+  const updateDeliveryAddress = (field, value) => {
+    setDeliveryAddress(prev => ({ ...prev, [field]: value }));
+    setDeliveryQuote(null);
+  };
+
+  const requestDeliveryQuote = async () => {
+    if (!currentRestaurantId || !deliveryAddressComplete) return null;
+    setDeliveryQuoteLoading(true);
+    setError(null);
+    try {
+      const quote = await fetchDeliveryQuote({
+        restaurantId: currentRestaurantId,
+        address: deliveryAddress,
+        orderValue: total,
+      });
+      setDeliveryQuote(quote);
+      if (!quote.serviceable) {
+        setError(quote.message || 'This delivery address is outside the service area.');
+      }
+      return quote;
+    } catch (err) {
+      setError(err.message);
+      return null;
+    } finally {
+      setDeliveryQuoteLoading(false);
+    }
+  };
+
+  const attachCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setError('Location is not available in this browser.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setDeliveryAddress(prev => ({
+          ...prev,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }));
+        setDeliveryQuote(null);
+      },
+      () => setError('Could not read your current location.'),
+      { enableHighAccuracy: false, timeout: 8000 }
+    );
+  };
+
   const handleRequestBill = async () => {
     if (billRequested || billRequesting) return;
-    if (!restaurantId || !tableId || !tableSessionToken || !tableSessionId) {
+    if (!currentRestaurantId || !tableId || !tableSessionToken || !tableSessionId) {
       addToast('Please scan your table QR before requesting the bill.', 'error');
       return;
     }
@@ -125,7 +192,7 @@ export default function Checkout() {
     setError(null);
     try {
       await createStaffRequest({
-        restaurantId,
+        restaurantId: currentRestaurantId,
         tableId,
         tableSessionToken,
         requestType: 'bill',
@@ -152,6 +219,27 @@ export default function Checkout() {
 
   const handleCheckout = async () => {
     if (allItems.length === 0) return;
+    let effectiveDeliveryQuote = deliveryQuote;
+    if (!currentRestaurantId) {
+      setError('Restaurant context is required. Please open a valid restaurant menu.');
+      return;
+    }
+    if (orderType === 'dine_in' && !tableId) {
+      setError('Please scan a QR code at your table to place a dine-in order.');
+      return;
+    }
+    if (orderType === 'delivery') {
+      if (!deliveryAddressComplete) {
+        setError('Delivery address requires street, city, and pincode.');
+        return;
+      }
+      effectiveDeliveryQuote = deliveryQuote || await requestDeliveryQuote();
+      if (!effectiveDeliveryQuote) return;
+      if (effectiveDeliveryQuote.serviceable === false) {
+        setError(effectiveDeliveryQuote.message || 'This delivery address is outside the service area.');
+        return;
+      }
+    }
     
     // Anti-spam: 10-second cooldown (prevents double-tap; server-side 5-pending check handles real protection)
     const lastOrderTime = localStorage.getItem('mv_last_order_time');
@@ -167,15 +255,21 @@ export default function Checkout() {
     setError(null);
 
     try {
-      const idempotencyKey = `${tableId}-${Date.now()}`;
+      const idempotencyKey = `${tableId || orderType}-${Date.now()}`;
       const payload = {
-        restaurant_id: restaurantId,
-        table_id: tableId,
-        table_session_id: tableSessionId,
-        table_session_token: tableSessionToken,
+        restaurant_id: currentRestaurantId,
+        table_id: tableId || null,
+        table_session_id: tableSessionId || null,
+        table_session_token: tableSessionToken || null,
         special_instructions: note,
         idempotency_key: idempotencyKey,
         points_redeemed: pointsToRedeem,
+        order_type: orderType,
+        delivery_address: orderType === 'delivery' ? deliveryAddress : null,
+        delivery_fee: orderType === 'delivery'
+          ? Number(effectiveDeliveryQuote?.fee ?? restaurant?.delivery_fee_flat ?? 0)
+          : 0,
+        delivery_distance_km: effectiveDeliveryQuote?.distance_km ?? null,
         items: allItems.map(item => ({
           menu_item_id: item.id,
           name: item.name,
@@ -190,7 +284,7 @@ export default function Checkout() {
       const hasContact = guestName.trim() || guestPhone.trim() || guestEmail.trim();
       if (hasContact && !localStorage.getItem('mv_contact_saved')) {
         saveGuestContact({
-          restaurantId,
+          restaurantId: currentRestaurantId,
           tableSessionToken,
           name: guestName,
           phone: guestPhone,
@@ -198,7 +292,7 @@ export default function Checkout() {
           marketingConsent,
         })
           .then(() => resolveOrCreateGuestProfile({
-            restaurantId,
+            restaurantId: currentRestaurantId,
             tableSessionId,
             name: guestName,
             phone: guestPhone,
@@ -276,6 +370,91 @@ export default function Checkout() {
             
             {/* Left Column: Items & Instructions */}
             <div className="md:col-span-2">
+              <div className="mb-8 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
+                <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-4">Order Type</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'dine_in', label: 'Dine In', icon: 'table_restaurant' },
+                    { id: 'takeaway', label: 'Takeaway', icon: 'takeout_dining' },
+                    { id: 'delivery', label: 'Delivery', icon: 'local_shipping' },
+                  ].map(option => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => {
+                        setOrderType(option.id);
+                        setError(null);
+                      }}
+                      className={`min-h-[76px] rounded-xl border px-2 py-3 text-xs font-bold uppercase tracking-widest transition-colors flex flex-col items-center justify-center gap-2 ${
+                        orderType === option.id
+                          ? 'border-primary bg-primary text-on-primary'
+                          : 'border-outline-variant/20 bg-surface-container text-on-surface-variant hover:text-on-surface'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-xl">{option.icon}</span>
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+
+                {orderType === 'delivery' && (
+                  <div className="mt-5 space-y-3">
+                    <input
+                      value={deliveryAddress.street}
+                      onChange={event => updateDeliveryAddress('street', event.target.value)}
+                      placeholder="Street address"
+                      className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        value={deliveryAddress.city}
+                        onChange={event => updateDeliveryAddress('city', event.target.value)}
+                        placeholder="City"
+                        className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                      />
+                      <input
+                        value={deliveryAddress.pincode}
+                        onChange={event => updateDeliveryAddress('pincode', event.target.value)}
+                        placeholder="Pincode"
+                        inputMode="numeric"
+                        className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                      />
+                    </div>
+                    <input
+                      value={deliveryAddress.phone}
+                      onChange={event => updateDeliveryAddress('phone', event.target.value)}
+                      placeholder="Phone number"
+                      type="tel"
+                      className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={attachCurrentLocation}
+                      className="rounded-xl border border-outline-variant/20 bg-surface-container px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-sm">my_location</span>
+                      {deliveryAddress.latitude != null && deliveryAddress.longitude != null ? 'Location Attached' : 'Use Current Location'}
+                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={requestDeliveryQuote}
+                        disabled={!deliveryAddressComplete || deliveryQuoteLoading}
+                        className="rounded-xl bg-primary/10 text-primary px-4 py-3 text-xs font-bold uppercase tracking-widest disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {deliveryQuoteLoading && <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>}
+                        Get Delivery Fee
+                      </button>
+                      {deliveryQuote?.serviceable && (
+                        <span className="text-xs font-bold text-green-500">
+                          Fee &#8377;{Number(deliveryQuote.fee || 0).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Order Items */}
               <div className="space-y-4 mb-8">
                 {allItems.map((item, idx) => {
@@ -406,6 +585,12 @@ export default function Checkout() {
                       <span className="font-headline font-bold">-₹{loyaltyDiscount.toFixed(2)}</span>
                     </div>
                   )}
+                  {orderType === 'delivery' && (
+                    <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
+                      <span>Delivery fee</span>
+                      <span className="font-headline font-bold text-on-surface">&#8377;{deliveryFee.toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="pt-4 md:pt-6 border-t border-outline-variant/20 flex justify-between items-center">
                   <span className="font-bold text-on-surface md:text-lg">Total</span>
@@ -473,7 +658,7 @@ export default function Checkout() {
                 </div>
               )}
 
-              {!tableId && (
+              {!canPlaceWithoutTable && !tableId && (
                 <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-500 text-sm font-medium flex gap-3">
                   <span className="material-symbols-outlined">qr_code_scanner</span>
                   <p>Please scan a QR code at your table to place an order.</p>
@@ -507,7 +692,7 @@ export default function Checkout() {
               {/* CTA */}
               <button
                 onClick={() => handleCheckout()}
-                disabled={loading || !tableId}
+                disabled={loading || (!canPlaceWithoutTable && !tableId)}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >
                 {loading ? 'Placing Order...' : `Place Order · ₹${checkoutTotal.toFixed(2)}`}

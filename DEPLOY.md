@@ -1,6 +1,6 @@
 # Menuverse Deployment Guide
 
-Last updated: May 2026. Production architecture is Supabase-native; Express/Prisma is deprecated.
+Last updated: May 2026. Production architecture is Supabase-native.
 
 ## 1. Frontend Hosting
 
@@ -38,7 +38,22 @@ WHATSAPP_ACCESS_TOKEN=server-only-token
 WHATSAPP_WEBHOOK_URL=https://provider.example/send
 KOT_WEBHOOK_URL=https://printer-provider.example/print
 POS_WEBHOOK_URL=https://pos-provider.example/orders
-APP_ORIGIN=https://your-domain.com
+APP_ORIGIN=https://menu-verse-admin.vercel.app
+ALLOWED_ORIGINS=https://menu-verse-admin.vercel.app,https://menu-verse.vercel.app,https://your-project.supabase.co
+MENUVERSE_INTERNAL_SECRET=shared-secret-for-server-to-server-function-calls
+RESEND_API_KEY=server-only
+RESEND_FROM_EMAIL=Menuverse <no-reply@your-domain.com>
+SQUARE_VERSION=2026-05-20
+SHIPROCKET_API_TOKEN=server-only
+SHIPROCKET_PICKUP_POSTCODE=110030
+WHATSAPP_VERIFY_TOKEN=shared-webhook-verify-token
+WHATSAPP_DEFAULT_RESTAURANT_ID=restaurant-id-for-single-number
+WHATSAPP_RESTAURANT_MAP={"919999999999":"restaurant-id"}
+WHATSAPP_INBOUND_REPLY_WEBHOOK_URL=https://provider.example/send
+REPLICATE_API_TOKEN=server-only
+REPLICATE_MODEL=stability-ai/triposr
+REPLICATE_MODEL_VERSION=
+REPLICATE_CANCEL_AFTER=20m
 ```
 
 Never expose service role, payment secret, or webhook secret values to Vite.
@@ -53,6 +68,13 @@ Run all SQL migrations under `supabase/migrations/`, then run:
 ```
 
 If using the dashboard SQL editor, paste the contents of `supabase/rls-policies.sql`.
+
+Database workers that invoke Edge Functions need the project URL and internal secret available as database settings:
+
+```sql
+alter database postgres set "app.settings.supabase_url" = 'https://your-project.supabase.co';
+alter database postgres set "app.settings.menuverse_internal_secret" = 'same-value-as-MENUVERSE_INTERNAL_SECRET';
+```
 
 The secure MVP order path depends on these RPC functions:
 
@@ -80,7 +102,7 @@ If you are using the Supabase dashboard instead of migrations:
 4. File size limit: 20 MB
 5. Allowed MIME types: `model/gltf-binary, model/vnd.usdz+zip, application/octet-stream, image/jpeg, image/png, image/webp`
 
-The `ar-models` bucket stores GLB, USDZ, and thumbnail assets for the AR menu preview feature. The `restaurant-assets` bucket stores logos and menu photos.
+The `ar-models` bucket stores GLB, USDZ, and thumbnail assets for the AR menu preview feature. The `ar-source-videos` bucket stores source videos for photogrammetry jobs. The `menu-images` and `restaurant-assets` buckets store optimized menu photos and logos.
 
 ## 4. Edge Functions
 
@@ -92,7 +114,19 @@ supabase functions deploy analyse-feedback
 supabase functions deploy request-kitchen-print
 supabase functions deploy send-whatsapp-notification
 supabase functions deploy sync-to-pos
+supabase functions deploy delivery-quote
+supabase functions deploy whatsapp-inbound
+supabase functions deploy process-ar-asset
+supabase functions deploy pos-adapter-square
 ```
+
+For browser-called functions, deploy with JWT verification disabled so `OPTIONS` preflight reaches the handler:
+
+```bash
+supabase functions deploy analyse-feedback get-recommendations request-kitchen-print --project-ref gdlsgscmrgtadqrwtwgg --no-verify-jwt --use-api
+```
+
+If the browser reports `Requested function was not found`, the function has not been deployed to that Supabase project yet.
 
 `create-payment-order` creates Razorpay Orders with server-side credentials. `verify-payment-webhook` verifies Razorpay signatures before any payment or bill is marked paid.
 
@@ -120,9 +154,9 @@ on storage.objects for select
 using (bucket_id = 'restaurant-assets');
 ```
 
-## 6. Legacy Backend
+## 6. Data Access
 
-`server/index.js` and `prisma/schema.prisma` are retained only for reference while migrating historical logic. Do not deploy them for the MVP production app.
+The production app uses the Supabase JS client, Supabase RPC functions, and Edge Functions as its data access layer. Do not deploy a separate legacy application server for MVP QR ordering.
 
 ## Known Production TODOs
 

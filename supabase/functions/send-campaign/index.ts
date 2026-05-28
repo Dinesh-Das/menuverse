@@ -1,17 +1,37 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? 'https://menuverse.app',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-function json(body: unknown, status = 200) {
-  return Response.json(body, { status, headers: corsHeaders });
-}
+import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 
 function renderTemplate(template: string, values: Record<string, string>) {
-  return template.replace(/\{\{(name|restaurant_name)\}\}/g, (_, key) => values[key] || '');
+  return template.replace(/\{\{(name|first_name|restaurant_name)\}\}/g, (_, key) => values[key] || '');
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function addUtmToLinks(content: string, campaignId: string) {
+  return content.replace(/https?:\/\/[^\s<>"')]+/g, (rawUrl) => {
+    try {
+      const url = new URL(rawUrl);
+      url.searchParams.set('utm_source', 'menuverse');
+      url.searchParams.set('utm_campaign', campaignId);
+      return url.toString();
+    } catch {
+      return rawUrl;
+    }
+  });
+}
+
+function emailHtmlFromText(text: string) {
+  return escapeHtml(text)
+    .replace(/(https?:\/\/[^\s<>"')]+)/g, '<a href="$1">$1</a>')
+    .replace(/\n/g, '<br>');
 }
 
 async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Request, restaurantId: string) {
@@ -31,7 +51,8 @@ async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Requ
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
+  if (req.method === 'OPTIONS') return preflightResponse(req);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -79,19 +100,23 @@ serve(async (req) => {
     })
     .eq('id', campaignId);
 
-  const sendgridKey = Deno.env.get('SENDGRID_API_KEY');
-  const fromEmail = Deno.env.get('SENDGRID_FROM_EMAIL') || 'no-reply@menuverse.app';
+  const resendKey = Deno.env.get('RESEND_API_KEY');
+  const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Menuverse <no-reply@menuverse.app>';
   const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
   let sentCount = 0;
+  let failedCount = 0;
 
   for (const recipient of recipients || []) {
-    const message = renderTemplate(campaign.message_body, {
-      name: recipient.name || 'there',
+    const firstName = String(recipient.name || '').trim().split(/\s+/)[0] || 'there';
+    const template = campaign.message_template || campaign.message_body || '';
+    const message = addUtmToLinks(renderTemplate(template, {
+      name: recipient.name || firstName,
+      first_name: firstName,
       restaurant_name: campaign.restaurant?.name || 'our restaurant',
-    });
+    }), campaignId);
 
     if ((campaign.channel === 'whatsapp' || campaign.channel === 'both') && recipient.phone) {
-      const { data: whatsAppResult } = await supabase.functions.invoke('send-whatsapp-notification', {
+      const { data: whatsAppResult, error: whatsAppError } = await supabase.functions.invoke('send-whatsapp-notification', {
         body: {
           restaurant_id: campaign.restaurant_id,
           phone: recipient.phone,
@@ -99,41 +124,54 @@ serve(async (req) => {
         },
         headers: internalSecret ? { 'X-Menuverse-Internal-Secret': internalSecret } : undefined,
       });
-      if (whatsAppResult?.status === 'delivered' || whatsAppResult?.queued) sentCount += 1;
+      if (!whatsAppError && (whatsAppResult?.status === 'delivered' || whatsAppResult?.queued)) sentCount += 1;
+      else failedCount += 1;
     }
 
-    if ((campaign.channel === 'email' || campaign.channel === 'both') && recipient.email && sendgridKey) {
-      const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    if (campaign.channel === 'email' || campaign.channel === 'both') {
+      if (!recipient.email || !resendKey) {
+        failedCount += 1;
+      } else {
+        const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sendgridKey}`,
+          Authorization: `Bearer ${resendKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          personalizations: [{ to: [{ email: recipient.email }] }],
-          from: { email: fromEmail, name: campaign.restaurant?.name || 'Menuverse' },
+          from: fromEmail,
+          to: [recipient.email],
           subject: campaign.subject || campaign.name,
-          content: [{ type: 'text/plain', value: message }],
+          text: message,
+          html: emailHtmlFromText(message),
+          tags: [
+            { name: 'campaign_id', value: campaignId },
+            { name: 'source', value: 'menuverse' },
+          ],
         }),
       });
       if (response.ok) sentCount += 1;
+      else failedCount += 1;
+      }
     }
 
     await supabase
       .from('MarketingCampaign')
-      .update({ sent_count: sentCount, updated_at: new Date().toISOString() })
+      .update({ sent_count: sentCount, failed_count: failedCount, updated_at: new Date().toISOString() })
       .eq('id', campaignId);
   }
 
+  const finalStatus = sentCount > 0 ? 'sent' : 'failed';
   await supabase
     .from('MarketingCampaign')
     .update({
-      status: 'sent',
+      status: finalStatus,
       sent_count: sentCount,
+      failed_count: failedCount,
       sent_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', campaignId);
 
-  return json({ status: 'sent', sent_count: sentCount, recipients_count: recipients?.length || 0 });
+  return json({ status: finalStatus, sent_count: sentCount, failed_count: failedCount, recipients_count: recipients?.length || 0 });
 });

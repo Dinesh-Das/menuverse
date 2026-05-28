@@ -3,9 +3,11 @@ import { canTransitionOrderStatus, safeParseModifiers } from './businessRules';
 
 const now = () => new Date().toISOString();
 const AR_BUCKET = 'ar-models';
+const AR_SOURCE_VIDEO_BUCKET = 'ar-source-videos';
 const MAX_GLB_SIZE = 20 * 1024 * 1024;
 const MAX_USDZ_SIZE = 20 * 1024 * 1024;
 const MAX_THUMBNAIL_SIZE = 2 * 1024 * 1024;
+const MAX_AR_VIDEO_SIZE = 150 * 1024 * 1024;
 const GLB_MIME_TYPES = new Set(['model/gltf-binary', 'application/octet-stream', '']);
 const USDZ_MIME_TYPES = new Set([
   'model/vnd.usdz+zip',
@@ -16,6 +18,7 @@ const USDZ_MIME_TYPES = new Set([
   '',
 ]);
 const THUMBNAIL_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const AR_VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', '']);
 
 function requireRestaurantId(restaurantId) {
   if (!restaurantId) throw new Error('Restaurant context is required for this operation.');
@@ -83,6 +86,19 @@ async function uploadARFile(path, file, contentType) {
   if (error) throw new Error(error.message);
 
   const { data } = supabase.storage.from(AR_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+async function uploadARSourceVideo(path, file) {
+  const { error } = await supabase.storage
+    .from(AR_SOURCE_VIDEO_BUCKET)
+    .upload(path, file, {
+      upsert: true,
+      contentType: file.type || 'video/mp4',
+    });
+  if (error) throw new Error(error.message);
+
+  const { data } = supabase.storage.from(AR_SOURCE_VIDEO_BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }
 
@@ -181,20 +197,36 @@ export async function placeOrder(payload) {
   // Order creation must go through the create_order_secure RPC only.
   const { data, error } = await supabase.rpc('create_order_secure', rpcPayload);
   if (error) throw new Error(`Secure order creation failed: ${error.message}`);
-  return Array.isArray(data) ? data[0] : data;
+  const orderResult = Array.isArray(data) ? data[0] : data;
+
+  if (payload.order_type && payload.order_type !== 'dine_in') {
+    const { data: fulfillment, error: fulfillmentError } = await supabase.rpc('set_order_fulfillment_details', {
+      p_order_id: orderResult.order_ref,
+      p_table_session_token: tableSessionToken || null,
+      p_order_type: payload.order_type,
+      p_delivery_address: payload.delivery_address || null,
+      p_delivery_fee: Number(payload.delivery_fee || 0),
+      p_delivery_distance_km: payload.delivery_distance_km ?? null,
+    });
+    if (fulfillmentError) throw new Error(fulfillmentError.message);
+    return {
+      ...orderResult,
+      total_amount: fulfillment?.total_amount ?? orderResult.total_amount,
+    };
+  }
+
+  return orderResult;
 }
 
 export async function fetchOrderStatus(orderId) {
   const tableSessionToken = localStorage.getItem('mv_table_session_token');
-  if (tableSessionToken) {
-    const { data, error } = await supabase.rpc('get_order_status_secure', {
-      p_order_id: orderId,
-      p_table_session_token: tableSessionToken,
-    });
-    if (!error && data) return Array.isArray(data) ? data[0] : data;
-  }
+  const { data, error } = await supabase.rpc('get_order_status_secure', {
+    p_order_id: orderId,
+    p_table_session_token: tableSessionToken || null,
+  });
+  if (!error && data) return Array.isArray(data) ? data[0] : data;
 
-  throw new Error('Order status requires a valid table session.');
+  throw new Error('Order status is not available for this session.');
 }
 
 export async function fetchTableOrders(_tableId) {
@@ -293,6 +325,7 @@ export async function submitOrderFeedback({
   if (error) throw new Error(error.message);
 
   if (data) {
+    // The RPC enqueues analysis with pg_net; this keeps local projects working before that URL is configured.
     supabase.functions.invoke('analyse-feedback', {
       body: { feedback_id: data },
     }).catch(() => {});
@@ -363,6 +396,19 @@ export async function fetchRecommendations({ restaurantId, cartItemIds = [], gue
   });
   if (error) throw new Error(error.message);
   return data?.items || [];
+}
+
+export async function fetchDeliveryQuote({ restaurantId, address, orderValue = 0 }) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.functions.invoke('delivery-quote', {
+    body: {
+      restaurant_id: restaurantId,
+      address,
+      order_value: orderValue,
+    },
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function adminFetchFeedbackInsights(restaurantId, days = 30) {
@@ -754,6 +800,44 @@ export async function adminUploadARAsset(itemId, formData) {
     .eq('id', itemId)
     .eq('restaurant_id', menuItem.restaurant_id);
   if (itemError) throw new Error(itemError.message);
+
+  return asset;
+}
+
+export async function adminUploadARSourceVideo(itemId, file) {
+  const menuItem = await fetchMenuItemForAR(itemId);
+  assertUploadFile(file, {
+    label: 'Source video',
+    maxBytes: MAX_AR_VIDEO_SIZE,
+    extensions: ['mp4', 'mov'],
+    mimeTypes: AR_VIDEO_MIME_TYPES,
+  });
+
+  const ext = getFileExtension(file);
+  const path = `${menuItem.restaurant_id}/${itemId}/source-${crypto.randomUUID()}.${ext}`;
+  const publicUrl = await uploadARSourceVideo(path, file);
+
+  const { data: asset, error } = await supabase
+    .from('ARAsset')
+    .upsert({
+      restaurant_id: menuItem.restaurant_id,
+      menu_item_id: itemId,
+      source_video_url: publicUrl,
+      processing_status: 'queued',
+      processing_error: null,
+      updated_at: now(),
+    }, { onConflict: 'menu_item_id' })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+
+  supabase.functions.invoke('process-ar-asset', {
+    body: {
+      asset_id: asset.id,
+      source_video_url: publicUrl,
+      storage_path: path,
+    },
+  }).catch(err => console.warn('[Menuverse] AR processing enqueue skipped:', err.message));
 
   return asset;
 }

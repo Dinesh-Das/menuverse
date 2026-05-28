@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import { adminFetchTables, adminCreateTable, adminClearTable, adminDeleteTable, adminUpdateTable } from '../../lib/api';
@@ -24,6 +26,15 @@ function safeFilePart(value, fallback = 'menuverse') {
 function getRestaurantInitial(restaurant) {
   const name = restaurant?.name || restaurant?.slug || 'Menuverse';
   return name.trim().charAt(0).toUpperCase() || 'M';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function loadLogoImage(url) {
@@ -181,6 +192,7 @@ export default function QRFactory() {
   const [saving, setSaving] = useState(false);
   const [tableActionId, setTableActionId] = useState(null);
   const [form, setForm] = useState({ number: '', section: 'Main Hall', capacity: 4, status: 'available' });
+  const [bulkPdfState, setBulkPdfState] = useState({ generating: false, processed: 0, total: 0 });
 
   const restaurant = user?.restaurant;
 
@@ -266,6 +278,85 @@ export default function QRFactory() {
     }
   };
 
+  const handleDownloadAllPdf = async () => {
+    if (!tables.length || bulkPdfState.generating) return;
+
+    setBulkPdfState({ generating: true, processed: 0, total: tables.length });
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pages = [];
+    for (let i = 0; i < tables.length; i += 6) pages.push(tables.slice(i, i + 6));
+
+    try {
+      let processed = 0;
+      for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+        const pageTables = pages[pageIndex];
+        const page = document.createElement('div');
+        page.style.cssText = [
+          'position:fixed',
+          'left:-10000px',
+          'top:0',
+          'width:794px',
+          'height:1123px',
+          'padding:42px',
+          'background:#ffffff',
+          'color:#171717',
+          'display:grid',
+          'grid-template-columns:1fr 1fr',
+          'grid-template-rows:1fr 1fr 1fr',
+          'gap:24px',
+          'font-family:Arial,sans-serif',
+        ].join(';');
+
+        const cells = [];
+        for (const table of pageTables) {
+          const qrDataUrl = await QRCode.toDataURL(buildQrUrl(table, restaurant), {
+            width: 360,
+            margin: 2,
+            color: { dark: '#171717', light: '#ffffff' },
+            errorCorrectionLevel: 'H',
+          });
+          processed += 1;
+          setBulkPdfState({ generating: true, processed, total: tables.length });
+
+          const logo = restaurant?.logo_url
+            ? `<img src="${escapeHtml(restaurant.logo_url)}" crossorigin="anonymous" style="width:42px;height:42px;border-radius:999px;object-fit:cover;border:2px solid #171717;" />`
+            : `<div style="width:42px;height:42px;border-radius:999px;background:#171717;color:#ffffff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:22px;">${escapeHtml(getRestaurantInitial(restaurant))}</div>`;
+
+          cells.push(`
+            <div style="border:2px solid #171717;border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+              <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:14px;">
+                ${logo}
+                <div style="text-align:left;">
+                  <div style="font-size:16px;line-height:1.1;font-weight:800;">${escapeHtml(restaurant?.name || 'Menuverse')}</div>
+                  <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#666;margin-top:4px;">Scan to order</div>
+                </div>
+              </div>
+              <img src="${qrDataUrl}" style="width:230px;height:230px;display:block;" />
+              <div style="font-size:30px;font-weight:800;margin-top:10px;">Table ${escapeHtml(table.number)}</div>
+              <div style="font-size:12px;color:#666;margin-top:4px;">${escapeHtml(table.section || '')}</div>
+            </div>
+          `);
+        }
+
+        page.innerHTML = cells.join('');
+        document.body.appendChild(page);
+        const canvas = await html2canvas(page, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        document.body.removeChild(page);
+
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, 297);
+      }
+
+      pdf.save(`${safeFilePart(restaurant?.slug)}-all-table-qrs.pdf`);
+      addToast('All table QR codes exported as PDF.', 'success');
+    } catch (err) {
+      console.error(err);
+      addToast(`PDF export failed: ${err.message}`, 'error');
+    } finally {
+      setBulkPdfState({ generating: false, processed: 0, total: 0 });
+    }
+  };
+
   return (
     <AdminLayout>
       <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
@@ -288,13 +379,25 @@ export default function QRFactory() {
               </p>
             )}
           </div>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="shrink-0 px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all cursor-pointer shadow-md active:scale-95 flex items-center gap-2 bg-primary text-on-primary hover:bg-primary-container"
-          >
-            <span className="material-symbols-outlined text-sm">add</span>
-            New Table
-          </button>
+          <div className="shrink-0 flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={handleDownloadAllPdf}
+              disabled={bulkPdfState.generating || tables.length === 0}
+              className="px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all cursor-pointer shadow-md active:scale-95 flex items-center justify-center gap-2 border border-outline-variant/30 text-on-surface hover:bg-surface-container-high disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-sm ${bulkPdfState.generating ? 'animate-spin' : ''}`}>{bulkPdfState.generating ? 'progress_activity' : 'picture_as_pdf'}</span>
+              {bulkPdfState.generating
+                ? `${bulkPdfState.processed}/${bulkPdfState.total} tables`
+                : 'Download All Tables as PDF'}
+            </button>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all cursor-pointer shadow-md active:scale-95 flex items-center justify-center gap-2 bg-primary text-on-primary hover:bg-primary-container"
+            >
+              <span className="material-symbols-outlined text-sm">add</span>
+              New Table
+            </button>
+          </div>
         </div>
 
         {/* Create Table Modal */}

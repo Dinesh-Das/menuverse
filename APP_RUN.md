@@ -24,21 +24,18 @@ Ensure you have the following installed on your machine:
 3. **Environment Configuration**:
    The project includes a `.env` file for local development. Ensure it contains the following:
    ```env
-   DATABASE_URL="file:./dev.db"
-   JWT_SECRET="zaikazindagi-super-secret-key"
-   BASE_URL="http://localhost:5173"
-   PORT=3005
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-public-anon-key
+   VITE_APP_TYPE=all
+   VITE_CUSTOMER_APP_URL=http://localhost:5173
    ```
 
 4. **Initialize Database**:
-   The app uses Prisma with SQLite for local development. Run the following command to sync your database schema:
-   ```bash
-   npx prisma db push
-   ```
+   Run the SQL migrations in `supabase/migrations/` against your Supabase project, then apply `supabase/rls-policies.sql`.
 
 ## Running the Application
 
-You can start both the backend server and the frontend development server simultaneously using a single command:
+Start the Vite development server:
 
 ```bash
 npm run dev
@@ -46,11 +43,9 @@ npm run dev
 
 This command runs:
 - **Frontend (Vite)**: `http://localhost:5173`
-- **Backend (Express)**: `http://localhost:3005`
 
 ### Seeding Initial Data
-On the first run, the database will be empty. You can seed the database with a sample restaurant, menu items, and admin user by visiting:
-`http://localhost:3005/api/seed` (POST request) or simply opening the app; the landing page is designed to trigger this if no data is found.
+On the first run, the database will be empty. Use the migration seed data or Supabase SQL editor scripts maintained for your environment.
 
 ## Admin Access
 
@@ -62,19 +57,8 @@ To access the administrative dashboard (KDS, Menu Management, etc.):
 
 ## Troubleshooting
 
-### Port Conflict (`EADDRINUSE`)
-If you see an error like `Error: listen EADDRINUSE: address already in use :::3005`, it means another process is already using port 3005.
-- **Solution**: Kill the process running on port 3005 or change the `PORT` variable in your `.env` file.
-- **To kill the process on Windows**:
-  ```powershell
-  Stop-Process -Id (Get-NetTCPConnection -LocalPort 3005).OwningProcess -Force
-  ```
-
 ### Database Issues
-If the app fails to fetch data, try resetting the Prisma client:
-```bash
-npx prisma generate
-```
+If the app fails to fetch data, verify `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, applied migrations, and RLS policies.
 
 ## Key Modules
 - `/r/:restaurantSlug/t/:tableId` - Customer Menu Landing (via QR)

@@ -10,6 +10,9 @@ verify_jwt = false
 [functions.create-stripe-payment-intent]
 verify_jwt = false
 
+[functions.delivery-quote]
+verify_jwt = false
+
 [functions.get-recommendations]
 verify_jwt = false
 
@@ -17,6 +20,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.pos-adapter-petpooja]
+verify_jwt = false
+
+[functions.pos-adapter-square]
 verify_jwt = false
 
 [functions.send-campaign]
@@ -32,4 +38,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.verify-stripe-webhook]
+verify_jwt = false
+
+[functions.whatsapp-inbound]
+verify_jwt = false
+
+[functions.process-ar-asset]
 verify_jwt = false

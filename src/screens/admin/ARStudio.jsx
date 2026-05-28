@@ -9,14 +9,19 @@ import {
   adminFetchMenuItems,
   adminUpdateARAssetStatus,
   adminUploadARAsset,
+  adminUploadARSourceVideo,
 } from '../../lib/api';
 
 const MAX_GLB_SIZE = 20 * 1024 * 1024;
 const MAX_USDZ_SIZE = 20 * 1024 * 1024;
 const MAX_THUMBNAIL_SIZE = 2 * 1024 * 1024;
+const MAX_VIDEO_SIZE = 150 * 1024 * 1024;
 
 const STATUS_STYLES = {
   ready: 'bg-green-500/10 text-green-600 border-green-500/20',
+  complete: 'bg-green-500/10 text-green-600 border-green-500/20',
+  processing: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
+  queued: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
   failed: 'bg-error/10 text-error border-error/20',
   not_uploaded: 'bg-surface-container-highest text-on-surface-variant border-outline-variant/20',
 };
@@ -36,10 +41,12 @@ export default function ARStudio() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [loadingAsset, setLoadingAsset] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
   const [glbFile, setGlbFile] = useState(null);
   const [usdzFile, setUsdzFile] = useState(null);
   const [thumbnailFile, setThumbnailFile] = useState(null);
+  const [videoFile, setVideoFile] = useState(null);
   const [modelViewerReady, setModelViewerReady] = useState(false);
 
   const selectedItem = useMemo(
@@ -130,6 +137,25 @@ export default function ARStudio() {
     }
   };
 
+  const handleVideoUpload = async (event) => {
+    event.preventDefault();
+    if (!selectedItemId || !videoFile) return;
+
+    try {
+      validateFileSize(videoFile, MAX_VIDEO_SIZE, 'Source video');
+      setUploadingVideo(true);
+      const uploaded = await adminUploadARSourceVideo(selectedItemId, videoFile);
+      setAsset(uploaded);
+      setVideoFile(null);
+      await loadItems();
+      addToast('Video uploaded. AR generation queued.', 'success');
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
   const handleToggle = async (checked) => {
     if (!selectedItemId || !asset) return;
     setSavingStatus(true);
@@ -204,7 +230,6 @@ export default function ARStudio() {
                 <ul className="mt-3 space-y-1 text-xs text-on-surface-variant">
                   <li>GLB and USDZ files must be 20MB or smaller.</li>
                   <li>Thumbnails must be JPG, PNG, or WebP and 2MB or smaller.</li>
-                  <li>Video-to-3D generation is planned for a future pipeline service.</li>
                 </ul>
               </div>
 
@@ -253,6 +278,34 @@ export default function ARStudio() {
                 Upload Asset
               </button>
             </form>
+
+            <form onSubmit={handleVideoUpload} className="rounded-2xl bg-surface-container-low border border-outline-variant/10 p-6 shadow-luxury space-y-5">
+              <div>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Generate From Video</h3>
+                <p className="text-xs text-on-surface-variant mt-1">Upload an MP4 or MOV clip up to 150MB.</p>
+              </div>
+
+              <label className="block">
+                <span className="block text-[10px] uppercase font-bold tracking-[0.18em] text-on-surface-variant mb-2">
+                  Source Video
+                </span>
+                <input
+                  type="file"
+                  accept=".mp4,.mov,video/mp4,video/quicktime"
+                  onChange={event => setVideoFile(event.target.files?.[0] || null)}
+                  className="block w-full text-xs text-on-surface-variant file:mr-4 file:rounded-full file:border-0 file:bg-surface-container-highest file:px-4 file:py-2 file:text-xs file:font-bold file:uppercase file:tracking-widest file:text-on-surface"
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={uploadingVideo || !selectedItemId || !videoFile}
+                className="w-full rounded-xl bg-primary text-on-primary px-5 py-3 text-xs font-bold uppercase tracking-widest shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {uploadingVideo && <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>}
+                Queue Generation
+              </button>
+            </form>
           </section>
 
           <section className="rounded-2xl bg-surface-container-low border border-outline-variant/10 shadow-luxury overflow-hidden">
@@ -274,7 +327,7 @@ export default function ARStudio() {
                   <span className="text-xs font-bold text-on-surface">Enabled</span>
                   <input
                     type="checkbox"
-                    disabled={!asset || savingStatus || status !== 'ready'}
+                    disabled={!asset || savingStatus || !['ready', 'complete'].includes(status)}
                     checked={Boolean(asset?.is_active && selectedItem?.ar_preview_enabled)}
                     onChange={event => handleToggle(event.target.checked)}
                     className="w-5 h-5 accent-primary"
@@ -313,7 +366,7 @@ export default function ARStudio() {
                 </div>
               )}
 
-              <div className="grid md:grid-cols-3 gap-4 mt-6">
+              <div className="grid md:grid-cols-4 gap-4 mt-6">
                 <div className="rounded-xl bg-surface-container p-4 border border-outline-variant/10">
                   <p className="text-[9px] uppercase font-bold tracking-widest text-on-surface-variant mb-1">GLB URL</p>
                   <p className="text-xs text-on-surface truncate">{asset?.model_glb_url || 'Not uploaded'}</p>
@@ -325,6 +378,10 @@ export default function ARStudio() {
                 <div className="rounded-xl bg-surface-container p-4 border border-outline-variant/10">
                   <p className="text-[9px] uppercase font-bold tracking-widest text-on-surface-variant mb-1">Thumbnail</p>
                   <p className="text-xs text-on-surface truncate">{asset?.thumbnail_url || 'Not uploaded'}</p>
+                </div>
+                <div className="rounded-xl bg-surface-container p-4 border border-outline-variant/10">
+                  <p className="text-[9px] uppercase font-bold tracking-widest text-on-surface-variant mb-1">Source Video</p>
+                  <p className="text-xs text-on-surface truncate">{asset?.source_video_url || 'Not uploaded'}</p>
                 </div>
               </div>
 

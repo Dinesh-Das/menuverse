@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import AdminLayout from '../../components/AdminLayout';
 import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
@@ -15,6 +16,7 @@ const formatTime = (ms) => {
   const sign = isNegative ? '-' : '';
   return `${sign}${Math.floor(absS / 60)}:${String(absS % 60).padStart(2, '0')}`;
 };
+const KDS_SWIPE_HINT_KEY = 'mv_kds_swipe_hint_dismissed';
 
 export default function KDS() {
   const { user } = useAuth();
@@ -25,12 +27,22 @@ export default function KDS() {
   const [loading, setLoading] = useState(true);
   const [muted, setMuted] = useState(false);
   const [updatingIds, setUpdatingIds] = useState(new Set());
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches);
+  const [swipeHintDismissed, setSwipeHintDismissed] = useState(() => localStorage.getItem(KDS_SWIPE_HINT_KEY) === 'true');
   const audioRef = useRef(null);
 
   // MF-3: Initialize audio for new order alerts
   useEffect(() => {
     audioRef.current = new Audio('/sounds/new-order.mp3');
     audioRef.current.volume = 0.7;
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
   }, []);
 
   const playFallbackBeep = () => {
@@ -198,6 +210,28 @@ export default function KDS() {
     return map[status] || [];
   };
 
+  const dismissSwipeHint = useCallback(() => {
+    if (swipeHintDismissed) return;
+    localStorage.setItem(KDS_SWIPE_HINT_KEY, 'true');
+    setSwipeHintDismissed(true);
+  }, [swipeHintDismissed]);
+
+  const getSwipeStatus = (status, direction) => {
+    if (direction === 'left') {
+      if (status === 'preparing') return 'ready';
+      if (status === 'ready') return 'served';
+    }
+    return getActions(status)[0]?.next || null;
+  };
+
+  const handleSwipe = (order, offsetX) => {
+    dismissSwipeHint();
+    if (updatingIds.has(order.id) || Math.abs(offsetX) < 96) return;
+    const direction = offsetX > 0 ? 'right' : 'left';
+    const nextStatus = getSwipeStatus(order.status, direction);
+    if (nextStatus) handleStatusUpdate(order.id, nextStatus);
+  };
+
   return (
     <AdminLayout>
       <main className="flex-1 flex flex-col h-screen overflow-hidden bg-surface text-on-surface transition-theme">
@@ -256,6 +290,16 @@ export default function KDS() {
               <p className="kds-body-text text-on-surface-variant mt-2">Waiting for incoming tickets…</p>
             </div>
           ) : (
+            <>
+            {isMobile && !swipeHintDismissed && (
+              <div className="md:hidden mb-4 rounded-2xl border border-primary/20 bg-primary/10 p-4 text-primary flex items-center justify-between gap-3">
+                <span className="material-symbols-outlined">keyboard_double_arrow_right</span>
+                <p className="text-xs font-bold uppercase tracking-widest text-center leading-relaxed">
+                  Swipe right to advance. Swipe left to mark ready or served.
+                </p>
+                <span className="material-symbols-outlined">keyboard_double_arrow_left</span>
+              </div>
+            )}
             <div className="kds-grid">
               {[...orders].sort((a, b) => {
                 const pMap = { pending: 1, accepted: 2, preparing: 3, ready: 4 };
@@ -276,7 +320,15 @@ export default function KDS() {
                 const actions = getActions(order.status);
 
                 return (
-                  <div key={order.id} className={`bg-surface-container rounded-xl flex flex-col shadow-luxury border ${borderClass}`}>
+                  <motion.div
+                    key={order.id}
+                    drag={isMobile ? 'x' : false}
+                    dragConstraints={{ left: 0, right: 0 }}
+                    dragElastic={0.18}
+                    onDragEnd={(_, info) => handleSwipe(order, info.offset.x)}
+                    whileDrag={isMobile ? { scale: 1.02 } : undefined}
+                    className={`bg-surface-container rounded-xl flex flex-col shadow-luxury border ${borderClass}`}
+                  >
                     {/* Card Header */}
                     <div className="p-5 flex justify-between items-start border-b border-outline-variant/30">
                       <div>
@@ -373,10 +425,11 @@ export default function KDS() {
                         </button>
                       )}
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
+            </>
           )}
         </div>
       </main>

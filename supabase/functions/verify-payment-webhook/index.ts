@@ -1,14 +1,6 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? 'https://menuverse.app',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-razorpay-signature',
-};
-
-function json(body: unknown, status = 200) {
-  return Response.json(body, { status, headers: corsHeaders });
-}
+import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 
 function toHex(buffer: ArrayBuffer) {
   return [...new Uint8Array(buffer)]
@@ -73,7 +65,8 @@ async function sendRestaurantBroadcast(
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
+  if (req.method === 'OPTIONS') return preflightResponse(req);
   if (req.method !== 'POST') {
     return json({ error: 'Method not allowed' }, 405);
   }

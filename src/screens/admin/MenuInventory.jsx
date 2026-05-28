@@ -112,15 +112,15 @@ export default function MenuInventory() {
     try {
       const ext = file.name.split('.').pop();
       const filename = `${crypto.randomUUID()}.${ext}`;
-      const path = `menu-items/${user.restaurantId}/${filename}`;
+      const path = `${user.restaurantId}/menu-items/${filename}`;
       const { error: uploadErr } = await supabase.storage
-        .from('restaurant-assets')
+        .from('menu-images')
         .upload(path, file, { upsert: true, contentType: file.type });
 
       if (uploadErr) throw new Error(uploadErr.message);
 
       const { data: { publicUrl } } = supabase.storage
-        .from('restaurant-assets')
+        .from('menu-images')
         .getPublicUrl(path);
 
       setFormData(prev => ({ ...prev, image_url: publicUrl }));

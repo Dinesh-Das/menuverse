@@ -1,14 +1,6 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? 'https://menuverse.app',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-menuverse-internal-secret',
-};
-
-function json(body: unknown, status = 200) {
-  return Response.json(body, { status, headers: corsHeaders });
-}
+import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 
 async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Request, restaurantId: string) {
   const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
@@ -31,7 +23,8 @@ async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Requ
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
+  if (req.method === 'OPTIONS') return preflightResponse(req);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -76,6 +69,7 @@ serve(async (req) => {
   const accessToken = Deno.env.get('POS_ACCESS_TOKEN');
   const adapterMap: Record<string, string> = {
     petpooja: 'pos-adapter-petpooja',
+    square: 'pos-adapter-square',
   };
   const payload = {
     provider,

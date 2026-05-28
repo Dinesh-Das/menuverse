@@ -47,12 +47,7 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceRoleKey) return json({ error: 'POS adapter is not configured.' }, 503);
-
-  const endpoint = Deno.env.get('PETPOOJA_KOT_URL');
-  const token = Deno.env.get('PETPOOJA_TOKEN');
-  const fallbackRestId = Deno.env.get('PETPOOJA_REST_ID');
-  if (!endpoint) return json({ error: 'PETPOOJA_KOT_URL is not configured.' }, 503);
+  if (!supabaseUrl || !serviceRoleKey) return json({ error: 'Square adapter is not configured.' }, 503);
 
   const body = await req.json().catch(() => ({}));
   const jobId = String(body.job_id || '').trim();
@@ -62,12 +57,12 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   if (!(await isAuthorized(supabase, req, restaurantId, serviceRoleKey))) {
-    return json({ error: 'Not authorized to run the Petpooja adapter.' }, 403);
+    return json({ error: 'Not authorized to run the Square adapter.' }, 403);
   }
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from('Restaurant')
-    .select('id, name, pos_config')
+    .select('id, name, currency, pos_config')
     .eq('id', restaurantId)
     .maybeSingle();
   if (restaurantError) return json({ error: restaurantError.message }, 500);
@@ -83,54 +78,78 @@ serve(async (req) => {
   if (!order) return json({ error: 'Order not found.' }, 404);
 
   const config = restaurant.pos_config || {};
-  const restID = config.petpooja_rest_id || config.restID || fallbackRestId;
-  if (!restID) return json({ error: 'Petpooja restaurant ID is not configured.' }, 503);
+  const accessToken = config.square_access_token || Deno.env.get('SQUARE_ACCESS_TOKEN');
+  const locationId = config.square_location_id || Deno.env.get('SQUARE_LOCATION_ID');
+  if (!accessToken || !locationId) return json({ error: 'Square access token and location ID are required.' }, 503);
 
-  const petpoojaPayload = {
-    restID,
-    orderType: '1',
-    tableNo: String(order.table?.number || ''),
-    items: (order.items || []).map((item: Record<string, unknown>) => {
-      const modifiers = parseModifiers(item.modifiers_json);
-      const customization = [
-        ...modifiers.map((modifier: Record<string, unknown>) => modifier.name).filter(Boolean),
-        item.item_note ? `Note: ${item.item_note}` : null,
-      ].filter(Boolean).join(', ');
+  const currency = String(config.square_currency || restaurant.currency || 'USD').toUpperCase();
+  const tableNumber = String(order.table?.number || order.table_id?.slice(-4) || '');
+  const squarePayload = {
+    idempotency_key: jobId || `${order.id}-square`,
+    order: {
+      location_id: locationId,
+      reference_id: order.id,
+      source: { name: 'Menuverse' },
+      line_items: (order.items || []).map((item: Record<string, unknown>) => {
+        const modifiers = parseModifiers(item.modifiers_json);
+        const note = [
+          ...modifiers.map((modifier: Record<string, unknown>) => modifier.name).filter(Boolean),
+          item.item_note ? `Note: ${item.item_note}` : null,
+        ].filter(Boolean).join(', ');
 
-      return {
-        itemid: String(item.menu_item_id || ''),
-        itemname: String(item.name || ''),
-        itemqty: Number(item.quantity || 1),
-        itemprice: Number(item.price || 0),
-        item_tax: '',
-        customization,
-      };
-    }),
-    orderNote: order.special_instructions || '',
+        return {
+          name: String(item.name || 'Menu item'),
+          quantity: String(Number(item.quantity || 1)),
+          base_price_money: {
+            amount: Math.round(Number(item.price || 0) * 100),
+            currency,
+          },
+          ...(note ? { note } : {}),
+        };
+      }),
+      fulfillments: [
+        {
+          type: 'PICKUP',
+          state: 'PROPOSED',
+          pickup_details: {
+            schedule_type: 'ASAP',
+            note: `DINE_IN${tableNumber ? ` table ${tableNumber}` : ''}`,
+            recipient: { display_name: tableNumber ? `Table ${tableNumber}` : restaurant.name || 'Dine-in guest' },
+          },
+        },
+      ],
+      metadata: {
+        menuverse_order_id: order.id,
+        restaurant_id: restaurantId,
+        table_number: tableNumber,
+        fulfillment_type: 'DINE_IN',
+      },
+    },
   };
 
-  const response = await fetch(endpoint, {
+  const endpointBase = config.square_environment === 'sandbox'
+    ? 'https://connect.squareupsandbox.com'
+    : 'https://connect.squareup.com';
+
+  const response = await fetch(`${endpointBase}/v2/orders`, {
     method: 'POST',
     headers: {
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      'Square-Version': Deno.env.get('SQUARE_VERSION') || '2026-05-20',
     },
-    body: JSON.stringify(petpoojaPayload),
+    body: JSON.stringify(squarePayload),
   }).catch((error) => error);
 
   if (response instanceof Error || !response.ok) {
-    const error = response instanceof Error ? response.message : await response.text().catch(() => 'Petpooja KOT sync failed.');
+    const error = response instanceof Error ? response.message : await response.text().catch(() => 'Square order sync failed.');
     if (jobId) {
       await supabase
         .from('IntegrationJob')
-        .update({
-          status: 'failed',
-          error,
-          updated_at: new Date().toISOString(),
-        })
+        .update({ status: 'failed', error, updated_at: new Date().toISOString() })
         .eq('id', jobId);
     }
-    return json({ status: 'failed', error, payload: petpoojaPayload }, 502);
+    return json({ status: 'failed', error, payload: squarePayload }, 502);
   }
 
   const responseBody = await response.json().catch(() => ({ ok: true }));
