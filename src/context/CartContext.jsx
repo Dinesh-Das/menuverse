@@ -25,8 +25,10 @@ function makeCartKey(dishId, modifiers = [], itemNote = '') {
 }
 
 function sendRealtimeMessage(channel, payload) {
-  if (typeof channel.httpSend === 'function') return channel.httpSend(payload);
-  return channel.send(payload);
+  if (!channel || !payload?.event) return Promise.resolve('error');
+  return channel
+    .send({ type: 'broadcast', event: payload.event, payload: payload.payload || {} })
+    .catch(() => 'error');
 }
 
 export function CartProvider({ children }) {
@@ -78,7 +80,7 @@ export function CartProvider({ children }) {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           // Ask for others' carts
-          sendRealtimeMessage(channel, { type: 'broadcast', event: 'request_sync' });
+          sendRealtimeMessage(channel, { type: 'broadcast', event: 'request_sync', payload: {} });
           // Send our cart initially
           sendRealtimeMessage(channel, {
             type: 'broadcast',

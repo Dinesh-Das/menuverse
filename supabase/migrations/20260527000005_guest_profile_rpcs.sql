@@ -70,6 +70,7 @@ begin
 end;
 $$;
 
+drop function if exists get_guest_profile_for_session(text);
 create or replace function get_guest_profile_for_session(p_session_token text)
 returns table(id text, loyalty_points integer, name text)
 language sql
