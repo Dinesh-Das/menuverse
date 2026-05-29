@@ -81,8 +81,16 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
   };
 
+  const refreshUserProfile = async () => {
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    if (!currentSession?.user) return null;
+    setSession(currentSession);
+    await fetchUserProfile(currentSession.user);
+    return currentSession.user;
+  };
+
   return (
-    <AuthContext.Provider value={{ token: session?.access_token, user, login, logout, loading }}>
+    <AuthContext.Provider value={{ token: session?.access_token, user, login, logout, refreshUserProfile, loading }}>
       {!loading && children}
     </AuthContext.Provider>
   );

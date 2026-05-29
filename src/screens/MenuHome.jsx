@@ -4,9 +4,20 @@ import { useCart } from '../context/CartContext';
 import { CustomerTopNav } from '../components/TopNav';
 import BottomNav from '../components/BottomNav';
 import CartSidebar from '../components/CartSidebar';
-import { fetchMenu, fetchRecommendations } from '../lib/api';
+import {
+  MENU_LOCALE_LABELS,
+  applyMenuTranslationsToCategories,
+  fetchMenu,
+  fetchMenuTranslations,
+  fetchRecommendations,
+  getGuestProfileForSession,
+  getPreferredMenuLocale,
+  resetMenuLocaleToEnglish,
+  sendMenuChatMessage,
+} from '../lib/api';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { sortRecommendedItems } from '../lib/recommendations';
+import { useToast } from '../components/Toast';
 
 const TAG_CONFIG = {
   popular: { label: 'Popular', color: 'bg-primary text-on-primary', icon: 'local_fire_department' },
@@ -65,9 +76,11 @@ function DishImage({ src, alt }) {
 
 export default function MenuHome() {
   const { restaurantSlug } = useParams();
-  const { addItem, items, count, total, restaurantSlug: sessionSlug, setSession, updateQty } = useCart();
+  const { addItem, items, count, total, restaurantSlug: sessionSlug, setSession, updateQty, tableSessionToken } = useCart();
   const navigate = useNavigate();
+  const { addToast } = useToast();
   const slug = restaurantSlug || sessionSlug || null;
+  const menuChatEnabled = String(import.meta.env.VITE_ENABLE_MENU_CHAT || '').toLowerCase() === 'true';
 
   const [restaurant, setRestaurant] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -79,6 +92,12 @@ export default function MenuHome() {
   const [upsellModal, setUpsellModal] = useState({ isOpen: false, addedItemName: '' });
   const [upsellCandidates, setUpsellCandidates] = useState([]);
   const [serverRecommendations, setServerRecommendations] = useState([]);
+  const [guestProfile, setGuestProfile] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [preferredLocale, setPreferredLocale] = useState(getPreferredMenuLocale);
 
   useEffect(() => {
     if (!slug) {
@@ -86,13 +105,28 @@ export default function MenuHome() {
       setLoading(false);
       return;
     }
-    fetchMenu(slug)
-      .then(data => {
+
+    let mounted = true;
+    async function loadMenu() {
+      setLoading(true);
+      try {
+        const data = await fetchMenu(slug);
+        let nextCategories = data.categories || [];
+        if (preferredLocale !== 'en') {
+          const menuItemIds = nextCategories.flatMap(cat => (cat.items || []).map(item => item.id));
+          try {
+            const translations = await fetchMenuTranslations(menuItemIds, preferredLocale);
+            nextCategories = applyMenuTranslationsToCategories(nextCategories, translations);
+          } catch {
+            nextCategories = data.categories || [];
+          }
+        }
+        if (!mounted) return;
         setRestaurant(data.restaurant);
-        setCategories(data.categories || []);
-        
+        setCategories(nextCategories);
+
         // Prepare session-aware recommendation candidates.
-        const candidates = (data.categories || [])
+        const candidates = nextCategories
           .flatMap(cat => cat.items || [])
           .filter(item => item.available);
         setUpsellCandidates(candidates);
@@ -107,12 +141,28 @@ export default function MenuHome() {
             gstRate: data.restaurant.gst_rate
           });
         }
-      })
-      .catch(err => {
+      } catch (err) {
+        if (!mounted) return;
         setError(err.message);
         setLoading(false);
-      });
-  }, [slug, sessionSlug, setSession]);
+      }
+    }
+
+    loadMenu();
+    return () => {
+      mounted = false;
+    };
+  }, [slug, sessionSlug, setSession, preferredLocale]);
+
+  useEffect(() => {
+    if (!tableSessionToken) {
+      setGuestProfile(null);
+      return;
+    }
+    getGuestProfileForSession(tableSessionToken)
+      .then(profile => setGuestProfile(profile))
+      .catch(() => setGuestProfile(null));
+  }, [tableSessionToken]);
 
   // Safe JSON parse helper for tags
   const parseTags = (value) => {
@@ -126,21 +176,23 @@ export default function MenuHome() {
   };
 
   const allItems = categories.flatMap(c => c.items);
+  const languageLabel = preferredLocale !== 'en' ? MENU_LOCALE_LABELS[preferredLocale] || preferredLocale.toUpperCase() : null;
   const cartItemIdsKey = items.map(item => item.id).join(',');
   const modalRecommendations = serverRecommendations.length > 0
     ? serverRecommendations
-    : sortRecommendedItems(upsellCandidates, items, categories).slice(0, 6);
+    : sortRecommendedItems(upsellCandidates, items, categories, guestProfile).slice(0, 6);
 
   useEffect(() => {
     if (!restaurant?.id || upsellCandidates.length === 0) return;
     fetchRecommendations({
       restaurantId: restaurant.id,
       cartItemIds: cartItemIdsKey ? cartItemIdsKey.split(',') : [],
+      guestProfileId: guestProfile?.id || null,
       limit: 6,
     })
       .then(setServerRecommendations)
       .catch(() => setServerRecommendations([]));
-  }, [restaurant?.id, upsellCandidates.length, cartItemIdsKey]);
+  }, [restaurant?.id, upsellCandidates.length, cartItemIdsKey, guestProfile?.id]);
 
   const filtered = allItems.filter(dish => {
     const catMatch = activeCategory === 'All' || categories.find(c => c.id === dish.category_id)?.name === activeCategory;
@@ -175,6 +227,34 @@ export default function MenuHome() {
   };
 
   const getDishPath = (dishId) => restaurantSlug ? `/r/${restaurantSlug}/dish/${dishId}` : `/dish/${dishId}`;
+
+  const sendChat = async (messageText = chatInput) => {
+    const text = messageText.trim();
+    if (!text || !restaurant?.id || chatLoading) return;
+    const nextMessages = [...chatMessages, { role: 'user', content: text }];
+    setChatMessages(nextMessages);
+    setChatInput('');
+    setChatLoading(true);
+    try {
+      const result = await sendMenuChatMessage({
+        restaurantId: restaurant.id,
+        message: text,
+        history: chatMessages,
+      });
+      setChatMessages([...nextMessages, { role: 'assistant', content: result.reply || 'I found a few options for you.' }]);
+      if (result.action?.items?.length) {
+        result.action.items.forEach(actionItem => {
+          const dish = allItems.find(item => item.id === actionItem.id);
+          if (dish) addItem(dish, Number(actionItem.qty || 1), []);
+        });
+        addToast(`${result.action.items[0]?.name || 'Item'} added to your cart.`, 'success');
+      }
+    } catch (err) {
+      setChatMessages([...nextMessages, { role: 'assistant', content: err.message.includes('configured') ? 'Chat is not available right now.' : 'I could not reach the menu assistant right now.' }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   const handleAddWithUpsell = (dish) => {
     if (!dish.available) return;
@@ -254,10 +334,10 @@ export default function MenuHome() {
           <div className="text-[10px] uppercase tracking-widest font-bold text-primary mb-1.5">
             {categories.find(c => c.id === dish.category_id)?.name}
           </div>
-          <h3 className="font-headline text-lg font-bold text-on-surface leading-tight mb-2">
+          <h3 className="font-headline text-lg font-bold text-on-surface leading-tight mb-2" title={dish.original_name || undefined}>
             {highlightText(dish.name, search)}
           </h3>
-          <p className="text-xs text-on-surface-variant leading-relaxed line-clamp-2 mb-3 opacity-80">
+          <p className="text-xs text-on-surface-variant leading-relaxed line-clamp-2 mb-3 opacity-80" title={dish.original_description || undefined}>
             {dish.description}
           </p>
           <div className="mt-auto pt-4 flex items-center justify-between border-t border-outline-variant/30">
@@ -320,7 +400,12 @@ export default function MenuHome() {
 
   return (
     <div className="min-h-dvh bg-background text-on-surface selection:bg-primary-container/30">
-      <CustomerTopNav logo={restaurant?.logo_url} />
+      <CustomerTopNav
+        logo={restaurant?.logo_url}
+        guestProfile={guestProfile}
+        languageLabel={languageLabel}
+        onLanguageReset={() => setPreferredLocale(resetMenuLocaleToEnglish())}
+      />
 
       {/* Desktop: side-by-side content + cart; Mobile: stacked */}
       <div className="flex" style={{ paddingTop: 'var(--nav-height)' }}>
@@ -336,6 +421,14 @@ export default function MenuHome() {
             {restaurant?.name?.split(' - ')[0] || 'Menuverse'}{' '}
             <span className="text-primary italic block sm:inline">{restaurant?.name?.split(' - ')[1] || 'Digital Dining'}</span>
           </h1>
+          {Number(guestProfile?.loyalty_points || 0) >= 100 && (
+            <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-2 mb-3 flex items-center gap-2 text-sm">
+              <span className="material-symbols-outlined text-primary text-base">stars</span>
+              <span>
+                You have <strong>{guestProfile.loyalty_points} points</strong> worth <strong> Rs. {Math.floor(guestProfile.loyalty_points / 10)}</strong> off your bill.
+              </span>
+            </div>
+          )}
           <p className="text-on-surface-variant font-body text-sm max-w-[90%] leading-relaxed opacity-80 border-l-2 border-primary/20 pl-4 mb-6">
             {restaurant?.description || 'Experience the fusion of high-end culinary art and immersive digital precision.'}
           </p>
@@ -355,8 +448,8 @@ export default function MenuHome() {
                          Chef's Special
                        </span>
                     </div>
-                    <h2 className="text-3xl font-headline font-bold text-white mb-1 drop-shadow-md">{hero.name}</h2>
-                    <p className="text-white/80 text-sm line-clamp-1 max-w-sm drop-shadow">{hero.description}</p>
+                    <h2 className="text-3xl font-headline font-bold text-white mb-1 drop-shadow-md" title={hero.original_name || undefined}>{hero.name}</h2>
+                    <p className="text-white/80 text-sm line-clamp-1 max-w-sm drop-shadow" title={hero.original_description || undefined}>{hero.description}</p>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); handleAddWithUpsell(hero); }} className="w-12 h-12 bg-primary text-on-primary rounded-full flex items-center justify-center hover:scale-105 transition-transform shadow-lg cursor-pointer">
                     <span className="material-symbols-outlined">add</span>
@@ -477,6 +570,56 @@ export default function MenuHome() {
         <CallWaiterFAB className="bottom-28 right-6" />
       </div>
 
+      {menuChatEnabled && (
+        <>
+          <button
+            type="button"
+            onClick={() => setChatOpen(true)}
+            className="fixed bottom-40 right-6 z-50 h-14 w-14 rounded-full bg-primary text-on-primary shadow-luxury flex items-center justify-center"
+            aria-label="Open menu chat"
+          >
+            <span className="material-symbols-outlined">chat_bubble</span>
+          </button>
+          {chatOpen && (
+            <div className="fixed inset-x-0 bottom-20 z-[90] mx-auto h-[60vh] max-w-lg rounded-t-3xl border border-outline-variant/20 bg-surface-container-low shadow-2xl flex flex-col">
+              <div className="flex items-center justify-between border-b border-outline-variant/10 p-4">
+                <p className="text-sm font-bold uppercase tracking-widest text-on-surface">Menu AI</p>
+                <button type="button" onClick={() => setChatOpen(false)} className="material-symbols-outlined text-on-surface-variant">close</button>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-3 p-4">
+                {chatMessages.map((message, index) => (
+                  <div key={index} className={`max-w-[82%] rounded-2xl px-4 py-2 text-sm ${message.role === 'user' ? 'ml-auto bg-primary text-on-primary' : 'bg-surface-container text-on-surface'}`}>
+                    {message.content}
+                  </div>
+                ))}
+                {chatLoading && <div className="text-xs text-on-surface-variant">Thinking...</div>}
+              </div>
+              {chatMessages.length === 0 && (
+                <div className="flex flex-wrap gap-2 px-4 pb-3">
+                  {['Something spicy under Rs. 300', 'Best-rated dish today', 'Recommend a dessert'].map(prompt => (
+                    <button key={prompt} type="button" onClick={() => sendChat(prompt)} className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2 border-t border-outline-variant/10 p-4">
+                <input
+                  value={chatInput}
+                  onChange={event => setChatInput(event.target.value)}
+                  onKeyDown={event => { if (event.key === 'Enter') sendChat(); }}
+                  className="min-w-0 flex-1 rounded-xl bg-surface-container-high px-4 py-3 text-sm text-on-surface focus:outline-none"
+                  placeholder="Ask for a dish..."
+                />
+                <button type="button" onClick={() => sendChat()} className="rounded-xl bg-primary px-4 text-on-primary">
+                  <span className="material-symbols-outlined">send</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       {/* Sticky View Cart CTA (Mobile only) */}
       {count > 0 && (
         <div className="fixed bottom-[84px] left-4 right-4 z-50 lg:hidden animate-in slide-in-from-bottom duration-300">
@@ -537,6 +680,11 @@ export default function MenuHome() {
                         />
                       </div>
                       <div className="p-3 flex flex-col flex-grow">
+                        {guestProfile && Number(item.recommendation_score || 0) >= 70 && (
+                          <span className="mb-2 w-max rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-primary">
+                            Recommended for you
+                          </span>
+                        )}
                         <h4 className="text-[11px] font-bold text-on-surface line-clamp-1 mb-1">{item.name}</h4>
                         <div className="mt-auto flex items-center justify-between">
                           <span className="text-primary font-bold text-[10px]">₹{item.price}</span>

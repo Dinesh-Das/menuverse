@@ -32,6 +32,38 @@ function validateFileSize(file, maxBytes, label) {
   }
 }
 
+function statusBanner(status) {
+  const banners = {
+    queued: {
+      className: 'bg-amber-500/10 text-amber-700 border-amber-500/20',
+      icon: 'schedule',
+      text: 'Video queued for 3D processing (about 5-10 min)',
+    },
+    processing: {
+      className: 'bg-blue-500/10 text-blue-700 border-blue-500/20',
+      icon: 'progress_activity',
+      text: 'Generating 3D model...',
+      spin: true,
+    },
+    complete: {
+      className: 'bg-green-500/10 text-green-700 border-green-500/20',
+      icon: 'check_circle',
+      text: '3D model ready',
+    },
+    ready: {
+      className: 'bg-green-500/10 text-green-700 border-green-500/20',
+      icon: 'check_circle',
+      text: '3D model ready',
+    },
+    failed: {
+      className: 'bg-error/10 text-error border-error/20',
+      icon: 'error',
+      text: 'Processing failed. Re-upload the video to retry.',
+    },
+  };
+  return banners[status] || null;
+}
+
 export default function ARStudio() {
   const { user } = useAuth();
   const { addToast } = useToast();
@@ -56,6 +88,7 @@ export default function ARStudio() {
 
   const status = asset?.processing_status || 'not_uploaded';
   const badgeClass = STATUS_STYLES[status] || STATUS_STYLES.not_uploaded;
+  const banner = statusBanner(status);
 
   const loadItems = async () => {
     if (!user?.restaurantId) return;
@@ -96,6 +129,15 @@ export default function ARStudio() {
     loadAsset(selectedItemId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItemId]);
+
+  useEffect(() => {
+    if (!selectedItemId || !['queued', 'processing'].includes(status)) return undefined;
+    const timer = window.setInterval(() => {
+      loadAsset(selectedItemId);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemId, status]);
 
   useEffect(() => {
     if (!asset?.model_glb_url || modelViewerReady) return undefined;
@@ -145,7 +187,11 @@ export default function ARStudio() {
       validateFileSize(videoFile, MAX_VIDEO_SIZE, 'Source video');
       setUploadingVideo(true);
       const uploaded = await adminUploadARSourceVideo(selectedItemId, videoFile);
-      setAsset(uploaded);
+      const queuedAsset = await adminUpdateARAssetStatus(selectedItemId, {
+        processing_status: 'queued',
+        processing_error: null,
+      }).catch(() => uploaded);
+      setAsset(queuedAsset);
       setVideoFile(null);
       await loadItems();
       addToast('Video uploaded. AR generation queued.', 'success');
@@ -337,6 +383,13 @@ export default function ARStudio() {
             </div>
 
             <div className="p-6 md:p-8">
+              {banner && (
+                <div className={`mb-6 rounded-xl border px-4 py-3 text-sm font-bold flex items-center gap-3 ${banner.className}`}>
+                  <span className={`material-symbols-outlined text-base ${banner.spin ? 'animate-spin' : ''}`}>{banner.icon}</span>
+                  {banner.text}
+                </div>
+              )}
+
               {status === 'failed' && asset?.processing_error && (
                 <div className="mb-6 rounded-xl border border-error/20 bg-error/10 px-4 py-3 text-sm text-error">
                   <span className="font-bold">Generation failed:</span> {asset.processing_error}

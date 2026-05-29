@@ -4,7 +4,13 @@ const STRIPE_JS_URL = 'https://js.stripe.com/v3/';
 let razorpayScriptPromise = null;
 let stripeScriptPromise = null;
 
-export function getWalletPaymentLabel() {
+export function getWalletPaymentLabel(walletPayReady = null, provider = 'razorpay') {
+  if (walletPayReady) {
+    return { headline: 'Pay another way', detail: 'Apple Pay or Google Pay is available above' };
+  }
+  if (provider === 'stripe') {
+    return { headline: 'Pay by Card or Wallet', detail: 'Apple Pay, Google Pay and cards through Stripe' };
+  }
   if (typeof navigator === 'undefined') {
     return { headline: 'Secure Digital Pay', detail: 'UPI, wallets, cards and netbanking' };
   }
@@ -17,6 +23,26 @@ export function getWalletPaymentLabel() {
     return { headline: 'Pay with Google Pay, UPI or Card', detail: 'Fast checkout through Razorpay' };
   }
   return { headline: 'Pay by UPI, Wallet or Card', detail: 'Secure checkout through Razorpay' };
+}
+
+export function humanizePaymentFailure(error, providerName = 'Digital') {
+  const raw = `${error?.code || ''} ${error?.reason || ''} ${error?.description || ''} ${error?.message || error || ''}`.toLowerCase();
+  if (raw.includes('card_declined') || raw.includes('card declined') || raw.includes('declined')) {
+    return 'Your card was declined. Try another card or pay at the counter.';
+  }
+  if (raw.includes('insufficient') || raw.includes('fund')) {
+    return 'The payment method does not have enough funds. Try another method or pay at the counter.';
+  }
+  if (raw.includes('upi') && (raw.includes('timeout') || raw.includes('timed out'))) {
+    return 'The UPI request timed out. You can retry after dismissing this message or pay at the counter.';
+  }
+  if (raw.includes('network') || raw.includes('fetch') || raw.includes('load') || raw.includes('offline')) {
+    return 'A network issue interrupted checkout. Check your connection or pay at the counter.';
+  }
+  if (raw.includes('dismiss') || raw.includes('cancel')) {
+    return `${providerName} checkout was closed before payment finished. You can retry or pay at the counter.`;
+  }
+  return `${providerName} payment could not be completed. You can retry or pay at the counter.`;
 }
 
 export function loadRazorpayCheckout() {
@@ -55,6 +81,44 @@ export function loadStripeJs() {
   });
 
   return stripeScriptPromise;
+}
+
+/**
+ * Creates a Stripe PaymentRequest object for Apple Pay / Google Pay.
+ * Returns null if the browser cannot show a native wallet button.
+ */
+export async function createStripePaymentRequest({
+  publishableKey,
+  amountPaise,
+  currency,
+  restaurantName,
+  onSuccess,
+  onDismiss,
+}) {
+  const Stripe = await loadStripeJs();
+  const stripe = Stripe(publishableKey);
+
+  const paymentRequest = stripe.paymentRequest({
+    country: currency === 'inr' ? 'IN' : 'US',
+    currency: currency.toLowerCase(),
+    total: { label: restaurantName || 'Menuverse', amount: amountPaise },
+    requestPayerName: false,
+    requestPayerEmail: false,
+  });
+
+  const canMakePayment = await paymentRequest.canMakePayment();
+  if (!canMakePayment) return null;
+
+  paymentRequest.on('paymentmethod', async (ev) => {
+    if (onSuccess) onSuccess(ev);
+  });
+
+  paymentRequest.on('cancel', () => {
+    if (onDismiss) onDismiss();
+  });
+
+  const elements = stripe.elements();
+  return { paymentRequest, elements, stripe };
 }
 
 export async function openRazorpayCheckout({

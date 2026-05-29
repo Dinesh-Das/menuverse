@@ -29,6 +29,7 @@ VITE_ENABLE_WHATSAPP_EDGE_NOTIFICATIONS=false
 VITE_ENABLE_POS_EDGE_SYNC=false
 VITE_ENABLE_AR_EDGE_PROCESSING=false
 VITE_ENABLE_DELIVERY_QUOTE_EDGE=false
+VITE_ENABLE_MENU_CHAT=false
 ```
 
 Keep the optional Edge Function flags `false` until the matching functions are deployed to the active Supabase project. This prevents browser CORS noise for non-critical features such as recommendations, KOT print queueing, local feedback-analysis fallback, and delivery quoting.
@@ -52,6 +53,9 @@ ALLOWED_ORIGINS=https://menu-verse-admin.vercel.app,https://menu-verse.vercel.ap
 MENUVERSE_INTERNAL_SECRET=shared-secret-for-server-to-server-function-calls
 RESEND_API_KEY=server-only
 RESEND_FROM_EMAIL=Menuverse <no-reply@your-domain.com>
+SQUARE_ACCESS_TOKEN=server-only-fallback
+SQUARE_LOCATION_ID=square-location-id
+SQUARE_ENVIRONMENT=sandbox
 SQUARE_VERSION=2026-05-20
 SHIPROCKET_API_TOKEN=server-only
 SHIPROCKET_PICKUP_POSTCODE=110030
@@ -63,6 +67,7 @@ REPLICATE_API_TOKEN=server-only
 REPLICATE_MODEL=stability-ai/triposr
 REPLICATE_MODEL_VERSION=
 REPLICATE_CANCEL_AFTER=20m
+AR_USDZ_CONVERTER_URL=
 ```
 
 Never expose service role, payment secret, or webhook secret values to Vite.
@@ -81,6 +86,8 @@ If using the dashboard SQL editor, paste the contents of `supabase/rls-policies.
 Database workers that invoke Edge Functions need the project URL and internal secret available as database settings:
 
 ```sql
+alter database postgres set "app.supabase_url" = 'https://your-project.supabase.co';
+alter database postgres set "app.service_role_key" = 'server-only-service-role-key';
 alter database postgres set "app.settings.supabase_url" = 'https://your-project.supabase.co';
 alter database postgres set "app.settings.menuverse_internal_secret" = 'same-value-as-MENUVERSE_INTERNAL_SECRET';
 ```
@@ -116,17 +123,27 @@ The `ar-models` bucket stores GLB, USDZ, and thumbnail assets for the AR menu pr
 ## 4. Edge Functions
 
 ```bash
-supabase functions deploy create-payment-order
-supabase functions deploy verify-payment-webhook
-supabase functions deploy invite-staff
 supabase functions deploy analyse-feedback
+supabase functions deploy campaign-event-webhook
+supabase functions deploy create-payment-order
+supabase functions deploy create-stripe-payment-intent
+supabase functions deploy delivery-quote
+supabase functions deploy get-recommendations
+supabase functions deploy invite-staff
+supabase functions deploy menu-chat
+supabase functions deploy pos-adapter-petpooja
+supabase functions deploy pos-adapter-square
+supabase functions deploy process-ar-asset
+supabase functions deploy process-ar-video
+supabase functions deploy replicate-webhook
 supabase functions deploy request-kitchen-print
+supabase functions deploy send-campaign
 supabase functions deploy send-whatsapp-notification
 supabase functions deploy sync-to-pos
-supabase functions deploy delivery-quote
+supabase functions deploy translate-menu-item
+supabase functions deploy verify-payment-webhook
+supabase functions deploy verify-stripe-webhook
 supabase functions deploy whatsapp-inbound
-supabase functions deploy process-ar-asset
-supabase functions deploy pos-adapter-square
 ```
 
 For browser-called functions, deploy with JWT verification disabled so `OPTIONS` preflight reaches the handler:

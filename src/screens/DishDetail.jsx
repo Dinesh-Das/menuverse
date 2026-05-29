@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { fetchMenuItem, fetchPublicARAsset } from '../lib/api';
+import {
+  MENU_LOCALE_LABELS,
+  applyMenuTranslation,
+  fetchMenuItem,
+  fetchMenuItemTranslation,
+  fetchPublicARAsset,
+  getPreferredMenuLocale,
+  resetMenuLocaleToEnglish,
+} from '../lib/api';
 import { CustomerTopNav } from '../components/TopNav';
 
 const MAX_QTY = 20;
@@ -20,13 +28,18 @@ export default function DishDetail() {
   const [showARModal, setShowARModal] = useState(false);
   const [arSupported, setArSupported] = useState(true);
   const [modelViewerReady, setModelViewerReady] = useState(false);
+  const [preferredLocale, setPreferredLocale] = useState(getPreferredMenuLocale);
 
   useEffect(() => {
     let mounted = true;
 
     async function loadDish() {
       try {
-        const data = await fetchMenuItem(dishId);
+        const baseData = await fetchMenuItem(dishId);
+        const translation = preferredLocale === 'en'
+          ? null
+          : await fetchMenuItemTranslation(dishId, preferredLocale).catch(() => null);
+        const data = applyMenuTranslation(baseData, translation);
         if (!mounted) return;
         setDish(data);
         // Initialize selected modifiers for required groups
@@ -58,7 +71,7 @@ export default function DishDetail() {
     return () => {
       mounted = false;
     };
-  }, [dishId]);
+  }, [dishId, preferredLocale]);
 
   useEffect(() => {
     if (!showARModal || !arAsset?.model_glb_url || modelViewerReady) return undefined;
@@ -126,10 +139,15 @@ export default function DishDetail() {
   const hasModifiers = (dish.modifier_groups || []).length > 0;
   const isUnavailable = !dish.available;
   const unitPrice = dish.price + modsPrice;
+  const languageLabel = preferredLocale !== 'en' ? MENU_LOCALE_LABELS[preferredLocale] || preferredLocale.toUpperCase() : null;
 
   return (
     <div className="min-h-dvh bg-background text-on-surface selection:bg-primary-container/30 pb-32 md:pb-12 relative">
-      <CustomerTopNav showBack={true} />
+      <CustomerTopNav
+        showBack={true}
+        languageLabel={languageLabel}
+        onLanguageReset={() => setPreferredLocale(resetMenuLocaleToEnglish())}
+      />
 
       <div className="flex flex-col md:flex-row md:items-start md:gap-12 max-w-7xl mx-auto md:px-12 md:pt-24">
         {/* ── Image/AR Section ────────────────────────── */}
@@ -171,7 +189,7 @@ export default function DishDetail() {
               {dish.dietary_flag === 'non-veg' && <span className="w-4 h-4 rounded border-2 border-red-500 bg-white flex items-center justify-center inline-block"><span className="w-2 h-2 rounded-full bg-red-500 block" /></span>}
               {dish.dietary_flag === 'vegan' && <span className="w-4 h-4 rounded border-2 border-green-600 bg-white flex items-center justify-center inline-block"><span className="w-2 h-2 rounded-full bg-green-600 block" /></span>}
             </div>
-            <h1 className="font-headline text-3xl md:text-5xl font-bold text-on-surface leading-tight mb-2">
+            <h1 className="font-headline text-3xl md:text-5xl font-bold text-on-surface leading-tight mb-2" title={dish.original_name || undefined}>
               {dish.name}
             </h1>
             <div className="text-3xl md:text-4xl font-headline text-primary mt-4 md:mt-6">
@@ -181,7 +199,7 @@ export default function DishDetail() {
           </div>
 
           <div className="prose prose-invert mb-6 md:text-lg">
-            <p className="text-on-surface-variant text-base md:text-lg leading-relaxed">
+            <p className="text-on-surface-variant text-base md:text-lg leading-relaxed" title={dish.original_description || undefined}>
               {dish.description}
             </p>
           </div>

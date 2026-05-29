@@ -27,6 +27,7 @@ const OrderMonitor = lazy(() => import('./screens/admin/OrderMonitor'));
 const GuestCRM = lazy(() => import('./screens/admin/GuestCRM'));
 const Campaigns = lazy(() => import('./screens/admin/Campaigns'));
 const BranchOverview = lazy(() => import('./screens/admin/BranchOverview'));
+const Onboarding = lazy(() => import('./screens/admin/Onboarding'));
 
 function RouteFallback() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
                     <>
                       <Route path="/admin"            element={<Navigate to="/admin/login" replace />} />
                       <Route path="/admin/login"      element={<AdminLogin />} />
+                      <Route path="/admin/onboarding" element={<RequireAuth roles={['owner']}><ErrorBoundary><Onboarding /></ErrorBoundary></RequireAuth>} />
                       <Route path="/admin/dashboard"  element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><Dashboard /></ErrorBoundary></RequireAuth>} />
                       <Route path="/admin/settings"   element={<RequireAuth roles={['owner']}><ErrorBoundary><Settings /></ErrorBoundary></RequireAuth>} />
                       <Route path="/admin/menu"       element={<RequireAuth roles={['owner', 'manager']}><ErrorBoundary><MenuInventory /></ErrorBoundary></RequireAuth>} />

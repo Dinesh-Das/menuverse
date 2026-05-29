@@ -8,6 +8,12 @@ function clampSplitCount(value: unknown) {
   return Math.max(1, Math.min(10, Math.floor(count)));
 }
 
+function clampSplitIndex(value: unknown, splitCount: number) {
+  const index = Number(value);
+  if (!Number.isFinite(index)) return 0;
+  return Math.max(0, Math.min(splitCount - 1, Math.floor(index)));
+}
+
 serve(async (req) => {
   const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
   if (req.method === 'OPTIONS') return preflightResponse(req);
@@ -30,6 +36,10 @@ serve(async (req) => {
 
   const splitCount = clampSplitCount(body.split_count);
   const isSplitPayment = splitCount > 1;
+  const hasRequestedSplitIndex = Object.prototype.hasOwnProperty.call(body, 'split_index');
+  const requestedSplitIndex = clampSplitIndex(body.split_index, splitCount);
+  const requestedAmount = Number(body.amount || 0);
+  const splitDetail = body.split_detail && typeof body.split_detail === 'object' ? body.split_detail : null;
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data, error } = await supabase.rpc('get_table_session_orders', {
@@ -41,7 +51,9 @@ serve(async (req) => {
   const orders = Array.isArray(data) ? data : [];
   const payableOrders = orders.filter((order) => !['cancelled', 'completed'].includes(order.status));
   const totalAmountRupees = payableOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
-  const checkoutAmountRupees = isSplitPayment ? totalAmountRupees / splitCount : totalAmountRupees;
+  const checkoutAmountRupees = requestedAmount > 0
+    ? requestedAmount
+    : isSplitPayment ? totalAmountRupees / splitCount : totalAmountRupees;
   const amountPaise = Math.round(checkoutAmountRupees * 100);
 
   if (!payableOrders.length || amountPaise <= 0) {
@@ -80,7 +92,14 @@ serve(async (req) => {
     const usedIndexes = new Set((existingPayments || [])
       .filter((payment) => Number(payment.split_total || 1) === splitCount)
       .map((payment) => Number(payment.split_index || 0)));
-    while (usedIndexes.has(splitIndex) && splitIndex < splitCount) splitIndex += 1;
+    if (hasRequestedSplitIndex) {
+      if (usedIndexes.has(requestedSplitIndex)) {
+        return json({ error: 'This split payment slot is already in progress or paid.' }, 409);
+      }
+      splitIndex = requestedSplitIndex;
+    } else {
+      while (usedIndexes.has(splitIndex) && splitIndex < splitCount) splitIndex += 1;
+    }
     if (splitIndex >= splitCount) {
       return json({ error: 'All split payment slots are already in progress or paid.' }, 409);
     }
@@ -88,7 +107,9 @@ serve(async (req) => {
 
   const expectedAmounts = new Map(payableOrders.map((order) => [
     order.id,
-    isSplitPayment ? Number(order.total_amount || 0) / splitCount : Number(order.total_amount || 0),
+    requestedAmount > 0
+      ? checkoutAmountRupees * (Number(order.total_amount || 0) / Math.max(totalAmountRupees, 1))
+      : isSplitPayment ? Number(order.total_amount || 0) / splitCount : Number(order.total_amount || 0),
   ]));
 
   const reusableRazorpayOrderId = isSplitPayment
@@ -135,6 +156,7 @@ serve(async (req) => {
         table_session_id: tableSession.id,
         split_index: splitIndex,
         split_total: splitCount,
+        split_detail: splitDetail ? JSON.stringify(splitDetail).slice(0, 500) : '',
       },
     }),
   });
@@ -165,6 +187,7 @@ serve(async (req) => {
       table_session_id: tableSession.id,
       razorpay_receipt: razorpayOrder.receipt || null,
       split_payment: isSplitPayment,
+      ...(splitDetail ? { split_detail: splitDetail } : {}),
     },
   }));
 

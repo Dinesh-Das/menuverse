@@ -1,11 +1,27 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchMenuItems, adminFetchCategories, adminCreateMenuItem, adminUpdateMenuItem, adminUpdateItemModifiers } from '../../lib/api';
+import {
+  adminCreateMenuItem,
+  adminFetchCategories,
+  adminFetchMenuItems,
+  adminTranslateMenuItem,
+  adminUpdateItemModifiers,
+  adminUpdateMenuItem,
+} from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 
 import { useAuth } from '../../context/AuthContext';
+
+const TRANSLATION_LOCALES = [
+  { value: 'hi', label: 'Hindi' },
+  { value: 'ta', label: 'Tamil' },
+  { value: 'bn', label: 'Bengali' },
+  { value: 'mr', label: 'Marathi' },
+  { value: 'te', label: 'Telugu' },
+];
+
 export default function MenuInventory() {
   const { user } = useAuth();
   const { addToast } = useToast();
@@ -24,6 +40,7 @@ export default function MenuInventory() {
   });
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [translatingItemId, setTranslatingItemId] = useState(null);
   const imageInputRef = React.useRef(null);
 
   const loadData = useCallback(() => {
@@ -133,6 +150,20 @@ export default function MenuInventory() {
     }
   };
 
+  const handleTranslate = async (itemId, locale) => {
+    if (!locale || translatingItemId) return;
+    const language = TRANSLATION_LOCALES.find(item => item.value === locale)?.label || locale;
+    setTranslatingItemId(itemId);
+    try {
+      await adminTranslateMenuItem(itemId, locale);
+      addToast(`${language} translation saved.`, 'success');
+    } catch (err) {
+      addToast(`Translation failed: ${err.message}`, 'error');
+    } finally {
+      setTranslatingItemId(null);
+    }
+  };
+
   const filtered = items.filter(item => item.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
@@ -165,10 +196,11 @@ export default function MenuInventory() {
           <div className="w-full overflow-x-auto">
             {/* Table Header */}
             <div className="min-w-[800px] grid grid-cols-12 gap-4 px-8 pb-4 text-[10px] uppercase font-bold tracking-[0.2em] border-b text-on-surface-variant border-outline-variant/20">
-              <div className="col-span-5">Item</div>
-              <div className="col-span-3">Category</div>
+              <div className="col-span-4">Item</div>
+              <div className="col-span-2">Category</div>
               <div className="col-span-2">Price</div>
               <div className="col-span-2 text-right">Status</div>
+              <div className="col-span-2 text-right">Translate</div>
             </div>
 
             {/* Table Rows */}
@@ -178,7 +210,7 @@ export default function MenuInventory() {
               <div className="flex flex-col min-w-[800px]">
                 {filtered.map(item => (
                   <div key={item.id} onClick={() => openEditModal(item)} className={`grid grid-cols-12 gap-4 px-8 py-5 items-center border-b last:border-0 transition-colors cursor-pointer ${rowBg} ${!item.available ? 'opacity-60 grayscale' : ''}`}>
-                    <div className="col-span-5 flex items-center gap-4">
+                    <div className="col-span-4 flex items-center gap-4">
                       {item.image_url ? (
                         <img src={item.image_url} alt={item.name} className="w-12 h-12 rounded-lg object-cover shadow-sm" />
                       ) : (
@@ -192,7 +224,7 @@ export default function MenuInventory() {
                       </div>
                     </div>
                     
-                    <div className="col-span-3 text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">
+                    <div className="col-span-2 text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">
                       {item.category?.name || 'Uncategorized'}
                     </div>
                     
@@ -209,6 +241,24 @@ export default function MenuInventory() {
                         <span className="material-symbols-outlined text-[12px]">{item.available ? 'check_circle' : 'block'}</span>
                         {item.available ? 'Available' : 'Unavailable'}
                       </span>
+                    </div>
+
+                    <div className="col-span-2 text-right">
+                      <select
+                        value=""
+                        disabled={translatingItemId === item.id}
+                        onClick={event => event.stopPropagation()}
+                        onChange={event => {
+                          event.stopPropagation();
+                          handleTranslate(item.id, event.target.value);
+                        }}
+                        className="max-w-full rounded-lg border border-outline-variant/30 bg-surface-container px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary disabled:opacity-50"
+                      >
+                        <option value="">{translatingItemId === item.id ? 'Translating...' : 'Translate'}</option>
+                        {TRANSLATION_LOCALES.map(locale => (
+                          <option key={locale.value} value={locale.value}>{locale.label}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 ))}

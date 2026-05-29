@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { fetchTableOrders, createPayment, createStripePaymentIntent, createStaffRequest } from '../lib/api';
@@ -7,32 +7,56 @@ import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
-import { getWalletPaymentLabel, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
+import {
+  createStripePaymentRequest,
+  getWalletPaymentLabel,
+  humanizePaymentFailure,
+  openRazorpayCheckout,
+  openStripeCheckout,
+} from '../lib/payments';
 import { supabase } from '../lib/supabase';
 
-function humanizePaymentFailure(error, providerName) {
-  const raw = `${error?.code || ''} ${error?.reason || ''} ${error?.description || ''} ${error?.message || error || ''}`.toLowerCase();
-  if (raw.includes('card_declined') || raw.includes('card declined') || raw.includes('declined')) {
-    return 'Your card was declined. Try another card or pay at the counter.';
-  }
-  if (raw.includes('insufficient') || raw.includes('fund')) {
-    return 'The payment method does not have enough funds. Try another method or pay at the counter.';
-  }
-  if (raw.includes('upi') && (raw.includes('timeout') || raw.includes('timed out'))) {
-    return 'The UPI request timed out. You can retry after dismissing this message or pay at the counter.';
-  }
-  if (raw.includes('network') || raw.includes('fetch') || raw.includes('load') || raw.includes('offline')) {
-    return 'A network issue interrupted checkout. Check your connection or pay at the counter.';
-  }
-  if (raw.includes('dismiss') || raw.includes('cancel')) {
-    return `${providerName} checkout was closed before payment finished. You can retry or pay at the counter.`;
-  }
-  return `${providerName} payment could not be completed. You can retry or pay at the counter.`;
+function buildBillSplitItems(orders) {
+  return orders.flatMap(order => getOrderItemsForSplit(order).map((item, index) => {
+    const modifiers = safeParseModifiers(item.modifiers_json);
+    const modifierTotal = modifiers.reduce((sum, mod) => sum + Number(mod.price_delta || 0), 0);
+    const quantity = Number(item.quantity || 1);
+    const unitPrice = Number(item.price || item.unit_price || 0) + modifierTotal;
+    return {
+      id: `${order.id}:${item.id || item.menu_item_id || index}`,
+      menuItemId: item.menu_item_id || item.id,
+      name: item.name,
+      quantity,
+      lineTotal: unitPrice * quantity,
+      orderId: order.id,
+    };
+  }));
+}
+
+function getOrderItemsForSplit(order) {
+  return order.items || order.order_items || [];
+}
+
+function calculateItemSplitShares(lineItems, assignments, splitCount, grandTotal) {
+  const subtotal = lineItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const taxAndFees = Math.max(0, Number(grandTotal || 0) - subtotal);
+  return Array.from({ length: splitCount }, (_, index) => {
+    const person = index + 1;
+    const items = lineItems.filter(item => Number(assignments[item.id] || 1) === person);
+    const personSubtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
+    const proportionalTax = subtotal > 0 ? taxAndFees * (personSubtotal / subtotal) : 0;
+    return {
+      person,
+      items,
+      subtotal: personSubtotal,
+      total: personSubtotal + proportionalTax,
+    };
+  });
 }
 
 export default function TableSession() {
   const { restaurantSlug } = useParams();
-  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, tableSessionId, restaurantId, paymentEnabled, paymentProvider } = useCart();
+  const { tableId, tableNumber, clearCart, addItem, tableSessionToken, tableSessionId, restaurantId, paymentEnabled, paymentProvider, currency } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const { addToast } = useToast();
   const navigate = useNavigate();
@@ -45,11 +69,19 @@ export default function TableSession() {
   const [payAtCounterOpen, setPayAtCounterOpen] = useState(false);
   const [sessionTab, setSessionTab] = useState('active'); // 'active', 'history'
   const [splitCount, setSplitCount] = useState(1);
+  const [splitMode, setSplitMode] = useState('equal');
+  const [itemAssignments, setItemAssignments] = useState({});
   const [billRequested, setBillRequested] = useState(false);
   const [billRequesting, setBillRequesting] = useState(false);
-  const walletPayment = paymentProvider === 'stripe'
-    ? { headline: 'Pay by Card or Wallet', detail: 'Apple Pay, Google Pay and cards through Stripe' }
-    : getWalletPaymentLabel();
+  const [walletPayReady, setWalletPayReady] = useState(null);
+  const walletButtonRef = useRef(null);
+  const walletElementRef = useRef(null);
+  const walletPayReadyRef = useRef(null);
+  const walletPayment = getWalletPaymentLabel(walletPayReady, paymentProvider);
+
+  useEffect(() => {
+    walletPayReadyRef.current = walletPayReady;
+  }, [walletPayReady]);
 
   useEffect(() => {
     if (!tableId) {
@@ -110,12 +142,126 @@ export default function TableSession() {
 
   const billableOrders = orders.filter(order => order.status !== 'cancelled');
   const totalBill = billableOrders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+  const splitLineItems = React.useMemo(() => buildBillSplitItems(billableOrders), [billableOrders]);
+  const itemSplitShares = React.useMemo(
+    () => calculateItemSplitShares(splitLineItems, itemAssignments, splitCount, totalBill),
+    [itemAssignments, splitCount, splitLineItems, totalBill]
+  );
+  const firstBillableOrderId = billableOrders[0]?.id;
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
   const shareAmount = splitCount > 1 ? totalBill / splitCount : totalBill;
 
   const updateSplitCount = (nextCount) => {
-    setSplitCount(Math.max(1, Math.min(10, nextCount)));
+    setSplitCount(Math.max(1, Math.min(8, nextCount)));
   };
+
+  const assignSplitItem = (itemId, person) => {
+    setItemAssignments(prev => ({ ...prev, [itemId]: person }));
+  };
+
+  const resetSplit = () => {
+    setSplitMode('equal');
+    setItemAssignments({});
+    setSplitCount(1);
+  };
+
+  const handleStripeWalletPayment = useCallback(async (ev) => {
+    const providerName = 'Stripe';
+    try {
+      const ready = walletPayReadyRef.current;
+      if (!ready) throw new Error('Wallet payment is not ready yet.');
+      const paymentIntent = await createStripePaymentIntent({
+        table_session_token: tableSessionToken,
+        amount: shareAmount,
+        split_count: splitCount,
+        split_index: 0,
+      });
+      const result = await ready.stripe.confirmCardPayment(paymentIntent.client_secret, {
+        payment_method: ev.paymentMethod.id,
+      });
+      if (result.error) throw result.error;
+
+      ev.complete('success');
+      setPaymentFailure(null);
+      setPaymentState({
+        isOpen: true,
+        status: 'submitted',
+        message: splitCount > 1
+          ? 'Your split payment was submitted. We will update the bill as each share is confirmed.'
+          : 'Payment submitted. Stripe webhook verification will update your bill automatically.',
+      });
+      if (firstBillableOrderId) {
+        const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+        navigate(`${basePath}/order/${firstBillableOrderId}`);
+      }
+    } catch (err) {
+      ev.complete('fail');
+      const message = humanizePaymentFailure(err, providerName);
+      setPaymentFailure(message);
+      addToast(message, 'error');
+    }
+  }, [addToast, firstBillableOrderId, navigate, restaurantSlug, shareAmount, splitCount, tableSessionToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setWalletPayReady(null);
+    if (!paymentEnabled || paymentProvider !== 'stripe' || !tableSessionToken || shareAmount <= 0) return undefined;
+
+    async function setupWalletButton() {
+      try {
+        const setup = await createStripePaymentIntent({
+          table_session_token: tableSessionToken,
+          setup_only: true,
+        });
+        if (cancelled || !setup?.publishable_key) return;
+        const ready = await createStripePaymentRequest({
+          publishableKey: setup.publishable_key,
+          amountPaise: Math.round(shareAmount * 100),
+          currency: (setup.currency || currency || 'usd').toLowerCase(),
+          restaurantName: localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+          onSuccess: handleStripeWalletPayment,
+          onDismiss: () => setPaymentState({ isOpen: false, status: 'idle', message: '' }),
+        });
+        if (!cancelled) setWalletPayReady(ready);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[Menuverse] Stripe wallet button unavailable:', err.message);
+          setWalletPayReady(null);
+        }
+      }
+    }
+
+    setupWalletButton();
+    return () => {
+      cancelled = true;
+    };
+  }, [currency, handleStripeWalletPayment, paymentEnabled, paymentProvider, shareAmount, tableSessionToken]);
+
+  useEffect(() => {
+    if (!walletPayReady || !walletButtonRef.current) return undefined;
+    if (walletElementRef.current) {
+      walletElementRef.current.unmount();
+      walletElementRef.current = null;
+    }
+
+    const element = walletPayReady.elements.create('paymentRequestButton', {
+      paymentRequest: walletPayReady.paymentRequest,
+      style: {
+        paymentRequestButton: {
+          type: 'default',
+          theme: isDark ? 'dark' : 'light',
+          height: '48px',
+        },
+      },
+    });
+    element.mount(walletButtonRef.current);
+    walletElementRef.current = element;
+
+    return () => {
+      element.unmount();
+      if (walletElementRef.current === element) walletElementRef.current = null;
+    };
+  }, [isDark, walletPayReady]);
 
   const handleReorder = (order) => {
     order.items.forEach(item => {
@@ -163,7 +309,7 @@ export default function TableSession() {
     }
   };
 
-  const requestPaymentLink = async () => {
+  const requestPaymentLink = async ({ amount = shareAmount, splitIndex = null, splitDetail = null } = {}) => {
     if (!paymentEnabled) {
       await handleRequestBill();
       return;
@@ -178,9 +324,10 @@ export default function TableSession() {
       if (paymentProvider === 'stripe') {
         const paymentIntent = await createStripePaymentIntent({
           table_session_token: tableSessionToken,
-          amount: shareAmount,
+          amount,
           split_count: splitCount,
-          split_index: 0,
+          ...(splitIndex !== null ? { split_index: splitIndex } : {}),
+          split_detail: splitDetail,
         });
 
         setPaymentState({ isOpen: false, status: 'idle', message: '' });
@@ -206,10 +353,11 @@ export default function TableSession() {
       }
 
       const paymentOrder = await createPayment({
-        table_session_token: tableSessionToken,
-        amount: shareAmount,
-        split_count: splitCount,
-        split_index: 0,
+          table_session_token: tableSessionToken,
+          amount,
+          split_count: splitCount,
+          ...(splitIndex !== null ? { split_index: splitIndex } : {}),
+          split_detail: splitDetail,
       });
 
       setPaymentState({ isOpen: false, status: 'idle', message: '' });
@@ -323,17 +471,106 @@ export default function TableSession() {
                       type="button"
                       onClick={() => updateSplitCount(splitCount + 1)}
                       className="min-w-[40px] min-h-[40px] rounded-full bg-surface-container-highest flex items-center justify-center text-lg font-bold text-on-surface disabled:opacity-40"
-                      disabled={splitCount >= 10}
+                      disabled={splitCount >= 8}
                       aria-label="Increase split count"
                     >
                       +
                     </button>
                   </div>
                 </div>
-                {splitCount > 1 && (
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {[
+                    ['equal', 'Split equally'],
+                    ['byItem', 'Split by item'],
+                  ].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        setSplitMode(mode);
+                        if (mode === 'equal') setItemAssignments({});
+                        if (splitCount < 2 && mode === 'byItem') setSplitCount(2);
+                      }}
+                      className={`rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-widest border ${
+                        splitMode === mode
+                          ? 'bg-primary text-on-primary border-primary'
+                          : 'bg-surface-container-low text-on-surface-variant border-outline-variant/20'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {splitMode === 'equal' && splitCount > 1 && (
                   <p className="mt-3 text-sm text-on-surface-variant">
                     Your share: &#8377;{shareAmount.toFixed(2)} of &#8377;{totalBill.toFixed(2)} total
                   </p>
+                )}
+                {splitMode === 'byItem' && (
+                  <div className="mt-4 space-y-4">
+                    <div className="space-y-3">
+                      {splitLineItems.map(item => (
+                        <div key={item.id} className="rounded-xl bg-surface-container-low border border-outline-variant/10 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-bold text-on-surface">{item.quantity}x {item.name}</p>
+                              <p className="text-xs text-on-surface-variant">&#8377;{item.lineTotal.toFixed(2)}</p>
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-1">
+                              {Array.from({ length: splitCount }, (_, index) => index + 1).map(person => (
+                                <button
+                                  key={person}
+                                  type="button"
+                                  onClick={() => assignSplitItem(item.id, person)}
+                                  className={`min-w-8 rounded-full px-2 py-1 text-[10px] font-bold ${
+                                    Number(itemAssignments[item.id] || 1) === person
+                                      ? 'bg-primary text-on-primary'
+                                      : 'bg-surface-container-high text-on-surface-variant'
+                                  }`}
+                                >
+                                  P{person}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      {itemSplitShares.map(share => (
+                        <div key={share.person} className="rounded-xl bg-surface-container-low border border-outline-variant/10 p-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Person {share.person}</p>
+                            <p className="text-sm text-on-surface-variant">owes &#8377;{share.total.toFixed(2)}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => requestPaymentLink({
+                              amount: share.total,
+                              splitIndex: share.person - 1,
+                              splitDetail: {
+                                mode: 'byItem',
+                                person: share.person,
+                                items: share.items.map(item => item.menuItemId),
+                                amount: Number(share.total.toFixed(2)),
+                              },
+                            })}
+                            disabled={!paymentEnabled || share.total <= 0}
+                            className="rounded-lg bg-primary text-on-primary px-3 py-2 text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                          >
+                            Pay my share
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={resetSplit}
+                      className="w-full rounded-xl border border-outline-variant/20 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant"
+                    >
+                      Reset split
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -376,17 +613,25 @@ export default function TableSession() {
                         </div>
                       </div>
                     ) : (
-                      <button
-                        onClick={requestPaymentLink}
-                        className="w-full bg-primary text-on-primary px-3 py-4 rounded-xl font-bold uppercase tracking-widest text-sm leading-tight shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
-                      >
-                        {splitCount > 1 ? (
-                          <>Pay My Share (&#8377;{shareAmount.toFixed(2)})</>
-                        ) : (
-                          walletPayment.headline
+                      <>
+                        {walletPayReady && splitMode === 'equal' && (
+                          <div id="payment-request-button" ref={walletButtonRef} className="mb-3" />
                         )}
-                        <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
-                      </button>
+                        <button
+                          onClick={() => requestPaymentLink()}
+                          disabled={splitMode === 'byItem'}
+                          className="w-full bg-primary text-on-primary px-3 py-4 rounded-xl font-bold uppercase tracking-widest text-sm leading-tight shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 flex justify-center items-center gap-2 cursor-pointer"
+                        >
+                          {splitMode === 'byItem' ? (
+                            <>Use split buttons above</>
+                          ) : splitCount > 1 ? (
+                            <>Pay My Share (&#8377;{shareAmount.toFixed(2)})</>
+                          ) : (
+                            walletPayment.headline
+                          )}
+                          <span className="material-symbols-outlined text-lg ml-1">credit_card</span>
+                        </button>
+                      </>
                     )}
                   </>
                 ) : (

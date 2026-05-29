@@ -21,7 +21,14 @@ export const pendingOrdersBus = {
  *   showBack  {bool}   — show arrow_back button on left
  *   title     {string} — override brand with a page title
  */
-export function CustomerTopNav({ showBack = false, title, logo }) {
+export function CustomerTopNav({
+  showBack = false,
+  title,
+  logo,
+  guestProfile = null,
+  languageLabel = null,
+  onLanguageReset = null,
+}) {
   const { count, restaurantSlug }  = useCart();
   const { isDark, toggleTheme } = useTheme();
   const navigate   = useNavigate();
@@ -73,6 +80,18 @@ export function CustomerTopNav({ showBack = false, title, logo }) {
 
         {/* Right */}
         <div className="flex items-center gap-4">
+          {languageLabel && (
+            <button
+              type="button"
+              onClick={onLanguageReset}
+              className="hidden sm:flex items-center gap-1 rounded-full bg-surface-container-high px-3 py-1 text-xs font-bold text-on-surface-variant hover:text-primary transition-colors"
+              title="Show this menu in English"
+            >
+              <span className="material-symbols-outlined text-sm">language</span>
+              {languageLabel}
+            </button>
+          )}
+
           <button
             className="relative cursor-pointer w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors"
             onClick={() => navigate(cartPath)}
@@ -87,6 +106,16 @@ export function CustomerTopNav({ showBack = false, title, logo }) {
               </span>
             )}
           </button>
+
+          {Number(guestProfile?.loyalty_points || 0) >= 10 && (
+            <div
+              className="flex items-center gap-1 bg-primary/10 text-primary rounded-full px-2 py-0.5 text-xs font-medium"
+              title={`= Rs. ${(Number(guestProfile.loyalty_points) / 10).toFixed(0)} off your next order`}
+            >
+              <span className="material-symbols-outlined text-xs">stars</span>
+              {guestProfile.loyalty_points} pts
+            </div>
+          )}
 
           <button 
             aria-label="Toggle Theme" 

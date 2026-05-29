@@ -9,6 +9,12 @@ function clampSplitCount(value: unknown) {
   return Math.max(1, Math.min(10, Math.floor(count)));
 }
 
+function clampSplitIndex(value: unknown, splitCount: number) {
+  const index = Number(value);
+  if (!Number.isFinite(index)) return 0;
+  return Math.max(0, Math.min(splitCount - 1, Math.floor(index)));
+}
+
 serve(async (req) => {
   const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
   if (req.method === 'OPTIONS') return preflightResponse(req);
@@ -28,21 +34,12 @@ serve(async (req) => {
 
   const splitCount = clampSplitCount(body.split_count);
   const isSplitPayment = splitCount > 1;
+  const hasRequestedSplitIndex = Object.prototype.hasOwnProperty.call(body, 'split_index');
+  const requestedSplitIndex = clampSplitIndex(body.split_index, splitCount);
+  const requestedAmount = Number(body.amount || 0);
+  const splitDetail = body.split_detail && typeof body.split_detail === 'object' ? body.split_detail : null;
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const stripe = new Stripe(stripeKey, { apiVersion: '2024-04-10' });
-
-  const { data: ordersResult, error: ordersError } = await supabase.rpc('get_table_session_orders', {
-    p_table_session_token: tableSessionToken,
-  });
-  if (ordersError) return json({ error: ordersError.message }, 400);
-
-  const payableOrders = (Array.isArray(ordersResult) ? ordersResult : [])
-    .filter((order) => !['cancelled', 'completed'].includes(order.status));
-  const totalAmount = payableOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
-  const checkoutAmount = isSplitPayment ? totalAmount / splitCount : totalAmount;
-  if (!payableOrders.length || checkoutAmount <= 0) {
-    return json({ error: 'No payable orders found for this table session.' }, 400);
-  }
 
   const { data: session, error: sessionError } = await supabase
     .from('TableSession')
@@ -58,6 +55,29 @@ serve(async (req) => {
     .eq('id', session.restaurant_id)
     .maybeSingle();
   if (restaurantError) return json({ error: restaurantError.message }, 500);
+
+  const currency = String(restaurant?.currency || 'usd').toLowerCase();
+  if (body.setup_only === true) {
+    return json({
+      publishable_key: stripePublishableKey,
+      currency,
+    });
+  }
+
+  const { data: ordersResult, error: ordersError } = await supabase.rpc('get_table_session_orders', {
+    p_table_session_token: tableSessionToken,
+  });
+  if (ordersError) return json({ error: ordersError.message }, 400);
+
+  const payableOrders = (Array.isArray(ordersResult) ? ordersResult : [])
+    .filter((order) => !['cancelled', 'completed'].includes(order.status));
+  const totalAmount = payableOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
+  const checkoutAmount = requestedAmount > 0
+    ? requestedAmount
+    : isSplitPayment ? totalAmount / splitCount : totalAmount;
+  if (!payableOrders.length || checkoutAmount <= 0) {
+    return json({ error: 'No payable orders found for this table session.' }, 400);
+  }
 
   const { data: bill, error: billError } = await supabase
     .from('SessionBill')
@@ -78,7 +98,14 @@ serve(async (req) => {
     const usedIndexes = new Set((existingPayments || [])
       .filter((payment) => Number(payment.split_total || 1) === splitCount)
       .map((payment) => Number(payment.split_index || 0)));
-    while (usedIndexes.has(splitIndex) && splitIndex < splitCount) splitIndex += 1;
+    if (hasRequestedSplitIndex) {
+      if (usedIndexes.has(requestedSplitIndex)) {
+        return json({ error: 'This split payment slot is already in progress or paid.' }, 409);
+      }
+      splitIndex = requestedSplitIndex;
+    } else {
+      while (usedIndexes.has(splitIndex) && splitIndex < splitCount) splitIndex += 1;
+    }
     if (splitIndex >= splitCount) {
       return json({ error: 'All split payment slots are already in progress or paid.' }, 409);
     }
@@ -86,7 +113,6 @@ serve(async (req) => {
     return json({ error: 'One or more orders in this session are already paid.' }, 409);
   }
 
-  const currency = String(restaurant?.currency || 'usd').toLowerCase();
   const amountCents = Math.round(checkoutAmount * 100);
   const paymentIntent = await stripe.paymentIntents.create({
     amount: amountCents,
@@ -100,6 +126,7 @@ serve(async (req) => {
       split_index: String(splitIndex),
       split_total: String(splitCount),
       order_ids: orderIds.join(','),
+      split_detail: splitDetail ? JSON.stringify(splitDetail).slice(0, 500) : '',
     },
   });
 
@@ -113,14 +140,17 @@ serve(async (req) => {
     stripe_payment_intent_id: paymentIntent.id,
     status: 'initiated',
     provider: 'stripe',
-    amount: isSplitPayment ? Number(order.total_amount || 0) / splitCount : Number(order.total_amount || 0),
-    metadata: {
-      table_session_token: tableSessionToken,
-      table_session_id: session.id,
-      stripe_payment_intent_id: paymentIntent.id,
-      split_payment: isSplitPayment,
-    },
-  }));
+    amount: requestedAmount > 0
+      ? checkoutAmount * (Number(order.total_amount || 0) / Math.max(totalAmount, 1))
+      : isSplitPayment ? Number(order.total_amount || 0) / splitCount : Number(order.total_amount || 0),
+      metadata: {
+        table_session_token: tableSessionToken,
+        table_session_id: session.id,
+        stripe_payment_intent_id: paymentIntent.id,
+        split_payment: isSplitPayment,
+        ...(splitDetail ? { split_detail: splitDetail } : {}),
+      },
+    }));
 
   const { error: paymentInsertError } = await supabase
     .from('Payment')

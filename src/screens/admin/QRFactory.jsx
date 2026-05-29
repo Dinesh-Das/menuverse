@@ -4,7 +4,14 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchTables, adminCreateTable, adminClearTable, adminDeleteTable, adminUpdateTable } from '../../lib/api';
+import {
+  adminFetchTables,
+  adminCreateTable,
+  adminClearTable,
+  adminDeleteTable,
+  adminUpdateRestaurantQrColors,
+  adminUpdateTable,
+} from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
 
@@ -26,6 +33,19 @@ function safeFilePart(value, fallback = 'menuverse') {
 function getRestaurantInitial(restaurant) {
   const name = restaurant?.name || restaurant?.slug || 'Menuverse';
   return name.trim().charAt(0).toUpperCase() || 'M';
+}
+
+const SURFACE_OPTIONS = [
+  { id: 'table', label: 'Table', icon: 'chair' },
+  { id: 'counter', label: 'Counter / Walk-up window', icon: 'storefront' },
+  { id: 'parking', label: 'Parking spot', icon: 'local_parking' },
+  { id: 'delivery_zone', label: 'Delivery zone', icon: 'delivery_dining' },
+  { id: 'room', label: 'Room (hotel / hostel)', icon: 'hotel' },
+  { id: 'other', label: 'Other', icon: 'location_on' },
+];
+
+function surfaceOption(type) {
+  return SURFACE_OPTIONS.find(option => option.id === type) || SURFACE_OPTIONS[0];
 }
 
 function escapeHtml(value) {
@@ -80,8 +100,59 @@ async function drawQrLogo(ctx, restaurant, cx, cy, logoR) {
   drawInitialsFallback(ctx, restaurant, cx, cy, logoR);
 }
 
+function hexToLuminance(hex) {
+  const normalized = /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#000000';
+  const rgb = parseInt(normalized.slice(1), 16);
+  const r = ((rgb >> 16) & 0xff) / 255;
+  const g = ((rgb >> 8) & 0xff) / 255;
+  const b = (rgb & 0xff) / 255;
+  const toLinear = (c) => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+function contrastRatio(hex1, hex2) {
+  const l1 = hexToLuminance(hex1);
+  const l2 = hexToLuminance(hex2);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+function drawFinderPatternEyes(canvas, url, { margin = 2, eyeColor = '#1a1a1a', bgColor = '#ffffff' } = {}) {
+  const qr = QRCode.create(url, { errorCorrectionLevel: 'H' });
+  const moduleCount = qr.modules.size;
+  const moduleSize = canvas.width / (moduleCount + margin * 2);
+  const ctx = canvas.getContext('2d');
+  const positions = [
+    [margin, margin],
+    [margin + moduleCount - 7, margin],
+    [margin, margin + moduleCount - 7],
+  ];
+
+  positions.forEach(([x, y]) => {
+    ctx.fillStyle = eyeColor;
+    ctx.fillRect(x * moduleSize, y * moduleSize, 7 * moduleSize, 7 * moduleSize);
+    ctx.fillStyle = bgColor;
+    ctx.fillRect((x + 1) * moduleSize, (y + 1) * moduleSize, 5 * moduleSize, 5 * moduleSize);
+    ctx.fillStyle = eyeColor;
+    ctx.fillRect((x + 2) * moduleSize, (y + 2) * moduleSize, 3 * moduleSize, 3 * moduleSize);
+  });
+}
+
+async function createQrCanvas(url, size, colors) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  await QRCode.toCanvas(canvas, url, {
+    width: size,
+    margin: 2,
+    color: { dark: colors.fg, light: colors.bg },
+    errorCorrectionLevel: 'H',
+  });
+  drawFinderPatternEyes(canvas, url, { eyeColor: colors.eye, bgColor: colors.bg });
+  return canvas;
+}
+
 // ── Renders a single QR canvas and returns download helpers ────
-function QrCanvas({ url, size = 180 }) {
+function QrCanvas({ url, size = 180, fgColor = '#1a1a1a', bgColor = '#ffffff', eyeColor = '#1a1a1a' }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -89,29 +160,20 @@ function QrCanvas({ url, size = 180 }) {
     QRCode.toCanvas(canvasRef.current, url, {
       width: size,
       margin: 2,
-      color: { dark: '#1a1a1a', light: '#ffffff' },
+      color: { dark: fgColor, light: bgColor },
       errorCorrectionLevel: 'H', // High — needed for centre logo overlay
-    });
-  }, [url, size]);
+    }).then(() => drawFinderPatternEyes(canvasRef.current, url, { eyeColor, bgColor }));
+  }, [url, size, fgColor, bgColor, eyeColor]);
 
   return <canvas ref={canvasRef} width={size} height={size} className="rounded-lg" />;
 }
 
 // ── Download QR as PNG with a restaurant logo overlay ───────
-async function downloadQrPng(table, restaurant) {
+async function downloadQrPng(table, restaurant, colors) {
   const url = buildQrUrl(table, restaurant);
   const SIZE = 512;
 
-  // 1. Generate QR into an off-screen canvas
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  await QRCode.toCanvas(canvas, url, {
-    width: SIZE,
-    margin: 2,
-    color: { dark: '#1a1a1a', light: '#ffffff' },
-    errorCorrectionLevel: 'H',
-  });
+  const canvas = await createQrCanvas(url, SIZE, colors);
 
   // 2. Stamp the restaurant logo or initials in the centre.
   const ctx = canvas.getContext('2d');
@@ -131,41 +193,35 @@ async function downloadQrPng(table, restaurant) {
   }, 'image/png');
 }
 
-async function downloadStickerPng(table, restaurant) {
+async function downloadStickerPng(table, restaurant, colors) {
   const url = buildQrUrl(table, restaurant);
   const canvas = document.createElement('canvas');
   canvas.width = 900;
   canvas.height = 1200;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = colors.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#171717';
+  ctx.fillStyle = colors.fg;
   ctx.fillRect(48, 48, canvas.width - 96, canvas.height - 96);
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = colors.bg;
   ctx.fillRect(78, 78, canvas.width - 156, canvas.height - 156);
 
-  ctx.fillStyle = '#171717';
+  ctx.fillStyle = colors.fg;
   ctx.textAlign = 'center';
   ctx.font = 'bold 54px serif';
   ctx.fillText(restaurant?.name || 'Menuverse', 450, 180);
   ctx.font = 'bold 34px sans-serif';
   ctx.fillText(`Table ${table.number}`, 450, 250);
 
-  const qrCanvas = document.createElement('canvas');
-  await QRCode.toCanvas(qrCanvas, url, {
-    width: 560,
-    margin: 2,
-    color: { dark: '#171717', light: '#ffffff' },
-    errorCorrectionLevel: 'H',
-  });
+  const qrCanvas = await createQrCanvas(url, 560, colors);
   await drawQrLogo(qrCanvas.getContext('2d'), restaurant, 280, 280, 54);
   ctx.drawImage(qrCanvas, 170, 320, 560, 560);
 
   ctx.font = 'bold 30px sans-serif';
   ctx.fillText('Scan to order', 450, 940);
   ctx.font = '22px monospace';
-  ctx.fillStyle = '#555555';
+  ctx.fillStyle = colors.fg;
   ctx.fillText(url.replace(/^https?:\/\//, ''), 450, 1000);
 
   canvas.toBlob(blob => {
@@ -191,10 +247,23 @@ export default function QRFactory() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tableActionId, setTableActionId] = useState(null);
-  const [form, setForm] = useState({ number: '', section: 'Main Hall', capacity: 4, status: 'available' });
+  const [form, setForm] = useState({ number: '', section: 'Main Hall', capacity: 4, status: 'available', surface_type: 'table', surface_label: '' });
   const [bulkPdfState, setBulkPdfState] = useState({ generating: false, processed: 0, total: 0 });
+  const [qrFgColor, setQrFgColor] = useState('#1a1a1a');
+  const [qrBgColor, setQrBgColor] = useState('#ffffff');
+  const [qrEyeColor, setQrEyeColor] = useState('#1a1a1a');
+  const [savingColors, setSavingColors] = useState(false);
 
   const restaurant = user?.restaurant;
+  const qrColors = { fg: qrFgColor, bg: qrBgColor, eye: qrEyeColor };
+  const qrContrast = contrastRatio(qrFgColor, qrBgColor);
+
+  useEffect(() => {
+    if (!restaurant) return;
+    setQrFgColor(restaurant.qr_fg_color || '#1a1a1a');
+    setQrBgColor(restaurant.qr_bg_color || '#ffffff');
+    setQrEyeColor(restaurant.qr_eye_color || '#1a1a1a');
+  }, [restaurant]);
 
   const loadTables = useCallback(() => {
     setLoading(true);
@@ -221,7 +290,7 @@ export default function QRFactory() {
       await adminCreateTable(payload);
       addToast(`Table ${form.number} created!`, 'success');
       setIsModalOpen(false);
-      setForm({ number: '', section: 'Main Hall', capacity: 4, status: 'available' });
+      setForm({ number: '', section: 'Main Hall', capacity: 4, status: 'available', surface_type: 'table', surface_label: '' });
       loadTables();
     } catch (err) {
       console.error(err);
@@ -278,6 +347,23 @@ export default function QRFactory() {
     }
   };
 
+  const handleSaveColors = async () => {
+    if (!user?.restaurantId) return;
+    setSavingColors(true);
+    try {
+      await adminUpdateRestaurantQrColors(user.restaurantId, {
+        qr_fg_color: qrFgColor,
+        qr_bg_color: qrBgColor,
+        qr_eye_color: qrEyeColor,
+      });
+      addToast('QR brand colours saved.', 'success');
+    } catch (err) {
+      addToast(`Failed to save colours: ${err.message}`, 'error');
+    } finally {
+      setSavingColors(false);
+    }
+  };
+
   const handleDownloadAllPdf = async () => {
     if (!tables.length || bulkPdfState.generating) return;
 
@@ -309,12 +395,8 @@ export default function QRFactory() {
 
         const cells = [];
         for (const table of pageTables) {
-          const qrDataUrl = await QRCode.toDataURL(buildQrUrl(table, restaurant), {
-            width: 360,
-            margin: 2,
-            color: { dark: '#171717', light: '#ffffff' },
-            errorCorrectionLevel: 'H',
-          });
+          const pdfQrCanvas = await createQrCanvas(buildQrUrl(table, restaurant), 360, qrColors);
+          const qrDataUrl = pdfQrCanvas.toDataURL('image/png');
           processed += 1;
           setBulkPdfState({ generating: true, processed, total: tables.length });
 
@@ -400,6 +482,51 @@ export default function QRFactory() {
           </div>
         </div>
 
+        <div className={`p-6 mb-8 ${cardBg}`}>
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+            <div>
+              <h2 className="font-headline text-xl font-bold mb-2 text-on-surface">QR Brand Colours</h2>
+              <p className="text-sm text-on-surface-variant max-w-xl">
+                Tune the live preview and downloaded QR assets to match the restaurant brand.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full lg:w-auto">
+              {[
+                ['Foreground', qrFgColor, setQrFgColor],
+                ['Background', qrBgColor, setQrBgColor],
+                ['Eye colour', qrEyeColor, setQrEyeColor],
+              ].map(([label, value, setter]) => (
+                <label key={label} className="rounded-xl border border-outline-variant/20 bg-surface-container px-4 py-3">
+                  <span className="block text-[10px] uppercase font-bold tracking-widest text-on-surface-variant mb-2">{label}</span>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={value}
+                      onChange={event => setter(event.target.value)}
+                      className="h-10 w-12 rounded-lg bg-transparent"
+                    />
+                    <span className="text-xs font-mono text-on-surface">{value}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveColors}
+              disabled={savingColors}
+              className="rounded-xl bg-primary text-on-primary px-6 py-3 text-xs font-bold uppercase tracking-widest shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {savingColors && <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>}
+              Save brand colours
+            </button>
+          </div>
+          {qrContrast < 3 && (
+            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-medium text-amber-600">
+              Low contrast - QR codes may not scan reliably. Minimum recommended: 3:1.
+            </div>
+          )}
+        </div>
+
         {/* Create Table Modal */}
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
@@ -408,7 +535,21 @@ export default function QRFactory() {
               <h3 className="font-headline text-2xl font-bold mb-6 text-on-surface">Register Table</h3>
               <form onSubmit={handleCreate} className="space-y-6">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold tracking-widest mb-2 text-on-surface-variant">Table Number / Name</label>
+                  <label className="block text-[10px] uppercase font-bold tracking-widest mb-2 text-on-surface-variant">Surface Type</label>
+                  <select
+                    value={form.surface_type}
+                    onChange={e => setForm({ ...form, surface_type: e.target.value })}
+                    className={inputClass}
+                  >
+                    {SURFACE_OPTIONS.map(option => (
+                      <option key={option.id} value={option.id}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold tracking-widest mb-2 text-on-surface-variant">
+                    {form.surface_type === 'table' ? 'Table Number / Name' : 'Identifier'}
+                  </label>
                   <input
                     required
                     type="text"
@@ -418,6 +559,18 @@ export default function QRFactory() {
                     className={inputClass}
                   />
                 </div>
+                {form.surface_type !== 'table' && (
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold tracking-widest mb-2 text-on-surface-variant">Display Label</label>
+                    <input
+                      type="text"
+                      value={form.surface_label}
+                      onChange={e => setForm({ ...form, surface_label: e.target.value })}
+                      placeholder="e.g. Parking Spot P4"
+                      className={inputClass}
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-[10px] uppercase font-bold tracking-widest mb-2 text-on-surface-variant">Section / Area</label>
                   <input
@@ -475,20 +628,21 @@ export default function QRFactory() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {tables.map(table => {
               const qrUrl = buildQrUrl(table, restaurant);
+              const surface = surfaceOption(table.surface_type);
               return (
                 <div key={table.id} className={`p-8 flex flex-col items-center text-center ${tableCardBg}`}>
                   {/* QR Code */}
                   <div className="relative mb-6">
                     <div className="p-3 bg-white rounded-2xl shadow-luxury">
-                      <QrCanvas url={qrUrl} size={180} />
+                      <QrCanvas url={qrUrl} size={180} fgColor={qrFgColor} bgColor={qrBgColor} eyeColor={qrEyeColor} />
                     </div>
                     {/* Branded centre dot */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="w-9 h-9 bg-black rounded-full flex items-center justify-center border-2 border-white shadow overflow-hidden">
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center border-2 shadow overflow-hidden" style={{ backgroundColor: qrEyeColor, borderColor: qrBgColor }}>
                         {restaurant?.logo_url ? (
                           <img src={restaurant.logo_url} alt="" className="w-full h-full object-cover" />
                         ) : (
-                          <span className="font-headline text-[10px] font-bold text-white">
+                          <span className="font-headline text-[10px] font-bold" style={{ color: qrBgColor }}>
                             {getRestaurantInitial(restaurant)}
                           </span>
                         )}
@@ -496,7 +650,15 @@ export default function QRFactory() {
                     </div>
                   </div>
 
-                  <h3 className="font-headline text-xl font-bold mb-1 text-on-surface">Table {table.number}</h3>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+                      <span className="material-symbols-outlined text-sm">{surface.icon}</span>
+                      {surface.label.split(' / ')[0]}
+                    </span>
+                  </div>
+                  <h3 className="font-headline text-xl font-bold mb-1 text-on-surface">
+                    {table.surface_type === 'table' ? 'Table' : surface.label.split(' ')[0]} {table.number}
+                  </h3>
                   <p className="text-[10px] font-bold uppercase tracking-widest mb-1 text-primary">
                     {table.id.slice(-6)} <span className="mx-1">•</span> {table.section}
                   </p>
@@ -531,7 +693,7 @@ export default function QRFactory() {
                     </button>
                     {/* Download PNG */}
                     <button
-                      onClick={() => downloadQrPng(table, restaurant)}
+                      onClick={() => downloadQrPng(table, restaurant, qrColors)}
                       className="py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 bg-primary text-on-primary hover:bg-primary-container active:scale-95"
                     >
                       <span className="material-symbols-outlined text-sm">download</span> PNG
@@ -540,7 +702,7 @@ export default function QRFactory() {
 
                   <div className="w-full grid grid-cols-2 gap-3 mb-3">
                     <button
-                      onClick={() => downloadStickerPng(table, restaurant)}
+                      onClick={() => downloadStickerPng(table, restaurant, qrColors)}
                       className="py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer border flex items-center justify-center gap-2 border-outline-variant/30 hover:bg-surface-container-high text-on-surface"
                     >
                       <span className="material-symbols-outlined text-sm">article</span> Sticker

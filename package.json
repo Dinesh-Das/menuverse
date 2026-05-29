@@ -8,6 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "test:unit": "node src/lib/__tests__/businessRules.test.js",
+    "test:recommendations": "node src/lib/__tests__/recommendations.test.js",
+    "test:payments": "node src/lib/__tests__/payments.test.js",
+    "test:all": "npm run test:unit && npm run test:recommendations && npm run test:payments",
     "deploy:functions": "powershell -ExecutionPolicy Bypass -File scripts/deploy-edge-functions.ps1",
     "preview": "vite preview"
   },

@@ -7,6 +7,7 @@ import { useTheme } from '../context/ThemeContext';
 import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
 import { sendWhatsAppNotification } from '../lib/integrations';
+import { downloadOrderReceipt } from '../lib/receipt';
 
 const STATUS_STEPS = ['pending', 'accepted', 'preparing', 'ready', 'served'];
 const STATUS_LABELS = {
@@ -257,6 +258,19 @@ export default function OrderStatus() {
     }
   };
 
+  const handleDownloadReceipt = () => {
+    downloadOrderReceipt(order, order.restaurant);
+  };
+
+  const handleShareReceipt = async () => {
+    if (!navigator.share) return;
+    const restaurantName = order.restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse';
+    await navigator.share({
+      title: `${restaurantName} receipt`,
+      text: `Receipt for order #${String(order.id || '').slice(-8).toUpperCase()} at ${restaurantName}. Total: Rs. ${Number(order.total_amount || 0).toFixed(2)}.`,
+    }).catch(() => {});
+  };
+
   const menuPath = restaurantSlug ? `/r/${restaurantSlug}/menu` : '/menu';
 
   if (loading) {
@@ -282,6 +296,7 @@ export default function OrderStatus() {
   const currentStepIdx = STATUS_STEPS.indexOf(order.status);
   const isCancelled = order.status === 'cancelled';
   const ratingOptions = [1, 2, 3, 4, 5];
+  const canShowReceiptActions = order.status === 'served' || order.status === 'completed' || feedbackGiven;
 
   const RatingScale = ({ value, onChange, compact = false, label = 'rating' }) => (
     <div className={`flex ${compact ? 'gap-1' : 'justify-center gap-2'}`}>
@@ -573,6 +588,27 @@ export default function OrderStatus() {
             <span className="material-symbols-outlined">restaurant_menu</span>
             Order More
           </button>
+        )}
+
+        {canShowReceiptActions && (
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <button
+              onClick={handleDownloadReceipt}
+              className="btn-outline flex items-center justify-center gap-2 mt-3"
+            >
+              <span className="material-symbols-outlined text-base">receipt_long</span>
+              Download receipt (PDF)
+            </button>
+            {navigator.share && (
+              <button
+                onClick={handleShareReceipt}
+                className="btn-outline flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-base">ios_share</span>
+                Share receipt
+              </button>
+            )}
+          </div>
         )}
 
         {/* Post-meal Feedback */}

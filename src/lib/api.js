@@ -66,6 +66,74 @@ function normalizeMenuItem(item) {
   };
 }
 
+export const MENU_LOCALE_LABELS = {
+  hi: 'हिंदी',
+  ta: 'தமிழ்',
+  bn: 'বাংলা',
+  mr: 'मराठी',
+  te: 'తెలుగు',
+};
+
+export function getPreferredMenuLocale() {
+  const saved = localStorage.getItem('mv_menu_locale');
+  if (saved) return saved;
+  const locale = navigator.language?.split('-')?.[0]?.toLowerCase() || 'en';
+  return MENU_LOCALE_LABELS[locale] ? locale : 'en';
+}
+
+export function resetMenuLocaleToEnglish() {
+  localStorage.setItem('mv_menu_locale', 'en');
+  return 'en';
+}
+
+export function applyMenuTranslation(item, translation) {
+  if (!translation) return item;
+  return {
+    ...item,
+    original_name: item.original_name || item.name,
+    original_description: item.original_description || item.description,
+    name: translation.name || item.name,
+    description: translation.description ?? item.description,
+    translated_locale: translation.locale || true,
+  };
+}
+
+export function applyMenuTranslationsToCategories(categories, translationsByItemId) {
+  return (categories || []).map(category => ({
+    ...category,
+    items: (category.items || []).map(item => applyMenuTranslation(item, translationsByItemId[item.id])),
+  }));
+}
+
+export async function fetchMenuTranslations(menuItemIds, locale) {
+  const ids = [...new Set((menuItemIds || []).filter(Boolean))];
+  if (!locale || locale === 'en' || ids.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from('MenuItemTranslation')
+    .select('menu_item_id, locale, name, description')
+    .eq('locale', locale)
+    .in('menu_item_id', ids);
+  if (error) throw new Error(error.message);
+
+  return (data || []).reduce((acc, row) => {
+    acc[row.menu_item_id] = row;
+    return acc;
+  }, {});
+}
+
+export async function fetchMenuItemTranslation(menuItemId, locale) {
+  if (!locale || locale === 'en' || !menuItemId) return null;
+  const { data, error } = await supabase
+    .from('MenuItemTranslation')
+    .select('menu_item_id, locale, name, description')
+    .eq('menu_item_id', menuItemId)
+    .eq('locale', locale)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
 function getFileExtension(file) {
   return file?.name?.split('.').pop()?.toLowerCase() || '';
 }
@@ -252,27 +320,38 @@ export async function fetchTableOrders(_tableId) {
 }
 
 export async function createPayment(payload) {
+  const body = {
+    table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
+    order_id: payload.order_id || null,
+    amount: payload.amount,
+    split_count: payload.split_count || 1,
+    split_detail: payload.split_detail || null,
+  };
+  if (payload.split_index !== undefined && payload.split_index !== null) {
+    body.split_index = payload.split_index;
+  }
+
   const { data, error } = await supabase.functions.invoke('create-payment-order', {
-    body: {
-      table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
-      order_id: payload.order_id || null,
-      amount: payload.amount,
-      split_count: payload.split_count || 1,
-      split_index: payload.split_index || 0,
-    },
+    body,
   });
   if (error) throw new Error(`Payment order failed: ${error.message}`);
   return data;
 }
 
 export async function createStripePaymentIntent(payload) {
+  const body = {
+    table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
+    amount: payload.amount,
+    split_count: payload.split_count || 1,
+    split_detail: payload.split_detail || null,
+    setup_only: payload.setup_only === true,
+  };
+  if (payload.split_index !== undefined && payload.split_index !== null) {
+    body.split_index = payload.split_index;
+  }
+
   const { data, error } = await supabase.functions.invoke('create-stripe-payment-intent', {
-    body: {
-      table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
-      amount: payload.amount,
-      split_count: payload.split_count || 1,
-      split_index: payload.split_index || 0,
-    },
+    body,
   });
   if (error) throw new Error(`Stripe payment intent failed: ${error.message}`);
   return data;
@@ -408,6 +487,15 @@ export async function fetchRecommendations({ restaurantId, cartItemIds = [], gue
   });
   if (error) throw new Error(error.message);
   return data?.items || [];
+}
+
+export async function sendMenuChatMessage({ restaurantId, message, history = [] }) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.functions.invoke('menu-chat', {
+    body: { restaurant_id: restaurantId, message, history },
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function fetchDeliveryQuote({ restaurantId, address, orderValue = 0 }) {
@@ -655,11 +743,59 @@ export async function adminEstimateCampaignRecipients(restaurantId, audienceFilt
   return count || 0;
 }
 
+export async function adminFetchCampaignAnalytics(restaurantId, campaignId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('CampaignSend')
+    .select('status, channel')
+    .eq('campaign_id', campaignId);
+  if (error) throw new Error(error.message);
+
+  const totals = {
+    sent: 0,
+    delivered: 0,
+    opened: 0,
+    clicked: 0,
+    bounced: 0,
+    failed: 0,
+  };
+  (data || []).forEach(send => {
+    const status = send.status || 'sent';
+    totals.sent += 1;
+    if (status === 'delivered' || status === 'opened' || status === 'clicked') totals.delivered += 1;
+    if (status === 'opened' || status === 'clicked') totals.opened += 1;
+    if (status === 'clicked') totals.clicked += 1;
+    if (status === 'bounced') totals.bounced += 1;
+    if (status === 'failed') totals.failed += 1;
+  });
+  return totals;
+}
+
 export async function adminFetchBranchOverview(groupOwnerId) {
   if (!groupOwnerId) throw new Error('Owner context is required.');
   const { data, error } = await supabase.rpc('admin_branch_overview', {
     p_group_owner_id: groupOwnerId,
   });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminFetchRevenueForecast(restaurantId, daysAhead = 7) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('get_revenue_forecast', {
+    p_restaurant_id: restaurantId,
+    p_days_ahead: daysAhead,
+  });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminFetchPeakHours(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('restaurant_staffing_hints')
+    .select('*')
+    .eq('restaurant_id', restaurantId);
   if (error) throw new Error(error.message);
   return data || [];
 }
@@ -866,6 +1002,8 @@ export async function adminUpdateARAssetStatus(itemId, payload) {
     .from('ARAsset')
     .update({
       ...(payload.is_active !== undefined ? { is_active: Boolean(payload.is_active) } : {}),
+      ...(payload.processing_status !== undefined ? { processing_status: payload.processing_status } : {}),
+      ...(payload.processing_error !== undefined ? { processing_error: payload.processing_error } : {}),
       updated_at: now(),
     })
     .eq('menu_item_id', itemId)
@@ -919,6 +1057,32 @@ export async function adminCreateMenuItem(payload) {
   return result;
 }
 
+export async function adminCreateCategory({ restaurantId, name, display_order = 0 }) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('MenuCategory')
+    .insert({
+      restaurant_id: restaurantId,
+      name,
+      display_order,
+      created_at: now(),
+      updated_at: now(),
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminSeedSampleMenu(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('seed_sample_menu', {
+    p_restaurant_id: restaurantId,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function adminUpdateMenuItem(id, payload, restaurantId) {
   requireRestaurantId(restaurantId);
   const { restaurant_id: _restaurantId, ...safePayload } = payload;
@@ -930,6 +1094,14 @@ export async function adminUpdateMenuItem(id, payload, restaurantId) {
     .select();
   if (error) throw new Error(error.message);
   return { updated: result?.length };
+}
+
+export async function adminTranslateMenuItem(itemId, locale) {
+  const { data, error } = await supabase.functions.invoke('translate-menu-item', {
+    body: { item_id: itemId, locale },
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function adminUpdateItemModifiers(itemId, restaurantId, groups) {
@@ -1004,10 +1176,22 @@ export async function adminFetchTables(restaurantId) {
 }
 
 export async function adminCreateTable(payload) {
-  requireRestaurantId(payload.restaurant_id);
+  const restaurantId = payload.restaurant_id || payload.restaurantId;
+  requireRestaurantId(restaurantId);
+  const tablePayload = payload.tableNumber
+    ? {
+      restaurant_id: restaurantId,
+      number: payload.tableNumber,
+      surface_type: payload.surface_type || 'table',
+      surface_label: payload.surface_label || null,
+      section: payload.section,
+      capacity: payload.capacity,
+      status: payload.status,
+    }
+    : { ...payload, restaurant_id: restaurantId };
   const { data: result, error } = await supabase
     .from('Table')
-    .insert({ ...payload, created_at: now(), updated_at: now() })
+    .insert({ ...tablePayload, created_at: now(), updated_at: now() })
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -1070,6 +1254,23 @@ export async function adminUpdateRestaurant(id, payload) {
     .single();
   if (error) throw new Error(error.message);
   return result;
+}
+
+export async function adminUpdateRestaurantQrColors(restaurantId, colors) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('Restaurant')
+    .update({
+      qr_fg_color: colors.qr_fg_color,
+      qr_bg_color: colors.qr_bg_color,
+      qr_eye_color: colors.qr_eye_color,
+      updated_at: now(),
+    })
+    .eq('id', restaurantId)
+    .select('id, qr_fg_color, qr_bg_color, qr_eye_color')
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function seedDatabase() {

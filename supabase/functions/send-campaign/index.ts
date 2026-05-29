@@ -106,6 +106,10 @@ serve(async (req) => {
   let sentCount = 0;
   let failedCount = 0;
 
+  if ((campaign.channel === 'email' || campaign.channel === 'both') && !resendKey) {
+    return json({ error: 'Email delivery not configured. Set RESEND_API_KEY.' }, 503);
+  }
+
   for (const recipient of recipients || []) {
     const firstName = String(recipient.name || '').trim().split(/\s+/)[0] || 'there';
     const template = campaign.message_template || campaign.message_body || '';
@@ -129,7 +133,7 @@ serve(async (req) => {
     }
 
     if (campaign.channel === 'email' || campaign.channel === 'both') {
-      if (!recipient.email || !resendKey) {
+      if (!recipient.email) {
         failedCount += 1;
       } else {
         const response = await fetch('https://api.resend.com/emails', {
@@ -141,17 +145,39 @@ serve(async (req) => {
         body: JSON.stringify({
           from: fromEmail,
           to: [recipient.email],
-          subject: campaign.subject || campaign.name,
+          subject: renderTemplate(campaign.subject || campaign.name, {
+            name: recipient.name || '',
+            first_name: firstName,
+            restaurant_name: campaign.restaurant?.name || 'our restaurant',
+          }),
           text: message,
-          html: emailHtmlFromText(message),
+          html: `<html><body style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px">
+            ${emailHtmlFromText(message)}
+            <hr style="margin-top:32px;border:none;border-top:1px solid #eee">
+            <p style="font-size:12px;color:#999;margin-top:12px">
+              You received this because you opted in at ${escapeHtml(campaign.restaurant?.name || 'our restaurant')}.
+              <a href="#">Unsubscribe</a>
+            </p>
+          </body></html>`,
           tags: [
             { name: 'campaign_id', value: campaignId },
             { name: 'source', value: 'menuverse' },
           ],
         }),
       });
-      if (response.ok) sentCount += 1;
-      else failedCount += 1;
+      if (response.ok) {
+        sentCount += 1;
+        const responseJson = await response.json().catch(() => ({}));
+        await supabase.from('CampaignSend').insert({
+          campaign_id: campaignId,
+          guest_profile_id: recipient.id,
+          channel: 'email',
+          external_id: responseJson.id || null,
+          status: 'sent',
+        });
+      } else {
+        failedCount += 1;
+      }
       }
     }
 

@@ -2,42 +2,33 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 
-function parseModifiers(value: unknown) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  try {
-    const parsed = JSON.parse(String(value));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+type SupabaseClient = ReturnType<typeof createClient>;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-async function isAuthorized(
-  supabase: ReturnType<typeof createClient>,
-  req: Request,
-  restaurantId: string,
-  serviceRoleKey: string,
-) {
-  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  if (bearer && bearer === serviceRoleKey) return true;
+function asString(value: unknown, fallback = '') {
+  return typeof value === 'string' ? value.trim() : fallback;
+}
 
-  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
-  const providedSecret = req.headers.get('X-Menuverse-Internal-Secret');
-  if (internalSecret && providedSecret === internalSecret) return true;
+function tableNumberFromOrder(order: Record<string, unknown>) {
+  const table = asRecord(order.table);
+  return asString(order.table_number)
+    || asString(table.number)
+    || asString(table.table_number)
+    || '';
+}
 
-  if (!bearer) return false;
-  const { data: userData, error: userError } = await supabase.auth.getUser(bearer);
-  if (userError || !userData.user) return false;
+function joinUrl(baseUrl: string, path: string) {
+  return `${baseUrl.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+}
 
-  const { data, error } = await supabase
-    .from('User')
-    .select('id')
-    .eq('id', userData.user.id)
-    .eq('restaurant_id', restaurantId)
-    .in('role', ['owner', 'manager'])
-    .maybeSingle();
-  return !error && Boolean(data);
+async function markJobFailed(supabase: SupabaseClient, jobId: string, error: string) {
+  await supabase
+    .from('IntegrationJob')
+    .update({ status: 'failed', error, updated_at: new Date().toISOString() })
+    .eq('id', jobId);
 }
 
 serve(async (req) => {
@@ -45,106 +36,128 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return preflightResponse(req);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
+  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
+  const providedSecret = req.headers.get('X-Menuverse-Internal-Secret');
+  if (!internalSecret || providedSecret !== internalSecret) {
+    return json({ error: 'Forbidden' }, 403);
+  }
+
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceRoleKey) return json({ error: 'POS adapter is not configured.' }, 503);
-
-  const endpoint = Deno.env.get('PETPOOJA_KOT_URL');
-  const token = Deno.env.get('PETPOOJA_TOKEN');
-  const fallbackRestId = Deno.env.get('PETPOOJA_REST_ID');
-  if (!endpoint) return json({ error: 'PETPOOJA_KOT_URL is not configured.' }, 503);
+  if (!supabaseUrl || !serviceRoleKey) return json({ error: 'Petpooja adapter is not configured.' }, 503);
 
   const body = await req.json().catch(() => ({}));
-  const jobId = String(body.job_id || '').trim();
-  const orderId = String(body.order_id || '').trim();
-  const restaurantId = String(body.restaurant_id || '').trim();
-  if (!orderId || !restaurantId) return json({ error: 'order_id and restaurant_id are required.' }, 400);
+  const jobId = asString(body.job_id);
+  const orderId = asString(body.order_id);
+  const restaurantId = asString(body.restaurant_id);
+  if (!jobId || !orderId || !restaurantId) {
+    return json({ error: 'job_id, order_id and restaurant_id are required.' }, 400);
+  }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  if (!(await isAuthorized(supabase, req, restaurantId, serviceRoleKey))) {
-    return json({ error: 'Not authorized to run the Petpooja adapter.' }, 403);
+
+  const { data: job, error: jobError } = await supabase
+    .from('IntegrationJob')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+  if (jobError) return json({ error: jobError.message }, 500);
+  if (!job) return json({ error: 'Integration job not found.' }, 404);
+  if (job.job_type !== 'pos' || job.provider !== 'petpooja') {
+    return json({ error: 'Integration job is not a Petpooja POS job.' }, 400);
   }
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from('Restaurant')
-    .select('id, name, pos_config')
+    .select('id, pos_config')
     .eq('id', restaurantId)
     .maybeSingle();
   if (restaurantError) return json({ error: restaurantError.message }, 500);
   if (!restaurant) return json({ error: 'Restaurant not found.' }, 404);
 
+  const config = asRecord(restaurant.pos_config);
+  const apiKey = asString(config.petpooja_api_key) || Deno.env.get('PETPOOJA_API_KEY') || '';
+  const appKey = asString(config.petpooja_app_key) || Deno.env.get('PETPOOJA_APP_KEY') || '';
+  const petpoojaRestaurantId = asString(config.petpooja_restaurant_id) || Deno.env.get('PETPOOJA_RESTAURANT_ID') || '';
+  const webhookBaseUrl = asString(config.petpooja_webhook_url) || Deno.env.get('PETPOOJA_WEBHOOK_URL') || 'https://mapi.petpooja.com';
+
+  if (!apiKey || !appKey || !petpoojaRestaurantId) {
+    const message = 'Petpooja API key, app key and restaurant ID are required.';
+    await markJobFailed(supabase, jobId, message);
+    return json({ status: 'failed', job_id: jobId, error: message }, 502);
+  }
+
   const { data: order, error: orderError } = await supabase
     .from('Order')
-    .select('*, table:Table(number), items:OrderItem(*)')
+    .select('*, table:Table(*), order_items:OrderItem(*)')
     .eq('id', orderId)
     .eq('restaurant_id', restaurantId)
     .maybeSingle();
   if (orderError) return json({ error: orderError.message }, 500);
   if (!order) return json({ error: 'Order not found.' }, 404);
 
-  const config = restaurant.pos_config || {};
-  const restID = config.petpooja_rest_id || config.restID || fallbackRestId;
-  if (!restID) return json({ error: 'Petpooja restaurant ID is not configured.' }, 503);
-
+  const tableNumber = tableNumberFromOrder(order);
   const petpoojaPayload = {
-    restID,
-    orderType: '1',
-    tableNo: String(order.table?.number || ''),
-    items: (order.items || []).map((item: Record<string, unknown>) => {
-      const modifiers = parseModifiers(item.modifiers_json);
-      const customization = [
-        ...modifiers.map((modifier: Record<string, unknown>) => modifier.name).filter(Boolean),
-        item.item_note ? `Note: ${item.item_note}` : null,
-      ].filter(Boolean).join(', ');
-
-      return {
-        itemid: String(item.menu_item_id || ''),
-        itemname: String(item.name || ''),
-        itemqty: Number(item.quantity || 1),
-        itemprice: Number(item.price || 0),
-        item_tax: '',
-        customization,
-      };
-    }),
-    orderNote: order.special_instructions || '',
+    apikey: apiKey,
+    appkey: appKey,
+    restaurantid: petpoojaRestaurantId,
+    orderdetails: {
+      orderid: orderId,
+      ordertype: '1',
+      tableno: tableNumber,
+      items: (order.order_items || []).map((rawItem: unknown) => {
+        const item = asRecord(rawItem);
+        return {
+          itemid: asString(item.menu_item_id),
+          qty: Number(item.quantity || 1),
+          itemprice: Number(item.unit_price ?? item.price ?? 0),
+        };
+      }),
+      totalamount: Number(order.total_amount || 0),
+      specialinstruction: asString(order.special_instructions),
+    },
   };
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(petpoojaPayload),
-  }).catch((error) => error);
+  try {
+    const response = await fetch(joinUrl(webhookBaseUrl, '/api/v1/porders'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(petpoojaPayload),
+    });
+    const responseBody = await response.json().catch(async () => ({ raw: await response.text().catch(() => '') }));
+    const delivered = response.status === 200 && (responseBody.status === 1 || responseBody.status === '1');
 
-  if (response instanceof Error || !response.ok) {
-    const error = response instanceof Error ? response.message : await response.text().catch(() => 'Petpooja KOT sync failed.');
-    if (jobId) {
-      await supabase
-        .from('IntegrationJob')
-        .update({
-          status: 'failed',
-          error,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', jobId);
+    if (!delivered) {
+      const detail = asString(responseBody.message)
+        || asString(responseBody.error)
+        || `Petpooja order sync failed with HTTP ${response.status}.`;
+      await markJobFailed(supabase, jobId, detail);
+      return json({ status: 'failed', job_id: jobId, error: detail }, 502);
     }
-    return json({ status: 'failed', error, payload: petpoojaPayload }, 502);
-  }
 
-  const responseBody = await response.json().catch(() => ({ ok: true }));
-  if (jobId) {
+    const petpoojaOrderId = asString(responseBody.orderid) || asString(responseBody.order_id) || orderId;
     await supabase
       .from('IntegrationJob')
       .update({
         status: 'delivered',
-        response: responseBody,
+        response: { petpooja_order_id: petpoojaOrderId },
         error: null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId);
-  }
 
-  return json({ status: 'delivered', response: responseBody });
+    if (petpoojaOrderId) {
+      await supabase
+        .from('Order')
+        .update({ pos_order_id: petpoojaOrderId, updated_at: new Date().toISOString() })
+        .eq('id', orderId)
+        .eq('restaurant_id', restaurantId);
+    }
+
+    return json({ status: 'delivered', job_id: jobId, petpooja_order_id: petpoojaOrderId });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Petpooja order sync failed.';
+    await markJobFailed(supabase, jobId, detail);
+    return json({ status: 'failed', job_id: jobId, error: detail }, 502);
+  }
 });

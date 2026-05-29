@@ -164,5 +164,69 @@ serve(async (req) => {
     p_feedback_id: feedback.id,
   }).catch(() => null);
 
+  const { data: orderItems } = await supabase
+    .from('OrderItem')
+    .select('menu_item_id')
+    .eq('order_id', feedback.order_id);
+
+  if (finalAnalysis.sentiment_label === 'negative') {
+    for (const { menu_item_id } of (orderItems || [])) {
+      const { data: menuItem } = await supabase
+        .from('MenuItem')
+        .select('id, name, negative_streak, last_negative_alert_at, restaurant_id')
+        .eq('id', menu_item_id)
+        .maybeSingle();
+
+      if (!menuItem) continue;
+
+      const newStreak = Number(menuItem.negative_streak || 0) + 1;
+      const lastAlert = menuItem.last_negative_alert_at
+        ? new Date(menuItem.last_negative_alert_at)
+        : null;
+      const cooldownPassed = !lastAlert || (Date.now() - lastAlert.getTime()) > 24 * 3600 * 1000;
+
+      await supabase
+        .from('MenuItem')
+        .update({ negative_streak: newStreak, updated_at: new Date().toISOString() })
+        .eq('id', menu_item_id);
+
+      if (newStreak >= 3 && cooldownPassed) {
+        const { data: ownerUser } = await supabase
+          .from('User')
+          .select('phone')
+          .eq('restaurant_id', feedback.restaurant_id)
+          .eq('role', 'owner')
+          .limit(1)
+          .maybeSingle();
+
+        if (ownerUser?.phone) {
+          const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
+          await supabase.functions.invoke('send-whatsapp-notification', {
+            body: {
+              to: ownerUser.phone,
+              message:
+                `Alert: "${menuItem.name}" has received ${newStreak} consecutive negative reviews. ` +
+                `Latest comment: "${finalAnalysis.key_phrase || 'no comment'}". Please check your dashboard.`,
+              restaurant_id: feedback.restaurant_id,
+            },
+            headers: internalSecret ? { 'X-Menuverse-Internal-Secret': internalSecret } : undefined,
+          }).catch(() => null);
+        }
+
+        await supabase
+          .from('MenuItem')
+          .update({ last_negative_alert_at: new Date().toISOString() })
+          .eq('id', menu_item_id);
+      }
+    }
+  } else {
+    for (const { menu_item_id } of (orderItems || [])) {
+      await supabase
+        .from('MenuItem')
+        .update({ negative_streak: 0, updated_at: new Date().toISOString() })
+        .eq('id', menu_item_id);
+    }
+  }
+
   return json({ analysed: true, feedback_id: feedback.id, ...finalAnalysis });
 });

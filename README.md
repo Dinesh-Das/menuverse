@@ -51,13 +51,27 @@ Important production functions:
 Deploy Edge Functions:
 
 ```bash
-supabase functions deploy create-payment-order
-supabase functions deploy verify-payment-webhook
-supabase functions deploy invite-staff
 supabase functions deploy analyse-feedback
+supabase functions deploy campaign-event-webhook
+supabase functions deploy create-payment-order
+supabase functions deploy create-stripe-payment-intent
+supabase functions deploy delivery-quote
+supabase functions deploy get-recommendations
+supabase functions deploy invite-staff
+supabase functions deploy menu-chat
+supabase functions deploy pos-adapter-petpooja
+supabase functions deploy pos-adapter-square
+supabase functions deploy process-ar-asset
+supabase functions deploy process-ar-video
+supabase functions deploy replicate-webhook
 supabase functions deploy request-kitchen-print
+supabase functions deploy send-campaign
 supabase functions deploy send-whatsapp-notification
 supabase functions deploy sync-to-pos
+supabase functions deploy translate-menu-item
+supabase functions deploy verify-payment-webhook
+supabase functions deploy verify-stripe-webhook
+supabase functions deploy whatsapp-inbound
 ```
 
 ## Development Commands

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Line,
   LineChart,
   ReferenceLine,
@@ -19,6 +21,8 @@ import {
   adminFetchFeedbackInsights,
   adminFetchFlaggedFeedback,
   adminFetchOrders,
+  adminFetchPeakHours,
+  adminFetchRevenueForecast,
   adminFetchSentimentTrend,
   adminResolveFeedback,
 } from '../../lib/api';
@@ -41,6 +45,8 @@ export default function Dashboard() {
   const [insights, setInsights] = useState(null);
   const [sentimentTrend, setSentimentTrend] = useState([]);
   const [flaggedFeedback, setFlaggedFeedback] = useState([]);
+  const [forecast, setForecast] = useState([]);
+  const [peakHours, setPeakHours] = useState([]);
   const [loading, setLoading] = useState(true);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
@@ -67,27 +73,35 @@ export default function Dashboard() {
         adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
         adminFetchSentimentTrend(user.restaurantId).catch(() => []),
         adminFetchFlaggedFeedback(user.restaurantId).catch(() => []),
-      ]).then(([feedbackInsights, trend, flagged]) => {
+        adminFetchRevenueForecast(user.restaurantId, 7).catch(() => []),
+        adminFetchPeakHours(user.restaurantId).catch(() => []),
+      ]).then(([feedbackInsights, trend, flagged, forecastRows, peakRows]) => {
         if (cancelled) return;
         setInsights(feedbackInsights);
         setSentimentTrend(trend);
         setFlaggedFeedback(flagged);
+        setForecast(forecastRows);
+        setPeakHours(peakRows);
       });
     };
 
     const fetchAndSubscribe = async () => {
       try {
-        const [{ data }, feedbackInsights, trend, flagged] = await Promise.all([
+        const [{ data }, feedbackInsights, trend, flagged, forecastRows, peakRows] = await Promise.all([
           adminFetchOrders(null, user.restaurantId),
           adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
           adminFetchSentimentTrend(user.restaurantId).catch(() => []),
           adminFetchFlaggedFeedback(user.restaurantId).catch(() => []),
+          adminFetchRevenueForecast(user.restaurantId, 7).catch(() => []),
+          adminFetchPeakHours(user.restaurantId).catch(() => []),
         ]);
         if (cancelled) return;
         setOrders(data);
         setInsights(feedbackInsights);
         setSentimentTrend(trend);
         setFlaggedFeedback(flagged);
+        setForecast(forecastRows);
+        setPeakHours(peakRows);
         setLoading(false);
 
         const channelName = `dashboard_orders:${user.restaurantId}:${crypto.randomUUID()}`;
@@ -189,6 +203,18 @@ export default function Dashboard() {
 
   const maxVal = Math.max(...chartData.map(d => d.value), 100);
   const recentOrdersList = orders.slice(0, 8);
+  const distinctOrderDays = new Set(orders.map(order => new Date(order.created_at).toDateString())).size;
+  const forecastData = forecast.map(row => ({
+    date: new Date(row.forecast_date).toLocaleDateString('en-US', { weekday: 'short' }),
+    predicted_revenue: Number(row.predicted_revenue || 0),
+    predicted_orders: Number(row.predicted_orders || 0),
+    upper: Number(row.predicted_revenue || 0) * 1.15,
+    lower: Number(row.predicted_revenue || 0) * 0.85,
+    revenueBand: [Number(row.predicted_revenue || 0) * 0.85, Number(row.predicted_revenue || 0) * 1.15],
+  }));
+  const peakMax = Math.max(...peakHours.map(row => Number(row.order_count || 0)), 1);
+  const busiest = [...peakHours].sort((a, b) => Number(b.order_count || 0) - Number(a.order_count || 0))[0];
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
     <AdminLayout>
@@ -202,7 +228,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
           {[
             { label: "TODAY'S ORDERS", value: loading ? '-' : todayOrders.length, delta: loading ? '—' : ordersDelta, icon: 'shopping_cart', isUp: ordersDelta.startsWith('+') },
-            { label: 'NET REVENUE',    value: loading ? '-' : `₹${netRevenue.toFixed(0)}`,  delta: loading ? '—' : revenueDelta, icon: 'attach_money', isUp: revenueDelta.startsWith('+') },
+            { label: 'NET REVENUE',    value: loading ? '-' : `Rs. ${netRevenue.toFixed(0)}`,  delta: loading ? '-' : revenueDelta, icon: 'attach_money', isUp: revenueDelta.startsWith('+') },
             { label: 'AVG SENTIMENT',  value: loading ? '-' : `${sentimentPct}%`, delta: loading ? '—' : `${insights?.feedback_count || 0} reviews`, icon: 'psychology', isUp: sentimentPct >= 70 },
           ].map(kpi => (
             <div key={kpi.label} className={`relative overflow-hidden p-8 ${cardBg}`}>
@@ -244,7 +270,7 @@ export default function Dashboard() {
                     style={{ height: `${Math.max((d.value / maxVal) * 100, 2)}%` }}
                   >
                     <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-surface-container-highest text-on-surface text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                      ₹{d.value}
+                      Rs. {d.value}
                     </div>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
@@ -281,11 +307,11 @@ export default function Dashboard() {
                         {order.items?.map(i => i.name).join(', ') || 'Custom Order'}
                       </div>
                       <div className="text-[10px] uppercase tracking-widest mt-1 text-on-surface-variant">
-                        {order.id.slice(-6)} <span className="mx-1">•</span> Table {order.table?.number || order.table_id.slice(-4)}
+                        {order.id.slice(-6)} <span className="mx-1">-</span> Table {order.table?.number || order.table_id.slice(-4)}
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-bold font-headline mb-1 text-primary">₹{order.total_amount?.toFixed(2)}</div>
+                      <div className="text-sm font-bold font-headline mb-1 text-primary">Rs. {order.total_amount?.toFixed(2)}</div>
                       <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-widest ${STATUS_COLORS[order.status] || 'bg-surface-container text-on-surface-variant'}`}>
                         {order.status}
                       </span>
@@ -345,6 +371,59 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </div>
           </div>
+        </div>
+
+        <div className={`p-8 mb-10 ${cardBg}`}>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="font-headline text-2xl font-bold text-on-surface">Forecast</h2>
+            {forecast[0]?.confidence && (
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+                {forecast[0].confidence} data confidence
+              </span>
+            )}
+          </div>
+          {distinctOrderDays < 7 ? (
+            <p className="text-sm text-on-surface-variant">Not enough data yet - check back after your first week.</p>
+          ) : (
+            <div className="grid xl:grid-cols-[1.2fr_1fr] gap-8">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={forecastData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="date" tick={{ fill: 'currentColor', fontSize: 11 }} />
+                    <YAxis yAxisId="left" tick={{ fill: 'currentColor', fontSize: 11 }} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fill: 'currentColor', fontSize: 11 }} />
+                    <Tooltip contentStyle={{ background: '#16161f', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} />
+                    <Area yAxisId="left" type="monotone" dataKey="revenueBand" stroke="none" fill="#B8860B" fillOpacity={0.12} activeDot={false} />
+                    <Line yAxisId="left" type="monotone" dataKey="predicted_revenue" stroke="#B8860B" strokeWidth={3} />
+                    <Line yAxisId="right" type="monotone" dataKey="predicted_orders" stroke="#5c9ee8" strokeWidth={2} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-4">Staffing heatmap</p>
+                <div className="grid grid-cols-[48px_repeat(16,minmax(0,1fr))] gap-1 text-[9px]">
+                  <div />
+                  {Array.from({ length: 16 }, (_, i) => i + 8).map(hour => <div key={hour} className="text-center text-on-surface-variant">{hour}</div>)}
+                  {dayNames.map((day, dayIndex) => (
+                    <React.Fragment key={day}>
+                      <div className="text-on-surface-variant">{day}</div>
+                      {Array.from({ length: 16 }, (_, i) => i + 8).map(hour => {
+                        const row = peakHours.find(item => Number(item.day_of_week) === dayIndex + 1 && Number(item.hour_of_day) === hour);
+                        const intensity = Number(row?.order_count || 0) / peakMax;
+                        return <div key={`${day}-${hour}`} className="h-5 rounded bg-primary" style={{ opacity: 0.08 + intensity * 0.75 }} />;
+                      })}
+                    </React.Fragment>
+                  ))}
+                </div>
+                {busiest && (
+                  <div className="mt-5 rounded-xl bg-primary/10 px-4 py-3 text-sm text-primary">
+                    Tip: Your busiest hour this week is predicted to be {dayNames[Number(busiest.day_of_week || 1) - 1]} {busiest.hour_of_day}:00 - consider adding extra staff.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className={`p-8 ${cardBg}`}>

@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import BottomNav from '../components/BottomNav';
 import {
+  createStripePaymentIntent,
+  createPayment,
   fetchMenu,
   fetchDeliveryQuote,
   fetchRecommendations,
@@ -16,6 +18,36 @@ import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
 import { sortRecommendedItems } from '../lib/recommendations';
 import { supabase } from '../lib/supabase';
+import { createStripePaymentRequest, humanizePaymentFailure, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
+
+function buildCartSplitItems(items) {
+  return items.map((item, index) => {
+    const modifiersTotal = (item.selectedModifiers || []).reduce((sum, mod) => sum + Number(mod.price_delta || 0), 0);
+    const quantity = Number(item.qty || item.quantity || 1);
+    return {
+      id: item._cartKey || `${item.id}:${index}`,
+      menuItemId: item.id,
+      name: item.name,
+      quantity,
+      lineTotal: (Number(item.price || 0) + modifiersTotal) * quantity,
+    };
+  });
+}
+
+function calculateCartSplitShares(lineItems, assignments, splitCount, taxAmount, deliveryFee, discount) {
+  const subtotal = lineItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  return Array.from({ length: splitCount }, (_, index) => {
+    const person = index + 1;
+    const items = lineItems.filter(item => Number(assignments[item.id] || 1) === person);
+    const personSubtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
+    const ratio = subtotal > 0 ? personSubtotal / subtotal : 0;
+    return {
+      person,
+      items,
+      total: personSubtotal + (taxAmount * ratio) + (deliveryFee * ratio) - (discount * ratio),
+    };
+  });
+}
 
 export default function Checkout() {
   const { restaurantSlug } = useParams();
@@ -23,6 +55,8 @@ export default function Checkout() {
     allItems, subtotal, tax, total, removeItem, updateQty, updateItemNote, clearCart, addItem,
     tableId, tableNumber, restaurantId, restaurantSlug: sessionSlug, tableSessionToken, tableSessionId,
     paymentEnabled,
+    paymentProvider,
+    currency,
   } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const { addToast } = useToast();
@@ -42,12 +76,14 @@ export default function Checkout() {
   const [pointsToRedeem, setPointsToRedeem] = useState(0);
   const [serverUpsells, setServerUpsells] = useState([]);
   const [splitCount, setSplitCount] = useState(1);
+  const [splitMode, setSplitMode] = useState('equal');
+  const [itemAssignments, setItemAssignments] = useState({});
   const [billRequested, setBillRequested] = useState(false);
   const [billRequesting, setBillRequesting] = useState(false);
   const [restaurant, setRestaurant] = useState(null);
   const [orderType, setOrderType] = useState('dine_in');
   const [deliveryAddress, setDeliveryAddress] = useState({
-    street: '',
+    street: localStorage.getItem('mv_delivery_address') || '',
     city: '',
     pincode: '',
     phone: '',
@@ -56,9 +92,18 @@ export default function Checkout() {
   });
   const [deliveryQuote, setDeliveryQuote] = useState(null);
   const [deliveryQuoteLoading, setDeliveryQuoteLoading] = useState(false);
+  const [walletPayReady, setWalletPayReady] = useState(null);
+  const walletButtonRef = React.useRef(null);
+  const walletElementRef = React.useRef(null);
+  const walletPayReadyRef = React.useRef(null);
+  const handleCheckoutRef = React.useRef(null);
 
   const currentSlug = restaurantSlug || sessionSlug || null;
   const currentRestaurantId = restaurantId || restaurant?.id || null;
+
+  React.useEffect(() => {
+    walletPayReadyRef.current = walletPayReady;
+  }, [walletPayReady]);
 
   const gstPct = subtotal > 0
     ? Math.round((tax / subtotal) * 100)
@@ -98,6 +143,11 @@ export default function Checkout() {
     ? Number(deliveryQuote?.fee ?? restaurant?.delivery_fee_flat ?? 0)
     : 0;
   const checkoutTotal = Math.max(0, total - loyaltyDiscount + deliveryFee);
+  const cartSplitItems = React.useMemo(() => buildCartSplitItems(allItems), [allItems]);
+  const itemSplitShares = React.useMemo(
+    () => calculateCartSplitShares(cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount),
+    [cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount]
+  );
   const deliveryAddressComplete = ['street', 'city', 'pincode'].every(key => deliveryAddress[key].trim());
   const canPlaceWithoutTable = orderType === 'takeaway' || orderType === 'delivery';
 
@@ -120,8 +170,8 @@ export default function Checkout() {
   }, [currentRestaurantId, upsellItems.length, cartItemIdsKey, guestProfile?.id]);
 
   const fallbackUpsells = React.useMemo(
-    () => sortRecommendedItems(upsellItems, allItems, upsellCategories),
-    [upsellItems, allItems, upsellCategories]
+    () => sortRecommendedItems(upsellItems, allItems, upsellCategories, guestProfile),
+    [upsellItems, allItems, upsellCategories, guestProfile]
   );
   const recommendedUpsells = serverUpsells.length > 0 ? serverUpsells : fallbackUpsells;
 
@@ -131,7 +181,13 @@ export default function Checkout() {
   }, [tableSessionId]);
 
   const updateSplitCount = (nextCount) => {
-    setSplitCount(Math.max(1, Math.min(10, nextCount)));
+    setSplitCount(Math.max(1, Math.min(8, nextCount)));
+  };
+
+  const resetSplit = () => {
+    setSplitMode('equal');
+    setItemAssignments({});
+    setSplitCount(1);
   };
 
   const updateDeliveryAddress = (field, value) => {
@@ -217,7 +273,7 @@ export default function Checkout() {
     }
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = async ({ skipCelebration = false } = {}) => {
     if (allItems.length === 0) return;
     let effectiveDeliveryQuote = deliveryQuote;
     if (!currentRestaurantId) {
@@ -305,17 +361,169 @@ export default function Checkout() {
       localStorage.setItem('mv_last_order_time', Date.now().toString());
       clearCart();
 
+      if (skipCelebration) return result;
+
       setCelebration(true);
       setTimeout(() => {
         setCelebration(false);
         const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
         navigate(`${basePath}/order/${result.order_ref}`);
       }, 2500);
+      return result;
     } catch (err) {
       setError(err.message);
       addToast(`Failed to place order: ${err.message}`, 'error');
+      throw err;
     } finally {
       setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    handleCheckoutRef.current = handleCheckout;
+  });
+
+  const handleStripeWalletPayment = React.useCallback(async (ev) => {
+    const amountForPayment = checkoutTotal;
+    try {
+      const ready = walletPayReadyRef.current;
+      if (!ready) throw new Error('Wallet payment is not ready yet.');
+      const orderResult = await handleCheckoutRef.current({ skipCelebration: true });
+      const paymentIntent = await createStripePaymentIntent({
+        table_session_token: tableSessionToken,
+        amount: amountForPayment,
+        split_count: splitCount,
+        split_index: 0,
+      });
+      const result = await ready.stripe.confirmCardPayment(paymentIntent.client_secret, {
+        payment_method: ev.paymentMethod.id,
+      });
+      if (result.error) throw result.error;
+
+      ev.complete('success');
+      addToast('Payment submitted. We will update your order after verification.', 'success');
+      const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+      navigate(`${basePath}/order/${orderResult.order_ref}`);
+    } catch (err) {
+      ev.complete('fail');
+      const message = humanizePaymentFailure(err, 'Stripe');
+      setError(message);
+      addToast(message, 'error');
+    }
+  }, [addToast, checkoutTotal, navigate, restaurantSlug, splitCount, tableSessionToken]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setWalletPayReady(null);
+    if (!paymentEnabled || paymentProvider !== 'stripe' || !tableSessionToken || checkoutTotal <= 0) return undefined;
+
+    async function setupWalletButton() {
+      try {
+        const setup = await createStripePaymentIntent({
+          table_session_token: tableSessionToken,
+          setup_only: true,
+        });
+        if (cancelled || !setup?.publishable_key) return;
+        const ready = await createStripePaymentRequest({
+          publishableKey: setup.publishable_key,
+          amountPaise: Math.round(checkoutTotal * 100),
+          currency: (setup.currency || currency || 'usd').toLowerCase(),
+          restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+          onSuccess: handleStripeWalletPayment,
+          onDismiss: () => {},
+        });
+        if (!cancelled) setWalletPayReady(ready);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[Menuverse] Stripe wallet button unavailable:', err.message);
+          setWalletPayReady(null);
+        }
+      }
+    }
+
+    setupWalletButton();
+    return () => {
+      cancelled = true;
+    };
+  }, [checkoutTotal, currency, handleStripeWalletPayment, paymentEnabled, paymentProvider, restaurant?.name, tableSessionToken]);
+
+  React.useEffect(() => {
+    if (!walletPayReady || !walletButtonRef.current) return undefined;
+    if (walletElementRef.current) {
+      walletElementRef.current.unmount();
+      walletElementRef.current = null;
+    }
+
+    const element = walletPayReady.elements.create('paymentRequestButton', {
+      paymentRequest: walletPayReady.paymentRequest,
+      style: {
+        paymentRequestButton: {
+          type: 'default',
+          theme: isDark ? 'dark' : 'light',
+          height: '48px',
+        },
+      },
+    });
+    element.mount(walletButtonRef.current);
+    walletElementRef.current = element;
+
+    return () => {
+      element.unmount();
+      if (walletElementRef.current === element) walletElementRef.current = null;
+    };
+  }, [isDark, walletPayReady]);
+
+  const payItemSplitShare = async (share) => {
+    if (!paymentEnabled || share.total <= 0) return;
+    try {
+      const orderResult = await handleCheckoutRef.current({ skipCelebration: true });
+      const splitDetail = {
+        mode: 'byItem',
+        person: share.person,
+        items: share.items.map(item => item.menuItemId),
+        amount: Number(share.total.toFixed(2)),
+      };
+      if (paymentProvider === 'stripe') {
+        const paymentIntent = await createStripePaymentIntent({
+          table_session_token: tableSessionToken,
+          amount: share.total,
+          split_count: splitCount,
+          split_index: share.person - 1,
+          split_detail: splitDetail,
+        });
+        await openStripeCheckout({
+          clientSecret: paymentIntent.client_secret,
+          publishableKey: paymentIntent.publishable_key,
+          onSuccess: () => {
+            const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+            navigate(`${basePath}/order/${orderResult.order_ref}`);
+          },
+          onDismiss: () => setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Stripe')),
+        });
+        return;
+      }
+
+      const paymentOrder = await createPayment({
+        table_session_token: tableSessionToken,
+        amount: share.total,
+        split_count: splitCount,
+        split_index: share.person - 1,
+        split_detail: splitDetail,
+      });
+      await openRazorpayCheckout({
+        paymentOrder,
+        restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+        tableNumber,
+        onSuccess: () => {
+          const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+          navigate(`${basePath}/order/${orderResult.order_ref}`);
+        },
+        onDismiss: () => setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Razorpay')),
+      });
+    } catch (err) {
+      const message = humanizePaymentFailure(err, paymentProvider === 'stripe' ? 'Stripe' : 'Razorpay');
+      setError(message);
+      addToast(message, 'error');
     }
   };
 
@@ -538,6 +746,11 @@ export default function Checkout() {
                           )}
                         </div>
                         <div className="p-3 flex flex-col flex-1">
+                          {guestProfile && Number(item.recommendation_score || 0) >= 70 && (
+                            <span className="mb-2 w-max rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-primary">
+                              Recommended for you
+                            </span>
+                          )}
                           <h4 className="font-headline font-bold text-xs md:text-sm text-on-surface line-clamp-1 mb-1">{item.name}</h4>
                           <div className="text-primary font-bold text-xs mb-3">₹{item.price}</div>
                           <button
@@ -616,17 +829,91 @@ export default function Checkout() {
                         type="button"
                         onClick={() => updateSplitCount(splitCount + 1)}
                         className="min-w-[40px] min-h-[40px] rounded-full bg-surface-container-high text-on-surface font-bold flex items-center justify-center disabled:opacity-40"
-                        disabled={splitCount >= 10}
+                        disabled={splitCount >= 8}
                         aria-label="Increase split count"
                       >
                         +
                       </button>
                     </div>
                   </div>
-                  {splitCount > 1 && (
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {[
+                      ['equal', 'Split equally'],
+                      ['byItem', 'Split by item'],
+                    ].map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => {
+                          setSplitMode(mode);
+                          if (mode === 'equal') setItemAssignments({});
+                          if (mode === 'byItem' && splitCount < 2) setSplitCount(2);
+                        }}
+                        className={`rounded-xl border px-3 py-2 text-[10px] font-bold uppercase tracking-widest ${
+                          splitMode === mode
+                            ? 'bg-primary text-on-primary border-primary'
+                            : 'bg-surface-container text-on-surface-variant border-outline-variant/20'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {splitMode === 'equal' && splitCount > 1 && (
                     <p className="mt-3 text-sm text-on-surface-variant">
                       Your share: &#8377;{(checkoutTotal / splitCount).toFixed(2)} of &#8377;{checkoutTotal.toFixed(2)} total
                     </p>
+                  )}
+                  {splitMode === 'byItem' && (
+                    <div className="mt-4 space-y-3">
+                      {cartSplitItems.map(item => (
+                        <div key={item.id} className="rounded-xl border border-outline-variant/10 bg-surface-container p-3">
+                          <p className="text-sm font-bold text-on-surface">{item.quantity}x {item.name}</p>
+                          <p className="text-xs text-on-surface-variant mb-2">&#8377;{item.lineTotal.toFixed(2)}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {Array.from({ length: splitCount }, (_, index) => index + 1).map(person => (
+                              <button
+                                key={person}
+                                type="button"
+                                onClick={() => setItemAssignments(prev => ({ ...prev, [item.id]: person }))}
+                                className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                                  Number(itemAssignments[item.id] || 1) === person
+                                    ? 'bg-primary text-on-primary'
+                                    : 'bg-surface-container-high text-on-surface-variant'
+                                }`}
+                              >
+                                P{person}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      <div className="space-y-2">
+                        {itemSplitShares.map(share => (
+                          <div key={share.person} className="rounded-xl bg-surface-container border border-outline-variant/10 p-3 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Person {share.person}</p>
+                              <p className="text-sm text-on-surface-variant">owes &#8377;{share.total.toFixed(2)}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => payItemSplitShare(share)}
+                              disabled={!paymentEnabled || share.total <= 0}
+                              className="rounded-lg bg-primary text-on-primary px-3 py-2 text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                            >
+                              Pay my share
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={resetSplit}
+                        className="w-full rounded-xl border border-outline-variant/20 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant"
+                      >
+                        Reset split
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -690,8 +977,11 @@ export default function Checkout() {
               )}
 
               {/* CTA */}
+              {walletPayReady && (
+                <div id="payment-request-button" ref={walletButtonRef} className="mb-3" />
+              )}
               <button
-                onClick={() => handleCheckout()}
+                onClick={() => handleCheckout().catch(() => {})}
                 disabled={loading || (!canPlaceWithoutTable && !tableId)}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >

@@ -17,6 +17,15 @@ function getStoredTableSessionToken() {
   return token;
 }
 
+function surfaceWelcome(table) {
+  const identifier = table?.surface_label || table?.number || '';
+  if (table?.surface_type === 'counter') return { label: `Order at Counter ${identifier}`, heading: 'Welcome' };
+  if (table?.surface_type === 'parking') return { label: `Parking Spot ${identifier}`, heading: 'Order from' };
+  if (table?.surface_type === 'delivery_zone') return { label: 'Delivery Zone', heading: 'Welcome to' };
+  if (table?.surface_type === 'room') return { label: `Room ${identifier}`, heading: 'Welcome to' };
+  return { label: identifier, heading: 'Your Table' };
+}
+
 export default function QRLanding() {
   const { restaurantSlug, tableId } = useParams();
   const navigate = useNavigate();
@@ -27,6 +36,7 @@ export default function QRLanding() {
   const [returningGuest, setReturningGuest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [deliveryAddress, setDeliveryAddress] = useState(localStorage.getItem('mv_delivery_address') || '');
 
   useEffect(() => {
     async function init() {
@@ -85,6 +95,9 @@ export default function QRLanding() {
   }, [tableId, restaurantSlug, setSession]);
 
   const handleExploreMenu = () => {
+    if (table?.surface_type === 'delivery_zone' && deliveryAddress.trim()) {
+      localStorage.setItem('mv_delivery_address', deliveryAddress.trim());
+    }
     navigate(`/r/${restaurantSlug}/menu`);
   };
 
@@ -145,10 +158,18 @@ export default function QRLanding() {
         </div>
 
         <div className="w-full mb-10 rounded-2xl border border-outline-variant/10 bg-surface-container-low px-5 py-4 text-center shadow-sm">
-          <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-on-surface-variant">Your Table</p>
-          <p className="font-headline text-5xl font-bold text-primary mt-1">{table?.number}</p>
+          <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-on-surface-variant">{surfaceWelcome(table).heading}</p>
+          <p className="font-headline text-4xl font-bold text-primary mt-1">{surfaceWelcome(table).label}</p>
           {table?.section && (
             <p className="text-xs uppercase tracking-widest text-on-surface-variant mt-1">{table.section}</p>
+          )}
+          {table?.surface_type === 'delivery_zone' && (
+            <textarea
+              value={deliveryAddress}
+              onChange={e => setDeliveryAddress(e.target.value)}
+              placeholder="Delivery address"
+              className="mt-4 w-full rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+            />
           )}
           {activeSessionToken && count > 0 && (
             <button
