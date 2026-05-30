@@ -1,21 +1,29 @@
 # Menuverse
 
-QR-based restaurant ordering for table service, kitchen display, and restaurant-owner operations.
+QR-based restaurant ordering for table service, kitchen display (KDS), and restaurant operations — built as a Supabase-native web app.
 
-## Current Architecture
+## What’s in this repo
 
-Menuverse is a React 18 + Vite single-page app backed by Supabase:
+- `src/`: React 18 + Vite single-page app
+- `supabase/`: SQL migrations, RLS policies, Edge Functions
+- `server/`: supporting utilities (not the primary production data path)
+- `docs/`: additional notes and references
 
-- Supabase Auth for owner, manager, and staff login
-- PostgreSQL with Row Level Security for restaurant-scoped data access
-- Supabase RPC functions for trusted order/session logic
-- Supabase Edge Functions for payment and staff-invite integration boundaries
-- Supabase Realtime through `src/lib/socket.js`, which keeps a socket-like interface for existing screens
-- Sentiment/ranking fields on menu items and feedback records for AI-assisted recommendations
+## Architecture (current)
 
-The Supabase JS client is the sole data access layer for the active app. Database writes that need trust boundaries go through Supabase RPC functions or Edge Functions.
+Menuverse is a React 18 + Vite SPA backed by Supabase:
 
-## Local Setup
+- Auth: Supabase Auth (owner/manager/staff)
+- Data: Postgres + Row Level Security (restaurant-scoped access)
+- Trusted writes: Supabase RPC functions + Edge Functions
+- Realtime: Supabase Realtime via `src/lib/socket.js` (socket-like wrapper for existing screens)
+- Recommendations/insights: sentiment + ranking fields on menu/feedback (optional LLM integration)
+
+The Supabase JS client is the primary data access layer. Anything that needs a trust boundary should go through RPC or an Edge Function.
+
+## Quickstart (local)
+
+Prereqs: Node.js 18+ and a Supabase project.
 
 ```bash
 npm install
@@ -23,7 +31,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Required client env:
+Open `http://localhost:5173`.
+
+### Required env (client)
 
 ```env
 VITE_SUPABASE_URL=https://your-project.supabase.co
@@ -31,13 +41,16 @@ VITE_SUPABASE_ANON_KEY=your-public-anon-key
 VITE_APP_TYPE=all
 ```
 
-For local demos only, you may set `VITE_ALLOW_CLIENT_ORDER_FALLBACK=true`. Do not enable it in production.
+Optional for local demos only:
 
-## Supabase Setup
+- `VITE_ALLOW_CLIENT_ORDER_FALLBACK=true` (do not enable in production)
 
-Run migrations in order, then apply `supabase/rls-policies.sql`.
+## Supabase setup
 
-Important production functions:
+1) Run SQL migrations in `supabase/migrations/` (in order) against your Supabase project.
+2) Apply `supabase/rls-policies.sql`.
+
+### Key RPC functions (production path)
 
 - `start_table_session`
 - `create_order_secure`
@@ -48,51 +61,40 @@ Important production functions:
 - `close_table_session`
 - `remove_staff_member_secure`
 
-Deploy Edge Functions:
+### Edge Functions
+
+Deploy only what you need for your environment:
 
 ```bash
 supabase functions deploy analyse-feedback
-supabase functions deploy campaign-event-webhook
 supabase functions deploy create-payment-order
-supabase functions deploy create-stripe-payment-intent
-supabase functions deploy delivery-quote
-supabase functions deploy get-recommendations
 supabase functions deploy invite-staff
-supabase functions deploy menu-chat
-supabase functions deploy pos-adapter-petpooja
-supabase functions deploy pos-adapter-square
-supabase functions deploy process-ar-asset
-supabase functions deploy process-ar-video
-supabase functions deploy replicate-webhook
-supabase functions deploy request-kitchen-print
-supabase functions deploy send-campaign
-supabase functions deploy send-whatsapp-notification
-supabase functions deploy sync-to-pos
-supabase functions deploy translate-menu-item
-supabase functions deploy verify-payment-webhook
-supabase functions deploy verify-stripe-webhook
-supabase functions deploy whatsapp-inbound
+supabase functions deploy get-recommendations
 ```
 
-## Development Commands
+For the full list of functions, and production secrets/CORS guidance, see `DEPLOY.md`.
+
+## Scripts
 
 ```bash
 npm run lint
 npm run test:unit
+npm run test:all
 npm run build
-npm audit --omit=dev
+npm run preview
 ```
 
-## Production Checklist
+## Production notes (read before going live)
 
-- Apply migrations and RLS policies before enabling public QR ordering.
-- Verify owners, managers, and staff have `User.restaurant_id` set correctly.
-- Use session-specific table links/tokens for occupied tables; static table QR scans no longer expose an active bill unless `open_session_join_enabled` is intentionally enabled.
-- Keep service role keys only in Supabase Edge Function secrets.
-- Set `APP_ORIGIN` in Supabase Edge Function secrets before production deploys so Edge Function CORS only allows your app domain.
-- Set `ALLOWED_ORIGINS` in Supabase Edge Function secrets when you need more than the default Vercel deployment and Supabase project origins.
-- Configure Razorpay credentials only in Edge Function secrets.
-- Confirm storage policies restrict writes by restaurant folder.
-- Configure `ANTHROPIC_API_KEY` for LLM sentiment analysis; otherwise the app uses the built-in rating/keyword baseline.
-- Configure provider webhooks for KOT, WhatsApp, and POS integrations before marking those integrations live.
+- Apply migrations + RLS before enabling public QR ordering.
+- Verify every owner/manager/staff user has `User.restaurant_id` set correctly.
+- Prefer session-specific table links/tokens for occupied tables; static table QR scans should not expose an active bill unless explicitly enabled.
+- Keep service role keys, payment secrets, and webhook secrets only in Edge Function secrets.
+- Set `APP_ORIGIN` / `ALLOWED_ORIGINS` for Edge Function CORS before production deploys.
 - Keep `VITE_ALLOW_CLIENT_ORDER_FALLBACK` unset in production.
+
+## More docs
+
+- Local run guide: `APP_RUN.md`
+- Deployment: `DEPLOY.md`
+- Security: `SECURITY.md`
