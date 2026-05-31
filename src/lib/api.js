@@ -25,7 +25,6 @@ function viteFlag(name) {
 }
 
 const ENABLE_SERVER_RECOMMENDATIONS = viteFlag('VITE_ENABLE_SERVER_RECOMMENDATIONS');
-const ENABLE_CLIENT_FEEDBACK_ANALYSIS = viteFlag('VITE_ENABLE_CLIENT_FEEDBACK_ANALYSIS');
 const ENABLE_AR_EDGE_PROCESSING = viteFlag('VITE_ENABLE_AR_EDGE_PROCESSING');
 const ENABLE_DELIVERY_QUOTE_EDGE = viteFlag('VITE_ENABLE_DELIVERY_QUOTE_EDGE');
 const ENABLE_POS_EDGE_SYNC = viteFlag('VITE_ENABLE_POS_EDGE_SYNC');
@@ -420,13 +419,6 @@ export async function submitOrderFeedback({
   }
 
   if (error) throw new Error(error.message);
-
-  if (data && ENABLE_CLIENT_FEEDBACK_ANALYSIS) {
-    // The RPC enqueues production analysis with pg_net; this flag is only a local fallback.
-    supabase.functions.invoke('analyse-feedback', {
-      body: { feedback_id: data },
-    }).catch(() => {});
-  }
 
   return data;
 }

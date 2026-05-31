@@ -2,13 +2,18 @@
 
 ## OrderFeedback sentiment analysis
 
-`submit_order_feedback_secure` now enqueues `analyse-feedback` with `pg_net` when the database has an Edge Function base URL configured:
+Migration `20260601000000_sentiment_webhook_trigger.sql` creates an `AFTER INSERT` trigger on `public.OrderFeedback`. The trigger enqueues `analyse-feedback` with `pg_net`, so feedback submission returns without waiting for sentiment analysis.
+
+Configure the Edge Function base URL and service-role key as database settings:
 
 ```sql
 alter database postgres set "app.settings.supabase_url" = 'https://your-project.supabase.co';
+alter database postgres set "app.settings.service_role_key" = '<service-role-key>';
 ```
 
-The function posts this payload asynchronously:
+The trigger also accepts the legacy aliases `app.supabase_url` and `app.service_role_key`. The service-role key is sent only from Postgres to the Edge Function as a bearer token. Store it as a protected secret and never expose it through Vite or client-side code.
+
+The function receives this payload asynchronously:
 
 ```json
 { "feedback_id": "<OrderFeedback.id>" }
@@ -20,11 +25,19 @@ If you prefer a dashboard-managed webhook, create a Database Webhook in Supabase
 - Event: `INSERT`
 - Method: `POST`
 - URL: `https://your-project.supabase.co/functions/v1/analyse-feedback`
-- Headers: `Content-Type: application/json`
+- Headers:
+  - `Content-Type: application/json`
+  - `Authorization: Bearer <service-role-key>`
 - Body:
 
 ```json
 { "feedback_id": "{{ record.id }}" }
+```
+
+Use either the SQL trigger or the dashboard-managed webhook, not both, to avoid duplicate analysis requests. If you use the dashboard webhook, drop the SQL trigger:
+
+```sql
+drop trigger if exists trg_sentiment_analysis on public."OrderFeedback";
 ```
 
 ## AR source video processing

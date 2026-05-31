@@ -107,7 +107,7 @@ Return JSON with:
   };
 }
 
-// Trigger contract: database webhook or submit_order_feedback_secure posts { feedback_id: "<OrderFeedback.id>" }.
+// Trigger contract: database trigger or dashboard webhook posts { feedback_id: "<OrderFeedback.id>" }.
 serve(async (req) => {
   const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
   if (req.method === 'OPTIONS') return preflightResponse(req);
@@ -117,6 +117,11 @@ serve(async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceRoleKey) {
     return json({ error: 'Feedback analysis service is not configured.' }, 503);
+  }
+
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (bearer !== serviceRoleKey) {
+    return json({ error: 'Forbidden' }, 403);
   }
 
   const body = await req.json().catch(() => ({}));
