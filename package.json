@@ -11,6 +11,7 @@
     "test:recommendations": "node src/lib/__tests__/recommendations.test.js",
     "test:payments": "node src/lib/__tests__/payments.test.js",
     "test:all": "npm run test:unit && npm run test:recommendations && npm run test:payments",
+    "generate:screenshots": "node scripts/generate-pwa-screenshots.js",
     "deploy:functions": "powershell -ExecutionPolicy Bypass -File scripts/deploy-edge-functions.ps1",
     "preview": "vite preview"
   },
@@ -32,6 +33,7 @@
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.19",
+    "canvas": "^3.2.3",
     "concurrently": "^9.2.1",
     "eslint": "^8.55.0",
     "eslint-plugin-react": "^7.33.2",
