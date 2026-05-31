@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { CustomerTopNav } from '../components/TopNav';
 import BottomNav from '../components/BottomNav';
+import CartCTA from '../components/CartCTA';
 import CartSidebar from '../components/CartSidebar';
 import {
   MENU_LOCALE_LABELS,
@@ -76,7 +77,7 @@ function DishImage({ src, alt }) {
 
 export default function MenuHome() {
   const { restaurantSlug } = useParams();
-  const { addItem, items, count, total, restaurantSlug: sessionSlug, setSession, updateQty, tableSessionToken } = useCart();
+  const { addItem, items, restaurantSlug: sessionSlug, setSession, updateQty, tableSessionToken } = useCart();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const slug = restaurantSlug || sessionSlug || null;
@@ -620,23 +621,7 @@ export default function MenuHome() {
         </>
       )}
 
-      {/* Sticky View Cart CTA (Mobile only) */}
-      {count > 0 && (
-        <div className="fixed bottom-[84px] left-4 right-4 z-50 lg:hidden animate-in slide-in-from-bottom duration-300">
-          <button 
-            onClick={() => navigate(restaurantSlug ? `/r/${restaurantSlug}/checkout` : '/checkout')}
-            className="w-full bg-primary text-on-primary px-4 py-3 rounded-2xl shadow-luxury flex items-center justify-between hover:bg-primary-fixed-dim transition-colors active:scale-95 cursor-pointer border border-primary/20"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-on-primary/20 rounded-full flex items-center justify-center">
-                <span className="font-bold text-sm">{count}</span>
-              </div>
-              <span className="font-bold text-sm uppercase tracking-widest">View Cart</span>
-            </div>
-            <span className="font-bold text-sm uppercase tracking-widest">₹{total.toFixed(2)}</span>
-          </button>
-        </div>
-      )}
+      <CartCTA />
 
       {/* Upsell Bottom Sheet */}
       {upsellModal.isOpen && (
