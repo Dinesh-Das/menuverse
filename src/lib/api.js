@@ -27,7 +27,6 @@ function viteFlag(name) {
 const ENABLE_SERVER_RECOMMENDATIONS = viteFlag('VITE_ENABLE_SERVER_RECOMMENDATIONS');
 const ENABLE_AR_EDGE_PROCESSING = viteFlag('VITE_ENABLE_AR_EDGE_PROCESSING');
 const ENABLE_DELIVERY_QUOTE_EDGE = viteFlag('VITE_ENABLE_DELIVERY_QUOTE_EDGE');
-const ENABLE_POS_EDGE_SYNC = viteFlag('VITE_ENABLE_POS_EDGE_SYNC');
 const ALLOW_CLIENT_ORDER_FALLBACK = viteFlag('VITE_ALLOW_CLIENT_ORDER_FALLBACK');
 
 if (import.meta.env.PROD && ALLOW_CLIENT_ORDER_FALLBACK) {
@@ -237,7 +236,7 @@ export async function fetchMenu(restaurantSlug) {
 export async function fetchTableInfo(tableId) {
   const { data, error } = await supabase
     .from('Table')
-    .select('*, restaurant:Restaurant(*)')
+    .select('*, restaurant:Restaurant(id, slug, name, description, logo_url, primary_color, gst_rate, service_charge_rate, payment_enabled, payment_provider, currency, delivery_fee_flat)')
     .eq('id', tableId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -475,7 +474,7 @@ export async function getGuestProfileForSession(tableSessionToken) {
 
 export async function fetchRecommendations({ restaurantId, cartItemIds = [], guestProfileId = null, limit = 5 }) {
   requireRestaurantId(restaurantId);
-  if (!ENABLE_SERVER_RECOMMENDATIONS) return [];
+  if (!ENABLE_SERVER_RECOMMENDATIONS && !guestProfileId) return [];
 
   const { data, error } = await supabase.functions.invoke('get-recommendations', {
     body: {
@@ -635,7 +634,7 @@ export async function adminRetryIntegrationJob(jobId, restaurantId) {
     .single();
   if (error) throw new Error(error.message);
 
-  if (job.job_type === 'pos' && ENABLE_POS_EDGE_SYNC) {
+  if (job.job_type === 'pos') {
     const { error: retryError } = await supabase.functions.invoke('sync-to-pos', {
       body: {
         job_id: job.id,
@@ -646,7 +645,104 @@ export async function adminRetryIntegrationJob(jobId, restaurantId) {
     });
     if (retryError) throw new Error(retryError.message);
   }
+  if (job.job_type === 'printer') {
+    const { error: retryError } = await supabase.functions.invoke('request-kitchen-print', {
+      body: {
+        restaurant_id: restaurantId,
+        order_id: job.order_id,
+        ...(job.payload || {}),
+      },
+    });
+    if (retryError) throw new Error(retryError.message);
+  }
 
+  return data;
+}
+
+export async function fetchSessionBill(tableSessionToken) {
+  const token = tableSessionToken || localStorage.getItem('mv_table_session_token');
+  if (!token) return null;
+  const { data, error } = await supabase.rpc('get_session_bill_secure', {
+    p_table_session_token: token,
+  });
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
+export async function adminSetSessionSplitCount(tableSessionId, splitCount) {
+  const { data, error } = await supabase.rpc('set_session_split_count', {
+    p_table_session_id: tableSessionId,
+    p_split_count: splitCount,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function invokeIntegrationSettings(body) {
+  const { data, error } = await supabase.functions.invoke('integration-settings', { body });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function adminFetchIntegrationSettings(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const data = await invokeIntegrationSettings({ action: 'get', restaurant_id: restaurantId });
+  return data.channels || [];
+}
+
+export async function adminUpdatePosSettings(restaurantId, payload) {
+  requireRestaurantId(restaurantId);
+  return invokeIntegrationSettings({ action: 'save_pos', restaurant_id: restaurantId, ...payload });
+}
+
+export async function adminTestPosConnection(restaurantId) {
+  requireRestaurantId(restaurantId);
+  return invokeIntegrationSettings({ action: 'test_pos', restaurant_id: restaurantId });
+}
+
+export async function adminUpdateIntegrationChannel(restaurantId, payload) {
+  requireRestaurantId(restaurantId);
+  return invokeIntegrationSettings({ action: 'save_channel', restaurant_id: restaurantId, ...payload });
+}
+
+export async function adminFetchAlerts(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('AdminAlert')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .is('resolved_at', null)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminFetchSentimentConfigurationStatus(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('admin_sentiment_configuration_status', {
+    p_restaurant_id: restaurantId,
+  });
+  if (error) throw new Error(error.message);
+  return data || {};
+}
+
+export async function adminFindPossibleGuestDuplicates(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.rpc('find_possible_guest_duplicates', {
+    p_restaurant_id: restaurantId,
+  });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function adminMergeGuestProfiles(keepId, discardId) {
+  const { data, error } = await supabase.rpc('merge_guest_profiles', {
+    p_keep_id: keepId,
+    p_discard_id: discardId,
+  });
+  if (error) throw new Error(error.message);
   return data;
 }
 

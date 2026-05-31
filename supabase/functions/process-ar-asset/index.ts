@@ -1,6 +1,8 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { requireRestaurantRole } from '../_shared/integration-config.ts';
+import { hasValidInternalSecret } from '../_shared/internal-auth.ts';
 
 type ARAsset = {
   id: string;
@@ -106,6 +108,12 @@ serve(async (req) => {
   }
 
   if (!asset) return json({ error: 'AR asset was not found for this video upload.' }, 404);
+  const internalRequest = hasValidInternalSecret(req, Deno.env.get('MENUVERSE_INTERNAL_SECRET'));
+  const staff = internalRequest
+    ? true
+    : await requireRestaurantRole(supabase, req, asset.restaurant_id, ['owner', 'manager', 'staff']);
+  if (!staff) return json({ error: 'Forbidden' }, 403);
+
   const videoUrl = sourceVideoUrl || asset.source_video_url;
   if (!videoUrl) return json({ error: 'AR source video URL is required.' }, 400);
 

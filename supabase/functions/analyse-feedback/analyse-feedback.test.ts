@@ -1,4 +1,5 @@
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import { hasValidInternalSecret } from '../_shared/internal-auth.ts';
 
 type Analysis = {
   sentiment_label: 'positive' | 'neutral' | 'negative';
@@ -61,4 +62,22 @@ Deno.test('rating 1 always flags for review', () => {
 Deno.test('topics extracted from food quality keyword', () => {
   const result = baselineAnalysis(4, 'The biryani tasted fresh');
   assertEquals(result.sentiment_topics.includes('food_quality'), true);
+});
+
+Deno.test('sentiment auth requires the internal secret header', () => {
+  const req = new Request('https://example.test', {
+    headers: { 'X-Menuverse-Internal-Secret': 'correct-secret' },
+  });
+  assertEquals(hasValidInternalSecret(req, 'correct-secret'), true);
+});
+
+Deno.test('sentiment auth rejects invalid internal secret and service-role bearer', () => {
+  const invalid = new Request('https://example.test', {
+    headers: { 'X-Menuverse-Internal-Secret': 'wrong-secret' },
+  });
+  const legacyBearer = new Request('https://example.test', {
+    headers: { Authorization: 'Bearer service-role-key' },
+  });
+  assertEquals(hasValidInternalSecret(invalid, 'correct-secret'), false);
+  assertEquals(hasValidInternalSecret(legacyBearer, 'service-role-key'), false);
 });

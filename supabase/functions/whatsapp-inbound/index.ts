@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { corsHeadersFor, jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { asString, loadIntegrationConfig } from '../_shared/integration-config.ts';
 
 type InboundBody = Record<string, unknown>;
 type MenuItemRow = { id: string; name: string; price: number; available: boolean };
@@ -105,10 +106,10 @@ function parseNumber(input: string) {
   return match ? Number(match[0]) : null;
 }
 
-async function maybeSendProviderReply(to: string, reply: string) {
-  const webhookUrl = Deno.env.get('WHATSAPP_INBOUND_REPLY_WEBHOOK_URL');
+async function maybeSendProviderReply(to: string, reply: string, config: Record<string, unknown> = {}) {
+  const webhookUrl = asString(config.endpoint) || Deno.env.get('WHATSAPP_INBOUND_REPLY_WEBHOOK_URL');
   if (!webhookUrl || !to) return;
-  const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+  const accessToken = asString(config.access_token) || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
   await fetch(webhookUrl, {
     method: 'POST',
     headers: {
@@ -156,6 +157,10 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const channel = await loadIntegrationConfig(supabase, restaurantId, 'whatsapp');
+  if (channel && !channel.enabled) {
+    return responseFor(req, inbound.body, 'WhatsApp ordering is not enabled for this restaurant.', inbound.isTwilio);
+  }
   const [{ data: restaurant }, { data: categories, error: categoryError }] = await Promise.all([
     supabase.from('Restaurant').select('id, slug, name').eq('id', restaurantId).maybeSingle(),
     supabase
@@ -283,12 +288,13 @@ serve(async (req) => {
     context_json: session.context_json || {},
     last_message: inbound.incomingText,
     updated_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   };
 
   await supabase
     .from('WhatsAppSession')
     .upsert(upsertPayload, { onConflict: 'restaurant_id,phone' });
 
-  await maybeSendProviderReply(inbound.from, reply);
+  await maybeSendProviderReply(inbound.from, reply, channel?.config || {});
   return responseFor(req, inbound.body, reply, inbound.isTwilio);
 });

@@ -22,17 +22,17 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-public-anon-key
 VITE_APP_TYPE=all
 VITE_CUSTOMER_APP_URL=https://your-domain.com
-VITE_ENABLE_SERVER_RECOMMENDATIONS=false
+VITE_ENABLE_SERVER_RECOMMENDATIONS=true
 VITE_ENABLE_CLIENT_FEEDBACK_ANALYSIS=false
 VITE_ENABLE_KOT_EDGE_PRINT=false
 VITE_ENABLE_WHATSAPP_EDGE_NOTIFICATIONS=false
-VITE_ENABLE_POS_EDGE_SYNC=false
+VITE_DISABLE_POS_EDGE_SYNC=false
 VITE_ENABLE_AR_EDGE_PROCESSING=false
 VITE_ENABLE_DELIVERY_QUOTE_EDGE=false
 VITE_ENABLE_MENU_CHAT=false
 ```
 
-Keep the optional Edge Function flags `false` until the matching functions are deployed to the active Supabase project. This prevents browser CORS noise for non-critical features such as recommendations, KOT print queueing, local feedback-analysis fallback, and delivery quoting.
+Keep optional browser-triggered Edge Function flags `false` until the matching functions are deployed. POS is different: configured restaurants queue POS work at runtime from the database. Use `VITE_DISABLE_POS_EDGE_SYNC=true` only as an emergency kill switch. Returning guests use server recommendations even when the optional recommendation flag is off; production deployments should keep it enabled for anonymous upsells too.
 
 Edge Function secrets:
 
@@ -64,6 +64,7 @@ WHATSAPP_DEFAULT_RESTAURANT_ID=restaurant-id-for-single-number
 WHATSAPP_RESTAURANT_MAP={"919999999999":"restaurant-id"}
 WHATSAPP_INBOUND_REPLY_WEBHOOK_URL=https://provider.example/send
 REPLICATE_API_TOKEN=server-only
+REPLICATE_WEBHOOK_SECRET=random-callback-secret
 REPLICATE_MODEL=stability-ai/triposr
 REPLICATE_MODEL_VERSION=
 REPLICATE_CANCEL_AFTER=20m
@@ -83,14 +84,35 @@ Run all SQL migrations under `supabase/migrations/`, then run:
 
 If using the dashboard SQL editor, paste the contents of `supabase/rls-policies.sql`.
 
-Database workers that invoke Edge Functions need the project URL and internal secret available as database settings:
+## Post-Deploy Configuration
+
+Database workers that invoke Edge Functions need the project URL and internal secret available as protected database settings:
 
 ```sql
-alter database postgres set "app.supabase_url" = 'https://your-project.supabase.co';
-alter database postgres set "app.service_role_key" = 'server-only-service-role-key';
 alter database postgres set "app.settings.supabase_url" = 'https://your-project.supabase.co';
 alter database postgres set "app.settings.menuverse_internal_secret" = 'same-value-as-MENUVERSE_INTERNAL_SECRET';
 ```
+
+Do not store `SUPABASE_SERVICE_ROLE_KEY` in a Postgres app setting. The service-role key stays inside Supabase Edge Function secrets only. Database jobs authenticate to Edge Functions with `X-Menuverse-Internal-Secret`.
+
+Set these Edge Function secrets:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=server-only-service-role-key
+MENUVERSE_INTERNAL_SECRET=long-random-shared-secret
+ANTHROPIC_API_KEY=optional-recommended
+```
+
+`ANTHROPIC_API_KEY` is optional. When it is absent, sentiment processing uses the deterministic numeric-rating and keyword baseline and still marks menu rankings for batched recalculation.
+
+Verify sentiment processing after deployment:
+
+1. Submit feedback for a served test order.
+2. Confirm `SentimentQueue.status` changes from `pending` to `processed`.
+3. Confirm the `OrderFeedback.analysis_source` field is populated.
+4. Inspect queued `pg_net` request headers and confirm they contain `X-Menuverse-Internal-Secret`, never `Authorization: Bearer <service-role-key>`.
+5. Confirm Dashboard shows `Sentiment analysis not configured` if either protected database setting is intentionally removed during a staging check.
 
 The secure MVP order path depends on these RPC functions:
 
@@ -124,15 +146,19 @@ The `ar-models` bucket stores GLB, USDZ, and thumbnail assets for the AR menu pr
 
 ```bash
 supabase functions deploy analyse-feedback
+supabase functions deploy aggregator-order-webhook
 supabase functions deploy campaign-event-webhook
 supabase functions deploy create-payment-order
 supabase functions deploy create-stripe-payment-intent
 supabase functions deploy delivery-quote
 supabase functions deploy get-recommendations
 supabase functions deploy invite-staff
+supabase functions deploy integration-settings
 supabase functions deploy menu-chat
 supabase functions deploy pos-adapter-petpooja
 supabase functions deploy pos-adapter-square
+supabase functions deploy pos-status-webhook
+supabase functions deploy process-sentiment-queue
 supabase functions deploy process-ar-asset
 supabase functions deploy process-ar-video
 supabase functions deploy replicate-webhook
@@ -140,10 +166,12 @@ supabase functions deploy request-kitchen-print
 supabase functions deploy send-campaign
 supabase functions deploy send-whatsapp-notification
 supabase functions deploy sync-to-pos
+supabase functions deploy sync-menu-to-channel
 supabase functions deploy translate-menu-item
 supabase functions deploy verify-payment-webhook
 supabase functions deploy verify-stripe-webhook
 supabase functions deploy whatsapp-inbound
+supabase functions deploy meta-order-webhook
 ```
 
 For browser-called functions, deploy with JWT verification disabled so `OPTIONS` preflight reaches the handler:
@@ -156,7 +184,39 @@ If the browser reports `Requested function was not found`, the function has not 
 
 `create-payment-order` creates Razorpay Orders with server-side credentials. `verify-payment-webhook` verifies Razorpay signatures before any payment or bill is marked paid.
 
-`analyse-feedback` uses `ANTHROPIC_API_KEY` when configured and falls back to a deterministic rating/keyword baseline when it is not. `request-kitchen-print`, `send-whatsapp-notification`, and `sync-to-pos` queue integration jobs and forward to provider webhooks when those URLs are configured.
+`analyse-feedback` uses `ANTHROPIC_API_KEY` when configured and falls back to a deterministic rating/keyword baseline when it is not. `process-sentiment-queue` retries analysis in batches. `request-kitchen-print`, `send-whatsapp-notification`, and `sync-to-pos` queue integration jobs and forward to provider webhooks when those URLs are configured.
+
+## Payment Provider Capabilities
+
+| Provider | Capabilities |
+| --- | --- |
+| Razorpay | UPI, cards, netbanking, and supported wallets inside Razorpay Checkout. It does not promise a browser-native Apple Pay sheet. |
+| Stripe | Cards plus browser-native Apple Pay and Google Pay through Payment Request when the browser, device, domain, and Stripe account are eligible. |
+
+Choose Stripe in Settings when native Apple Pay is required.
+
+## Runtime Integrations
+
+Owners configure POS, WhatsApp, delivery aggregators, Instagram, Facebook, Google ordering links, and signed custom webhooks under **Settings > Integrations**. Secret values are stored in `IntegrationSecret`, which has no browser-facing RLS policy. The browser receives redacted key names only.
+
+The integration endpoints are:
+
+```text
+POST /functions/v1/pos-status-webhook?restaurant_id=<id>&provider=square
+POST /functions/v1/pos-status-webhook?restaurant_id=<id>&provider=petpooja
+POST /functions/v1/aggregator-order-webhook?restaurant_id=<id>&channel=zomato
+POST /functions/v1/meta-order-webhook?restaurant_id=<id>&channel=instagram
+POST /functions/v1/sync-menu-to-channel
+```
+
+`aggregator-order-webhook` supports `swiggy`, `zomato`, `ubereats`, `doordash`, `google_food`, and `custom` normalized signed payloads. Failed deliveries and rejected callbacks create `IntegrationJob` or `AdminAlert` records visible to operators.
+
+## Troubleshooting
+
+- `Sentiment analysis not configured`: set the two protected database settings in **Post-Deploy Configuration**.
+- Failed `IntegrationJob`: open **Settings > Integrations** to inspect and retry delivery.
+- Failed kitchen print: KDS shows a realtime warning with retry buttons.
+- `SentimentQueue.dead_letter`: inspect `last_error`, restore Edge Function secrets, then requeue the record after fixing the cause.
 
 If the dashboard shows a CORS preflight error for `invite-staff`, redeploy the functions after `supabase/config.toml` is present. The function-level `verify_jwt = false` lets browser `OPTIONS` preflight reach the handler; the function still validates the caller's JWT and owner role before sending any invite.
 
@@ -184,10 +244,6 @@ using (bucket_id = 'restaurant-assets');
 
 The production app uses the Supabase JS client, Supabase RPC functions, and Edge Functions as its data access layer. Do not deploy a separate legacy application server for MVP QR ordering.
 
-## Known Production TODOs
+## Remaining Deployment Choice
 
-- Complete Razorpay Orders API creation and webhook signature verification.
-- Replace static table-only QR joins with staff-issued, session-specific QR links for restaurants that need stricter bill privacy.
-- Add a printer/KOT Edge Function or webhook target.
-- Add WhatsApp notification provider calls behind Edge Functions.
-- Add richer analytics materialized views once live order data exists.
+Restaurants that need stricter bill privacy can disable open table-session joining and issue a fresh table QR at service start. The secure order RPC remains the only customer order creation path.

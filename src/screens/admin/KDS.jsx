@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import AdminLayout from '../../components/AdminLayout';
-import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
+import { adminFetchOrders, adminRetryIntegrationJob, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -9,6 +9,7 @@ import { pendingOrdersBus } from '../../components/TopNav';
 import { useToast } from '../../components/Toast';
 import { canTransitionOrderStatus, safeParseModifiers } from '../../lib/businessRules';
 import { requestKitchenPrint } from '../../lib/integrations';
+import { supabase } from '../../lib/supabase';
 
 const formatTime = (ms) => {
   const isNegative = ms < 0;
@@ -192,6 +193,7 @@ export default function KDS() {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches);
   const [swipeHintDismissed, setSwipeHintDismissed] = useState(() => localStorage.getItem(KDS_SWIPE_HINT_KEY) === 'true');
+  const [failedPrintJobs, setFailedPrintJobs] = useState([]);
   const audioRef = useRef(null);
 
   const groupedOrders = React.useMemo(() => groupOrdersByTable(orders), [orders]);
@@ -303,6 +305,51 @@ export default function KDS() {
       socket.off('staff_request:new', handleStaffRequest);
     };
   }, [user, playAlert, addToast, syncPendingCount]);
+
+  useEffect(() => {
+    if (!user?.restaurantId) return undefined;
+    let mounted = true;
+    const loadFailedPrintJobs = async () => {
+      const { data } = await supabase
+        .from('IntegrationJob')
+        .select('id, order_id, error, created_at')
+        .eq('restaurant_id', user.restaurantId)
+        .eq('job_type', 'printer')
+        .eq('status', 'failed')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (mounted) setFailedPrintJobs(data || []);
+    };
+    loadFailedPrintJobs();
+    const channel = supabase
+      .channel(`kds_print_jobs:${user.restaurantId}:${crypto.randomUUID()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'IntegrationJob', filter: `restaurant_id=eq.${user.restaurantId}` },
+        payload => {
+          if (payload.new?.job_type === 'printer' && payload.new?.status === 'failed') {
+            addToast(`Kitchen print failed for order ${payload.new.order_id || payload.new.id}.`, 'error');
+            playAlert();
+          }
+          loadFailedPrintJobs();
+        }
+      )
+      .subscribe();
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [addToast, playAlert, user?.restaurantId]);
+
+  const retryPrintJob = async (jobId) => {
+    try {
+      await adminRetryIntegrationJob(jobId, user.restaurantId);
+      setFailedPrintJobs(prev => prev.filter(job => job.id !== jobId));
+      addToast('Kitchen print job queued for retry.', 'success');
+    } catch (err) {
+      addToast(`Print retry failed: ${err.message}`, 'error');
+    }
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -484,6 +531,22 @@ export default function KDS() {
             </div>
           </div>
         </header>
+        {failedPrintJobs.length > 0 && (
+          <div className="mx-6 md:mx-12 mt-4 rounded-xl border border-error/30 bg-error/10 px-4 py-3 shrink-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-bold text-error">
+                {failedPrintJobs.length} kitchen print {failedPrintJobs.length === 1 ? 'job needs' : 'jobs need'} attention
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {failedPrintJobs.map(job => (
+                  <button key={job.id} onClick={() => retryPrintJob(job.id)} className="rounded-lg bg-error px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-white">
+                    Retry {job.order_id ? `#${String(job.order_id).slice(-6)}` : 'print'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 overflow-auto p-4 md:p-8 bg-surface transition-theme">
           {loading ? (

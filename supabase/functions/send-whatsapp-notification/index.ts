@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { asString, loadIntegrationConfig } from '../_shared/integration-config.ts';
 
 async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Request, restaurantId: string) {
   const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
@@ -50,9 +51,10 @@ serve(async (req) => {
     requested_at: new Date().toISOString(),
   };
 
-  const webhookUrl = Deno.env.get('WHATSAPP_WEBHOOK_URL');
-  const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
-  const provider = Deno.env.get('WHATSAPP_PROVIDER') || (webhookUrl ? 'webhook' : 'unconfigured');
+  const channel = await loadIntegrationConfig(supabase, restaurantId, 'whatsapp');
+  const webhookUrl = asString(channel?.config.endpoint) || Deno.env.get('WHATSAPP_WEBHOOK_URL');
+  const accessToken = asString(channel?.config.access_token) || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+  const provider = String(channel?.provider || Deno.env.get('WHATSAPP_PROVIDER') || (webhookUrl ? 'webhook' : 'unconfigured'));
 
   const { data: job, error: insertError } = await supabase
     .from('IntegrationJob')

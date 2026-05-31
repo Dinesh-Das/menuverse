@@ -39,7 +39,7 @@ begin
           url := current_setting('app.supabase_url') || '/functions/v1/process-ar-video',
           headers := jsonb_build_object(
             'Content-Type', 'application/json',
-            'Authorization', 'Bearer ' || current_setting('app.service_role_key')
+            'X-Menuverse-Internal-Secret', current_setting('app.settings.menuverse_internal_secret')
           ),
           body := '{}'::jsonb
         );

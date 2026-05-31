@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { asRecord, asString, createAdminAlert, loadIntegrationConfig } from '../_shared/integration-config.ts';
 
 async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Request, restaurantId: string) {
   const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
@@ -59,14 +60,20 @@ serve(async (req) => {
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from('Restaurant')
-    .select('pos_provider')
+    .select('pos_provider, pos_sync_enabled')
     .eq('id', restaurantId)
     .maybeSingle();
   if (restaurantError) return json({ error: restaurantError.message }, 500);
 
-  const provider = String(body.provider || existingJob?.provider || restaurant?.pos_provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
-  const webhookUrl = Deno.env.get('POS_WEBHOOK_URL');
-  const accessToken = Deno.env.get('POS_ACCESS_TOKEN');
+  if (!restaurant?.pos_sync_enabled) {
+    return json({ queued: false, status: 'disabled_by_restaurant' }, 202);
+  }
+
+  const privateConfig = await loadIntegrationConfig(supabase, restaurantId, 'pos');
+  const config = asRecord(privateConfig?.config);
+  const provider = String(body.provider || existingJob?.provider || restaurant?.pos_provider || privateConfig?.provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
+  const webhookUrl = asString(config.webhook_url) || Deno.env.get('POS_WEBHOOK_URL');
+  const accessToken = asString(config.access_token) || Deno.env.get('POS_ACCESS_TOKEN');
   const adapterMap: Record<string, string> = {
     petpooja: 'pos-adapter-petpooja',
     square: 'pos-adapter-square',
@@ -117,7 +124,6 @@ serve(async (req) => {
     const { data: adapterData, error: adapterError } = await supabase.functions.invoke(adapterMap[provider], {
       body: { job_id: job.id, order_id: orderId, restaurant_id: restaurantId },
       headers: {
-        Authorization: `Bearer ${serviceRoleKey}`,
         ...(internalSecret ? { 'X-Menuverse-Internal-Secret': internalSecret } : {}),
       },
     });
@@ -135,6 +141,14 @@ serve(async (req) => {
   }
 
   if (!webhookUrl) {
+    await createAdminAlert(supabase, {
+      restaurantId,
+      title: 'POS sync is missing configuration',
+      message: `Configure ${provider} credentials in Settings > Integrations.`,
+      source: 'sync_to_pos',
+      dedupeKey: `pos-config:${provider}`,
+      metadata: { provider, order_id: orderId || undefined },
+    });
     return json({
       queued: true,
       status: 'pending_configuration',

@@ -36,6 +36,10 @@ serve(async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceRoleKey) return json({ error: 'Replicate webhook is not configured.' }, 503);
 
+  const expectedSecret = text(Deno.env.get('REPLICATE_WEBHOOK_SECRET'));
+  if (!expectedSecret) return json({ error: 'Replicate webhook secret is not configured.' }, 503);
+  if (new URL(req.url).searchParams.get('secret') !== expectedSecret) return json({ error: 'Forbidden' }, 403);
+
   const body = await req.json().catch(() => ({}));
   const predictionId = text(body.id);
   const status = text(body.status);

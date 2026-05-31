@@ -19,6 +19,7 @@ import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import {
   adminFetchFeedbackInsights,
+  adminFetchAlerts,
   adminFetchFlaggedFeedback,
   adminFetchOrders,
   adminFetchPeakHours,
@@ -48,6 +49,7 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState([]);
   const [peakHours, setPeakHours] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [alerts, setAlerts] = useState([]);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
   useEffect(() => {
@@ -75,25 +77,28 @@ export default function Dashboard() {
         adminFetchFlaggedFeedback(user.restaurantId).catch(() => []),
         adminFetchRevenueForecast(user.restaurantId, 7).catch(() => []),
         adminFetchPeakHours(user.restaurantId).catch(() => []),
-      ]).then(([feedbackInsights, trend, flagged, forecastRows, peakRows]) => {
+        adminFetchAlerts(user.restaurantId).catch(() => []),
+      ]).then(([feedbackInsights, trend, flagged, forecastRows, peakRows, alertRows]) => {
         if (cancelled) return;
         setInsights(feedbackInsights);
         setSentimentTrend(trend);
         setFlaggedFeedback(flagged);
         setForecast(forecastRows);
         setPeakHours(peakRows);
+        setAlerts(alertRows);
       });
     };
 
     const fetchAndSubscribe = async () => {
       try {
-        const [{ data }, feedbackInsights, trend, flagged, forecastRows, peakRows] = await Promise.all([
+        const [{ data }, feedbackInsights, trend, flagged, forecastRows, peakRows, alertRows] = await Promise.all([
           adminFetchOrders(null, user.restaurantId),
           adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
           adminFetchSentimentTrend(user.restaurantId).catch(() => []),
           adminFetchFlaggedFeedback(user.restaurantId).catch(() => []),
           adminFetchRevenueForecast(user.restaurantId, 7).catch(() => []),
           adminFetchPeakHours(user.restaurantId).catch(() => []),
+          adminFetchAlerts(user.restaurantId).catch(() => []),
         ]);
         if (cancelled) return;
         setOrders(data);
@@ -102,6 +107,7 @@ export default function Dashboard() {
         setFlaggedFeedback(flagged);
         setForecast(forecastRows);
         setPeakHours(peakRows);
+        setAlerts(alertRows);
         setLoading(false);
 
         const channelName = `dashboard_orders:${user.restaurantId}:${crypto.randomUUID()}`;
@@ -115,6 +121,11 @@ export default function Dashboard() {
           .on(
             'postgres_changes',
             { event: 'UPDATE', schema: 'public', table: 'OrderFeedback', filter: `restaurant_id=eq.${user.restaurantId}` },
+            refreshFeedback
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'AdminAlert', filter: `restaurant_id=eq.${user.restaurantId}` },
             refreshFeedback
           );
 
@@ -223,6 +234,17 @@ export default function Dashboard() {
           title="Daily Summary"
           subtitle="Refining the digital experience, one plate at a time."
         />
+
+        {alerts.length > 0 && (
+          <div className="mb-8 space-y-3">
+            {alerts.slice(0, 4).map(alert => (
+              <div key={alert.id} className="rounded-2xl border border-error/30 bg-error/10 px-5 py-4">
+                <p className="text-xs font-bold uppercase tracking-widest text-error">{alert.title}</p>
+                {alert.message && <p className="mt-1 text-sm text-on-surface-variant">{alert.message}</p>}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* ── KPI Cards ──────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">

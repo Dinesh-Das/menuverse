@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { hasValidInternalSecret } from '../_shared/internal-auth.ts';
 
 function text(value: unknown) {
   return String(value || '').trim();
@@ -36,10 +37,8 @@ serve(async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceRoleKey) return json({ error: 'AR video processor is not configured.' }, 503);
 
-  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
   const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
-  const providedSecret = req.headers.get('X-Menuverse-Internal-Secret');
-  if (bearer !== serviceRoleKey && (!internalSecret || providedSecret !== internalSecret)) {
+  if (!hasValidInternalSecret(req, internalSecret)) {
     return json({ error: 'Forbidden' }, 403);
   }
 
@@ -54,6 +53,7 @@ serve(async (req) => {
   if (assetError) return json({ error: assetError.message }, 500);
 
   const replicateToken = Deno.env.get('REPLICATE_API_TOKEN');
+  const replicateWebhookSecret = text(Deno.env.get('REPLICATE_WEBHOOK_SECRET'));
   const results = [];
 
   for (const asset of assets || []) {
@@ -68,8 +68,8 @@ serve(async (req) => {
       })
       .eq('id', asset.id);
 
-    if (!replicateToken) {
-      const message = 'Replicate not configured: set REPLICATE_API_TOKEN.';
+    if (!replicateToken || !replicateWebhookSecret) {
+      const message = 'Replicate not configured: set REPLICATE_API_TOKEN and REPLICATE_WEBHOOK_SECRET.';
       console.warn(message);
       await supabase
         .from('ARAsset')
@@ -97,7 +97,7 @@ serve(async (req) => {
           input: {
             images: [asset.source_video_url],
           },
-          webhook: `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/replicate-webhook`,
+          webhook: `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/replicate-webhook?secret=${encodeURIComponent(replicateWebhookSecret)}`,
           webhook_events_filter: ['completed', 'failed'],
         }),
       });

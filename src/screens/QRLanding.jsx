@@ -37,6 +37,7 @@ export default function QRLanding() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deliveryAddress, setDeliveryAddress] = useState(localStorage.getItem('mv_delivery_address') || '');
+  const cachedRestaurantName = localStorage.getItem('mv_restaurant_name') || restaurantSlug?.replace(/-/g, ' ') || 'Menuverse';
 
   useEffect(() => {
     async function init() {
@@ -104,9 +105,16 @@ export default function QRLanding() {
   if (loading) {
     return (
       <div className="min-h-dvh bg-background flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
-          <p className="text-on-surface-variant text-sm uppercase tracking-widest">Loading your table...</p>
+        <div className="w-full max-w-sm px-6 text-center animate-pulse">
+          <p className="text-primary font-bold text-[10px] uppercase tracking-[0.3em] mb-4">Welcome to</p>
+          <h1 className="font-headline text-4xl font-bold capitalize text-on-surface">{cachedRestaurantName}</h1>
+          <div className="mt-10 rounded-2xl border border-outline-variant/10 bg-surface-container-low p-5">
+            <div className="mx-auto h-3 w-24 rounded-full bg-surface-container-highest" />
+            <div className="mx-auto mt-4 h-10 w-40 rounded-xl bg-primary/20" />
+          </div>
+          <div className="mx-auto mt-10 h-44 w-44 rounded-full bg-surface-container-high border border-outline-variant/10" />
+          <div className="mt-12 h-14 w-full rounded-xl bg-primary/30" />
+          <p className="mt-5 text-on-surface-variant text-xs uppercase tracking-widest">Preparing your table...</p>
         </div>
       </div>
     );

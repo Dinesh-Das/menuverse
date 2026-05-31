@@ -6,6 +6,9 @@ const DEFAULT_ALLOW_HEADERS = [
   'stripe-signature',
   'x-razorpay-signature',
   'x-menuverse-internal-secret',
+  'x-menuverse-signature',
+  'x-square-hmacsha256-signature',
+  'x-hub-signature-256',
 ].join(', ');
 
 const MENUVERSE_PRODUCTION_ORIGINS = [

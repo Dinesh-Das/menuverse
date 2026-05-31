@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { fetchTableOrders, createPayment, createStripePaymentIntent, createStaffRequest } from '../lib/api';
+import { fetchSessionBill, fetchTableOrders, createPayment, createStripePaymentIntent, createStaffRequest } from '../lib/api';
 import BottomNav from '../components/BottomNav';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
@@ -136,6 +136,15 @@ export default function TableSession() {
     if (!tableSessionId) return;
     setBillRequested(localStorage.getItem(`mv_bill_requested_${tableSessionId}`) === 'true');
   }, [tableSessionId]);
+
+  useEffect(() => {
+    if (!tableSessionToken) return;
+    fetchSessionBill(tableSessionToken)
+      .then(bill => {
+        if (bill?.split_count) setSplitCount(Number(bill.split_count));
+      })
+      .catch(err => console.warn('[Menuverse] Session split lookup skipped:', err.message));
+  }, [tableSessionToken]);
 
   const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
   const historyOrders = orders.filter(o => ['completed', 'cancelled'].includes(o.status));

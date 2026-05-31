@@ -75,6 +75,15 @@ function DishImage({ src, alt }) {
   );
 }
 
+function loadDietFilter() {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem('mv_diet_filter') || '[]');
+    return Array.isArray(parsed) ? parsed.filter(flag => ['veg', 'vegan', 'non-veg'].includes(flag)) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function MenuHome() {
   const { restaurantSlug } = useParams();
   const { addItem, items, restaurantSlug: sessionSlug, setSession, updateQty, tableSessionToken } = useCart();
@@ -89,7 +98,7 @@ export default function MenuHome() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [dietFilter, setDietFilter] = useState([]); // 'veg', 'vegan', 'non-veg'
+  const [dietFilter, setDietFilter] = useState(loadDietFilter); // 'veg', 'vegan', 'non-veg'
   const [upsellModal, setUpsellModal] = useState({ isOpen: false, addedItemName: '' });
   const [upsellCandidates, setUpsellCandidates] = useState([]);
   const [serverRecommendations, setServerRecommendations] = useState([]);
@@ -164,6 +173,10 @@ export default function MenuHome() {
       .then(profile => setGuestProfile(profile))
       .catch(() => setGuestProfile(null));
   }, [tableSessionToken]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem('mv_diet_filter', JSON.stringify(dietFilter));
+  }, [dietFilter]);
 
   // Safe JSON parse helper for tags
   const parseTags = (value) => {

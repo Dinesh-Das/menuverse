@@ -6,15 +6,19 @@ $ErrorActionPreference = "Stop"
 
 $functions = @(
   "analyse-feedback",
+  "aggregator-order-webhook",
   "campaign-event-webhook",
   "create-payment-order",
   "create-stripe-payment-intent",
   "delivery-quote",
   "get-recommendations",
   "invite-staff",
+  "integration-settings",
   "menu-chat",
   "pos-adapter-petpooja",
   "pos-adapter-square",
+  "pos-status-webhook",
+  "process-sentiment-queue",
   "process-ar-asset",
   "process-ar-video",
   "replicate-webhook",
@@ -22,10 +26,12 @@ $functions = @(
   "send-campaign",
   "send-whatsapp-notification",
   "sync-to-pos",
+  "sync-menu-to-channel",
   "translate-menu-item",
   "verify-payment-webhook",
   "verify-stripe-webhook",
-  "whatsapp-inbound"
+  "whatsapp-inbound",
+  "meta-order-webhook"
 )
 
 supabase functions deploy @functions --project-ref $ProjectRef --no-verify-jwt --use-api

@@ -6,7 +6,7 @@ function viteFlag(name) {
 
 const ENABLE_KOT_EDGE_PRINT = viteFlag('VITE_ENABLE_KOT_EDGE_PRINT');
 const ENABLE_WHATSAPP_EDGE_NOTIFICATIONS = viteFlag('VITE_ENABLE_WHATSAPP_EDGE_NOTIFICATIONS');
-const ENABLE_POS_EDGE_SYNC = viteFlag('VITE_ENABLE_POS_EDGE_SYNC');
+const DISABLE_POS_EDGE_SYNC = viteFlag('VITE_DISABLE_POS_EDGE_SYNC');
 
 export const INTEGRATION_READINESS = [
   {
@@ -26,9 +26,9 @@ export const INTEGRATION_READINESS = [
   {
     key: 'pos',
     label: 'POS Sync',
-    status: 'webhook_boundary_ready',
+    status: 'runtime_configured',
     icon: 'sync_alt',
-    description: 'Orders can be queued to a provider webhook without coupling POS adapters to the core order flow.',
+    description: 'Configured restaurants queue orders automatically and signed POS callbacks update live order status.',
   },
   {
     key: 'printer',
@@ -78,8 +78,8 @@ export async function sendWhatsAppNotification(message) {
 }
 
 export async function syncOrderToPos(payload) {
-  if (!ENABLE_POS_EDGE_SYNC) {
-    return { queued: false, status: 'disabled' };
+  if (DISABLE_POS_EDGE_SYNC) {
+    return { queued: false, status: 'emergency_kill_switch' };
   }
 
   const { data, error } = await supabase.functions.invoke('sync-to-pos', {

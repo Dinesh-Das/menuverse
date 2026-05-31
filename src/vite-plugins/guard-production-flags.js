@@ -1,12 +1,19 @@
 import { loadEnv } from 'vite'
 import process from 'node:process'
 
+export function isProductionBuild({ command, mode } = {}) {
+  return process.env.NODE_ENV === 'production'
+    || process.env.VITE_MODE === 'production'
+    || mode === 'production'
+    || (command === 'build' && (!mode || mode === 'production'));
+}
+
 // Throws a build error if dangerous flags are enabled in production.
 export function guardProductionFlags() {
   return {
     name: 'guard-production-flags',
-    config(_config, { mode }) {
-      if (mode !== 'production') return
+    config(_config, { command, mode }) {
+      if (!isProductionBuild({ command, mode })) return
 
       const env = loadEnv(mode, process.cwd(), '')
       const allowClientOrderFallback =

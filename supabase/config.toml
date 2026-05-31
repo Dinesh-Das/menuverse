@@ -4,6 +4,24 @@ verify_jwt = false
 [functions.analyse-feedback]
 verify_jwt = false
 
+[functions.process-sentiment-queue]
+verify_jwt = false
+
+[functions.integration-settings]
+verify_jwt = false
+
+[functions.pos-status-webhook]
+verify_jwt = false
+
+[functions.aggregator-order-webhook]
+verify_jwt = false
+
+[functions.meta-order-webhook]
+verify_jwt = false
+
+[functions.sync-menu-to-channel]
+verify_jwt = false
+
 [functions.create-payment-order]
 verify_jwt = false
 
@@ -44,4 +62,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.process-ar-asset]
+verify_jwt = false
+
+[functions.process-ar-video]
+verify_jwt = false
+
+[functions.replicate-webhook]
 verify_jwt = false

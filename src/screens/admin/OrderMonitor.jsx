@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
-import { adminFetchOrders, adminUpdateOrderStatus } from '../../lib/api';
+import { adminFetchOrders, adminSetSessionSplitCount, adminUpdateOrderStatus } from '../../lib/api';
 import { getSocket, joinRestaurantRoom } from '../../lib/socket';
 import { useAuth } from '../../context/AuthContext';
 import CancelReasonModal from '../../components/CancelReasonModal';
@@ -44,6 +44,7 @@ export default function OrderMonitor() {
   const [filter, setFilter] = useState('active');
   const [updatingIds, setUpdatingIds] = useState(new Set());
   const [cancelModal, setCancelModal] = useState({ isOpen: false, orderId: null });
+  const [splitBySession, setSplitBySession] = useState({});
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
   useEffect(() => {
@@ -111,11 +112,46 @@ export default function OrderMonitor() {
     : filter === 'completed'
     ? orders.filter(o => o.status === 'completed')
     : orders.filter(o => o.status === 'cancelled');
+  const activeSessions = [...new Map(
+    orders
+      .filter(order => order.table_session_id && !['completed', 'cancelled'].includes(order.status))
+      .map(order => [order.table_session_id, order])
+  ).values()];
+
+  const updateSessionSplit = async (sessionId, splitCount) => {
+    const nextCount = Math.max(1, Math.min(20, Number(splitCount || 1)));
+    setSplitBySession(prev => ({ ...prev, [sessionId]: nextCount }));
+    try {
+      await adminSetSessionSplitCount(sessionId, nextCount);
+      addToast(`Table split set to ${nextCount}.`, 'success');
+    } catch (err) {
+      addToast(`Split update failed: ${err.message}`, 'error');
+    }
+  };
 
   return (
     <AdminLayout>
       <main className="admin-content px-6 md:px-12 lg:px-16 py-8 md:py-12 transition-theme">
         <AdminTopNav title="Live Orders" subtitle="Monitor and advance the status of all active tickets." />
+
+        {activeSessions.length > 0 && (
+          <div className={`p-5 mb-6 ${cardBg}`}>
+            <p className="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant mb-3">Table split intent</p>
+            <div className="flex flex-wrap gap-3">
+              {activeSessions.map(order => {
+                const count = splitBySession[order.table_session_id] || 1;
+                return (
+                  <div key={order.table_session_id} className="flex items-center gap-2 rounded-xl bg-surface-container border border-outline-variant/10 p-2">
+                    <span className="px-2 text-xs font-bold text-on-surface">Table {order.table?.number || order.table_id?.slice(-4)}</span>
+                    <button onClick={() => updateSessionSplit(order.table_session_id, count - 1)} disabled={count <= 1} className="w-8 h-8 rounded-lg bg-surface-container-highest text-on-surface disabled:opacity-40">-</button>
+                    <input type="number" min="1" max="20" value={count} onChange={e => updateSessionSplit(order.table_session_id, e.target.value)} className="w-12 bg-transparent text-center text-sm font-bold text-on-surface focus:outline-none" />
+                    <button onClick={() => updateSessionSplit(order.table_session_id, count + 1)} disabled={count >= 20} className="w-8 h-8 rounded-lg bg-surface-container-highest text-on-surface disabled:opacity-40">+</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-2 mb-8">
           {['active', 'completed', 'cancelled'].map(tab => (

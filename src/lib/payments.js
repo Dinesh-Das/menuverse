@@ -17,10 +17,10 @@ export function getWalletPaymentLabel(walletPayReady = null, provider = 'razorpa
 
   const ua = navigator.userAgent.toLowerCase();
   if (/iphone|ipad|macintosh/.test(ua)) {
-    return { headline: 'Pay with Apple Pay, UPI or Card', detail: 'Fast checkout through Razorpay' };
+    return { headline: 'Pay with UPI, Card or Netbanking', detail: 'Wallet options are shown inside Razorpay when available' };
   }
   if (/android/.test(ua)) {
-    return { headline: 'Pay with Google Pay, UPI or Card', detail: 'Fast checkout through Razorpay' };
+    return { headline: 'Pay with UPI, Card or Netbanking', detail: 'Wallet options are shown inside Razorpay when available' };
   }
   return { headline: 'Pay by UPI, Wallet or Card', detail: 'Secure checkout through Razorpay' };
 }

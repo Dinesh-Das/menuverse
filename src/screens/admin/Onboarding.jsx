@@ -8,6 +8,7 @@ import {
   adminCreateTable,
   adminFetchCategories,
   adminFetchTables,
+  adminFetchSentimentConfigurationStatus,
   adminSeedSampleMenu,
   adminUpdateRestaurant,
 } from '../../lib/api';
@@ -82,6 +83,7 @@ export default function Onboarding() {
     razorpay_key_id: '',
     razorpay_key_secret: '',
   });
+  const [sentimentConfig, setSentimentConfig] = useState(null);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -98,6 +100,13 @@ export default function Onboarding() {
       }
     });
   }, [restaurantId, restaurantRowId, restaurantSlug]);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    adminFetchSentimentConfigurationStatus(restaurantId)
+      .then(setSentimentConfig)
+      .catch(() => setSentimentConfig(null));
+  }, [restaurantId]);
 
   const liveUrl = useMemo(() => {
     if (!restaurantSlug) return 'menuverse.app/r/your-restaurant';
@@ -428,6 +437,11 @@ export default function Onboarding() {
               <div>
                 <h2 className="font-headline text-3xl font-bold">You are ready</h2>
                 <p className="mt-3 text-on-surface-variant">Your restaurant is live at <span className="font-bold text-primary">{liveUrl}</span></p>
+                {sentimentConfig && (!sentimentConfig.supabase_url_configured || !sentimentConfig.internal_secret_configured) && (
+                  <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
+                    Sentiment workers need post-deploy database settings. Complete the protected `app.settings.supabase_url` and `app.settings.menuverse_internal_secret` setup from `DEPLOY.md`.
+                  </div>
+                )}
                 <div className="mt-6 flex gap-3">
                   <button onClick={() => setStep(4)} className="rounded-xl px-5 py-3 text-sm font-bold text-on-surface-variant">Back</button>
                   <button onClick={completeOnboarding} disabled={saving} className="rounded-xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-widest text-on-primary disabled:opacity-50">

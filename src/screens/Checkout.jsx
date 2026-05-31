@@ -968,25 +968,23 @@ export default function Checkout() {
 
               {!localStorage.getItem('mv_contact_saved') && (
                 <div className="mb-6 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
-                  <button
-                    type="button"
-                    onClick={() => setContactOpen(value => !value)}
-                    className="w-full flex items-center justify-between text-left"
-                  >
-                    <span className="text-xs font-bold uppercase tracking-widest text-on-surface">Save your session</span>
-                    <span className="material-symbols-outlined text-primary">{contactOpen ? 'expand_less' : 'expand_more'}</span>
-                  </button>
-                  {contactOpen && (
-                    <div className="mt-4 space-y-3">
-                      <input value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="Name for receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
-                      <input type="tel" value={guestPhone} onChange={e => setGuestPhone(e.target.value)} placeholder="Phone for WhatsApp receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                  <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Earn loyalty rewards and get order updates</p>
+                  <p className="mt-1 text-xs text-on-surface-variant">Earn 1 point per &#8377;10 on future visits. Contact details are optional.</p>
+                  <div className="mt-4 space-y-3">
+                    <input value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="Name" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                    <input type="tel" value={guestPhone} onChange={e => setGuestPhone(e.target.value)} placeholder="Phone for WhatsApp updates" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                    <button type="button" onClick={() => setContactOpen(value => !value)} className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-primary">
+                      <span className="material-symbols-outlined text-base">{contactOpen ? 'expand_less' : 'add'}</span>
+                      {contactOpen ? 'Hide email' : 'Add email receipt'}
+                    </button>
+                    {contactOpen && (
                       <input type="email" value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="Email receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
-                      <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
-                        <input type="checkbox" checked={marketingConsent} onChange={e => setMarketingConsent(e.target.checked)} className="w-4 h-4 accent-primary" />
-                        Offers and loyalty updates
-                      </label>
-                    </div>
-                  )}
+                    )}
+                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+                      <input type="checkbox" checked={marketingConsent} onChange={e => setMarketingConsent(e.target.checked)} className="w-4 h-4 accent-primary" />
+                      Send me offers and loyalty updates
+                    </label>
+                  </div>
                 </div>
               )}
 

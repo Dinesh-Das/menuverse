@@ -3,8 +3,12 @@ import AdminLayout from '../../components/AdminLayout';
 import { AdminTopNav } from '../../components/TopNav';
 import {
   adminFetchIntegrationJobs,
+  adminFetchIntegrationSettings,
   adminRemoveStaffMember,
   adminRetryIntegrationJob,
+  adminTestPosConnection,
+  adminUpdateIntegrationChannel,
+  adminUpdatePosSettings,
   adminUpdateRestaurant,
 } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
@@ -13,6 +17,17 @@ import { useToast } from '../../components/Toast';
 import { INTEGRATION_READINESS } from '../../lib/integrations';
 
 const TABS = ['Brand', 'Operations', 'Integrations', 'Team'];
+const CHANNEL_OPTIONS = [
+  ['whatsapp', 'WhatsApp', 'chat'],
+  ['swiggy', 'Swiggy', 'delivery_dining'],
+  ['zomato', 'Zomato', 'delivery_dining'],
+  ['ubereats', 'Uber Eats', 'delivery_dining'],
+  ['doordash', 'DoorDash', 'delivery_dining'],
+  ['instagram', 'Instagram', 'photo_camera'],
+  ['facebook', 'Facebook', 'forum'],
+  ['google_food', 'Google Food', 'language'],
+  ['custom', 'Custom Webhook', 'webhook'],
+];
 const LOGO_SIGNATURES = {
   jpg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
   jpeg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
@@ -61,6 +76,14 @@ export default function Settings() {
   const [integrationJobs, setIntegrationJobs] = useState([]);
   const [integrationSummary, setIntegrationSummary] = useState({ delivered: 0, failed: 0 });
   const [integrationLoading, setIntegrationLoading] = useState(false);
+  const [posProvider, setPosProvider] = useState('none');
+  const [posEnabled, setPosEnabled] = useState(false);
+  const [posSettings, setPosSettings] = useState({});
+  const [posConfiguredSecrets, setPosConfiguredSecrets] = useState([]);
+  const [posSaving, setPosSaving] = useState(false);
+  const [posTesting, setPosTesting] = useState(false);
+  const [channels, setChannels] = useState({});
+  const [channelSaving, setChannelSaving] = useState(null);
 
   // ── Shared ────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -129,10 +152,47 @@ export default function Settings() {
     }
   };
 
+  const loadIntegrationSettings = async () => {
+    if (!user?.restaurantId) return;
+    try {
+      const data = await adminFetchIntegrationSettings(user.restaurantId);
+      const nextChannels = {};
+      data.forEach(channel => {
+        if (channel.channel_type === 'pos') {
+          setPosProvider(channel.provider || 'none');
+          setPosEnabled(Boolean(channel.enabled));
+          setPosSettings({
+            location_id: channel.config?.square_location_id || '',
+            environment: channel.config?.square_environment || 'production',
+            currency: channel.config?.square_currency || 'USD',
+            webhook_url: channel.config?.square_webhook_url || channel.config?.status_webhook_url || '',
+            restaurant_id: channel.config?.petpooja_restaurant_id || '',
+            endpoint: channel.config?.petpooja_webhook_url || channel.config?.webhook_url || '',
+          });
+          setPosConfiguredSecrets(channel.configured_secret_keys || []);
+          return;
+        }
+        nextChannels[channel.channel_type] = {
+          enabled: Boolean(channel.enabled),
+          provider: channel.provider || channel.channel_type,
+          settings: channel.config || {},
+          configuredSecrets: channel.configured_secret_keys || [],
+          status: channel.status,
+          lastSyncAt: channel.last_sync_at,
+          lastError: channel.last_error,
+        };
+      });
+      setChannels(nextChannels);
+    } catch (err) {
+      addToast(`Failed to load integration settings: ${err.message}`, 'error');
+    }
+  };
+
   useEffect(() => {
     loadData();
     loadTeam();
     loadIntegrationJobs();
+    loadIntegrationSettings();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.restaurantId]);
 
@@ -248,6 +308,76 @@ export default function Settings() {
       loadIntegrationJobs();
     } catch (err) {
       addToast(`Retry failed: ${err.message}`, 'error');
+    }
+  };
+
+  const updatePosSetting = (key, value) => {
+    setPosSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSavePos = async () => {
+    setPosSaving(true);
+    try {
+      await adminUpdatePosSettings(user.restaurantId, {
+        provider: posProvider,
+        enabled: posEnabled,
+        settings: posSettings,
+      });
+      await loadIntegrationSettings();
+      addToast('POS settings saved.', 'success');
+    } catch (err) {
+      addToast(`POS save failed: ${err.message}`, 'error');
+    } finally {
+      setPosSaving(false);
+    }
+  };
+
+  const handleTestPos = async () => {
+    setPosTesting(true);
+    try {
+      const result = await adminTestPosConnection(user.restaurantId);
+      addToast(result.message || 'POS connection is ready.', 'success');
+    } catch (err) {
+      addToast(`POS test failed: ${err.message}`, 'error');
+    } finally {
+      setPosTesting(false);
+    }
+  };
+
+  const updateChannel = (channelType, patch) => {
+    setChannels(prev => ({
+      ...prev,
+      [channelType]: {
+        enabled: false,
+        settings: {},
+        ...(prev[channelType] || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const updateChannelSetting = (channelType, key, value) => {
+    updateChannel(channelType, {
+      settings: { ...(channels[channelType]?.settings || {}), [key]: value },
+    });
+  };
+
+  const handleSaveChannel = async (channelType) => {
+    const channel = channels[channelType] || {};
+    setChannelSaving(channelType);
+    try {
+      await adminUpdateIntegrationChannel(user.restaurantId, {
+        channel_type: channelType,
+        provider: channel.provider || channelType,
+        enabled: Boolean(channel.enabled),
+        settings: channel.settings || {},
+      });
+      await loadIntegrationSettings();
+      addToast(`${channelType.replace(/_/g, ' ')} settings saved.`, 'success');
+    } catch (err) {
+      addToast(`Channel save failed: ${err.message}`, 'error');
+    } finally {
+      setChannelSaving(null);
     }
   };
 
@@ -467,6 +597,13 @@ export default function Settings() {
                     <option value="cad">CAD - Canadian Dollar</option>
                   </select>
                 </div>
+                <p className="text-xs text-on-surface-variant mb-8">
+                  {paymentProvider === 'stripe'
+                    ? 'Stripe can offer browser-native Apple Pay and Google Pay when the device, browser, domain, and account are eligible.'
+                    : paymentProvider === 'razorpay'
+                      ? 'Razorpay Checkout supports its configured payment methods, but this setting does not promise a browser-native Apple Pay sheet.'
+                      : 'Manual links depend on the payment page you send to the guest.'}
+                </p>
                 <div className="grid md:grid-cols-2 gap-4">
                   {INTEGRATION_READINESS.map(item => (
                     <div key={item.key} className="p-4 rounded-xl bg-surface-container border border-outline-variant/10">
@@ -485,6 +622,109 @@ export default function Settings() {
             )}
 
             {activeTab === 'Integrations' && (
+              <>
+              <div className={`p-8 mb-8 ${cardBg}`}>
+                <div className="mb-6">
+                  <h3 className="font-headline text-xl font-bold text-on-surface">POS Settings</h3>
+                  <p className="text-sm text-on-surface-variant mt-1">
+                    Configure per-restaurant order sync. Saved secrets stay server-side and are never returned to this browser.
+                  </p>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <select value={posProvider} onChange={e => setPosProvider(e.target.value)} className={inputClass}>
+                    <option value="none">No POS provider</option>
+                    <option value="square">Square</option>
+                    <option value="petpooja">Petpooja</option>
+                    <option value="webhook">Custom webhook</option>
+                  </select>
+                  <label className="flex items-center justify-between gap-4 p-4 rounded-xl bg-surface-container border border-outline-variant/10">
+                    <span className="text-sm font-bold text-on-surface">Enable POS sync</span>
+                    <input type="checkbox" checked={posEnabled} onChange={e => setPosEnabled(e.target.checked)} className="w-5 h-5 accent-primary" />
+                  </label>
+                  {posProvider === 'square' && (
+                    <>
+                      <input value={posSettings.location_id || ''} onChange={e => updatePosSetting('location_id', e.target.value)} placeholder="Square location ID" className={inputClass} />
+                      <select value={posSettings.environment || 'production'} onChange={e => updatePosSetting('environment', e.target.value)} className={inputClass}>
+                        <option value="sandbox">Square sandbox</option>
+                        <option value="production">Square production</option>
+                      </select>
+                      <input type="password" value={posSettings.access_token || ''} onChange={e => updatePosSetting('access_token', e.target.value)} placeholder={posConfiguredSecrets.includes('square_access_token') ? 'Access token saved - enter to replace' : 'Square access token'} className={inputClass} />
+                      <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('square_webhook_signature_key') ? 'Webhook signature key saved - enter to replace' : 'Square webhook signature key'} className={inputClass} />
+                      <input value={posSettings.webhook_url || ''} onChange={e => updatePosSetting('webhook_url', e.target.value)} placeholder="Exact Square webhook URL" className={`${inputClass} md:col-span-2`} />
+                    </>
+                  )}
+                  {posProvider === 'petpooja' && (
+                    <>
+                      <input value={posSettings.restaurant_id || ''} onChange={e => updatePosSetting('restaurant_id', e.target.value)} placeholder="Petpooja restaurant ID" className={inputClass} />
+                      <input value={posSettings.endpoint || ''} onChange={e => updatePosSetting('endpoint', e.target.value)} placeholder="Petpooja API endpoint" className={inputClass} />
+                      <input type="password" value={posSettings.api_key || ''} onChange={e => updatePosSetting('api_key', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_api_key') ? 'API key saved - enter to replace' : 'Petpooja API key'} className={inputClass} />
+                      <input type="password" value={posSettings.app_key || ''} onChange={e => updatePosSetting('app_key', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_app_key') ? 'App key saved - enter to replace' : 'Petpooja app key'} className={inputClass} />
+                      <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_webhook_secret') ? 'Webhook secret saved - enter to replace' : 'Petpooja webhook shared secret'} className={`${inputClass} md:col-span-2`} />
+                    </>
+                  )}
+                  {posProvider === 'webhook' && (
+                    <>
+                      <input value={posSettings.endpoint || ''} onChange={e => updatePosSetting('endpoint', e.target.value)} placeholder="Custom POS order endpoint" className={inputClass} />
+                      <input value={posSettings.webhook_url || ''} onChange={e => updatePosSetting('webhook_url', e.target.value)} placeholder="Inbound status webhook URL" className={inputClass} />
+                      <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('webhook_secret') ? 'Signing secret saved - enter to replace' : 'Webhook signing secret'} className={`${inputClass} md:col-span-2`} />
+                    </>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-3 mt-6">
+                  <button onClick={handleSavePos} disabled={posSaving} className="px-5 py-3 rounded-xl bg-primary text-on-primary text-xs font-bold uppercase tracking-widest disabled:opacity-50">
+                    {posSaving ? 'Saving...' : 'Save POS settings'}
+                  </button>
+                  <button onClick={handleTestPos} disabled={posTesting || posProvider === 'none'} className="px-5 py-3 rounded-xl bg-surface-container-high text-on-surface text-xs font-bold uppercase tracking-widest disabled:opacity-50">
+                    {posTesting ? 'Testing...' : 'Test connection'}
+                  </button>
+                </div>
+              </div>
+
+              <div className={`p-8 mb-8 ${cardBg}`}>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Omnichannel Ordering</h3>
+                <p className="text-sm text-on-surface-variant mt-1 mb-6">
+                  Activate delivery aggregators, WhatsApp, social ordering, Google ordering links, or a signed custom webhook.
+                </p>
+                <div className="space-y-4">
+                  {CHANNEL_OPTIONS.map(([channelType, label, icon]) => {
+                    const channel = channels[channelType] || { enabled: false, settings: {}, configuredSecrets: [] };
+                    return (
+                      <div key={channelType} className="rounded-2xl bg-surface-container border border-outline-variant/10 p-4">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <span className="material-symbols-outlined text-primary">{icon}</span>
+                            <div>
+                              <p className="text-sm font-bold text-on-surface">{label}</p>
+                              <p className="text-[10px] uppercase tracking-widest text-on-surface-variant">{channel.status || 'not configured'}</p>
+                            </div>
+                          </div>
+                          <input type="checkbox" checked={Boolean(channel.enabled)} onChange={e => updateChannel(channelType, { enabled: e.target.checked })} className="w-5 h-5 accent-primary" />
+                        </div>
+                        {channel.enabled && (
+                          <div className="grid md:grid-cols-2 gap-3 mt-4">
+                            <input value={channel.settings.endpoint || ''} onChange={e => updateChannelSetting(channelType, 'endpoint', e.target.value)} placeholder="Provider or inbound endpoint" className={inputClass} />
+                            <input value={channel.settings.menu_sync_url || ''} onChange={e => updateChannelSetting(channelType, 'menu_sync_url', e.target.value)} placeholder="Optional menu sync endpoint" className={inputClass} />
+                            <input value={channel.settings.account_id || ''} onChange={e => updateChannelSetting(channelType, 'account_id', e.target.value)} placeholder={channelType === 'whatsapp' ? 'WhatsApp phone number ID' : 'Account, page, or store ID'} className={inputClass} />
+                            <input value={channel.settings.ordering_link || ''} onChange={e => updateChannelSetting(channelType, 'ordering_link', e.target.value)} placeholder="Optional public ordering link" className={inputClass} />
+                            <input type="password" value={channel.settings.access_token || ''} onChange={e => updateChannelSetting(channelType, 'access_token', e.target.value)} placeholder={channel.configuredSecrets?.includes('access_token') ? 'Access token saved - enter to replace' : 'Access token'} className={inputClass} />
+                            <input type="password" value={channel.settings.webhook_secret || ''} onChange={e => updateChannelSetting(channelType, 'webhook_secret', e.target.value)} placeholder={channel.configuredSecrets?.includes('webhook_secret') ? 'Webhook secret saved - enter to replace' : 'Webhook signing secret'} className={inputClass} />
+                            {(channelType === 'whatsapp' || channelType === 'instagram' || channelType === 'facebook') && (
+                              <input type="password" value={channel.settings.verify_token || ''} onChange={e => updateChannelSetting(channelType, 'verify_token', e.target.value)} placeholder={channel.configuredSecrets?.includes('verify_token') ? 'Verify token saved - enter to replace' : 'Webhook verify token'} className={inputClass} />
+                            )}
+                            {(channelType === 'instagram' || channelType === 'facebook') && (
+                              <input type="password" value={channel.settings.app_secret || ''} onChange={e => updateChannelSetting(channelType, 'app_secret', e.target.value)} placeholder={channel.configuredSecrets?.includes('app_secret') ? 'Meta app secret saved - enter to replace' : 'Meta app secret'} className={inputClass} />
+                            )}
+                            <button onClick={() => handleSaveChannel(channelType)} disabled={channelSaving === channelType} className="md:col-span-2 px-4 py-3 rounded-xl bg-primary text-on-primary text-xs font-bold uppercase tracking-widest disabled:opacity-50">
+                              {channelSaving === channelType ? 'Saving...' : `Save ${label}`}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className={`p-8 mb-8 ${cardBg}`}>
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                   <div>
@@ -564,6 +804,7 @@ export default function Settings() {
                   </table>
                 </div>
               </div>
+              </>
             )}
 
             {activeTab === 'Team' && (

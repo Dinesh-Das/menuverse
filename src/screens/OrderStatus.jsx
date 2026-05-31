@@ -192,14 +192,14 @@ export default function OrderStatus() {
     setItemRatings(prev => ({ ...prev, [itemId]: val }));
   };
 
-  const handleFeedbackSubmit = async () => {
-    if (feedbackSaving || feedbackGiven || !rating) return;
+  const handleFeedbackSubmit = async ({ ratingOverride = rating, allowUpdate = false } = {}) => {
+    if (feedbackSaving || (feedbackGiven && !allowUpdate) || !ratingOverride) return;
     setFeedbackSaving(true);
     try {
       await submitOrderFeedback({
         orderId: order.id,
         tableSessionToken: localStorage.getItem('mv_table_session_token'),
-        rating,
+        rating: ratingOverride,
         comment: feedbackComment.trim(),
         foodRating: foodRating || null,
         serviceRating: serviceRating || null,
@@ -208,7 +208,7 @@ export default function OrderStatus() {
           order_item_id: item.id,
           menu_item_id: item.menu_item_id,
           name: item.name,
-          rating: itemRatings[item.id] || rating,
+          rating: itemRatings[item.id] || ratingOverride,
         })),
       });
       setFeedbackGiven(true);
@@ -219,6 +219,16 @@ export default function OrderStatus() {
     } finally {
       setFeedbackSaving(false);
     }
+  };
+
+  const handleQuickRating = (nextRating) => {
+    if (feedbackSaving || feedbackGiven) return;
+    setRating(nextRating);
+    if (nextRating <= 2) {
+      setShowFeedbackModal(true);
+      return;
+    }
+    handleFeedbackSubmit({ ratingOverride: nextRating });
   };
 
   const handleReceiptContactSubmit = async () => {
@@ -321,7 +331,7 @@ export default function OrderStatus() {
     </div>
   );
 
-  const renderFeedbackForm = (submitLabel = 'Send Feedback') => (
+  const renderFeedbackForm = (submitLabel = 'Send Feedback', allowUpdate = false) => (
     <div className="space-y-6">
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -373,7 +383,7 @@ export default function OrderStatus() {
         </>
       )}
       <button
-        onClick={handleFeedbackSubmit}
+        onClick={() => handleFeedbackSubmit({ allowUpdate })}
         disabled={feedbackSaving || !rating}
         className="w-full bg-primary text-on-primary py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-transform active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2"
       >
@@ -471,6 +481,37 @@ export default function OrderStatus() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {(order.status === 'served' || order.status === 'completed') && !feedbackGiven && (
+          <div className="mb-8 p-6 bg-surface-container-low border border-outline-variant/10 rounded-2xl text-center">
+            <h3 className="font-headline text-lg font-bold text-on-surface mb-2">How was your meal?</h3>
+            <p className="text-sm text-on-surface-variant mb-4">Tap once to rate. Add details only if you want to.</p>
+            <div className="flex justify-center gap-2">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => handleQuickRating(star)}
+                  disabled={feedbackSaving}
+                  aria-label={`${star} star quick rating`}
+                  className="w-11 h-11 rounded-full bg-primary/10 text-primary border border-primary/20 transition-transform hover:scale-110 active:scale-95 disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {(order.status === 'served' || order.status === 'completed') && feedbackGiven && (
+          <div className="mb-8 p-6 bg-green-500/10 border border-green-500/20 rounded-2xl text-center animate-in fade-in zoom-in duration-300">
+            <span className="material-symbols-outlined text-4xl mb-2 block text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+            <h3 className="font-headline text-lg font-bold text-green-500 mb-1">Thank you!</h3>
+            <p className="text-xs text-green-600/80 uppercase tracking-widest font-bold">Your feedback is appreciated</p>
+            <button type="button" onClick={() => setShowFeedbackModal(true)} className="mt-4 text-[10px] font-bold uppercase tracking-widest text-primary">
+              Add optional details
+            </button>
           </div>
         )}
 
@@ -611,45 +652,9 @@ export default function OrderStatus() {
           </div>
         )}
 
-        {/* Post-meal Feedback */}
-        {(order.status === 'served' || order.status === 'completed') && !feedbackGiven && (
-          <div className="mt-8 p-6 bg-surface-container-low border border-outline-variant/10 rounded-2xl">
-            <div className="text-center mb-6">
-              <h3 className="font-headline text-lg font-bold text-on-surface mb-2">How was your meal?</h3>
-              <p className="text-sm text-on-surface-variant">Your feedback helps the menu improve automatically.</p>
-            </div>
-
-            {renderFeedbackForm('Send Feedback')}
-          </div>
-        )}
-        {false && (order.status === 'served' || order.status === 'completed') && !feedbackGiven && (
-          <div className="mt-8 p-6 bg-surface-container-low border border-outline-variant/10 rounded-2xl text-center">
-            <h3 className="font-headline text-lg font-bold text-on-surface mb-2">How was your meal?</h3>
-            <p className="text-sm text-on-surface-variant mb-4">Rate your experience</p>
-            <div className="flex justify-center gap-2">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  onClick={() => handleRating(star)}
-                  disabled={feedbackSaving}
-                  className={`text-4xl transition-transform hover:scale-110 active:scale-95 disabled:cursor-wait ${rating >= star ? '' : 'grayscale opacity-50'} ${feedbackSaving ? 'opacity-60' : ''}`}
-                >
-                  {star === 1 ? '😡' : star === 2 ? '😕' : star === 3 ? '😐' : star === 4 ? '🙂' : '😍'}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {(order.status === 'served' || order.status === 'completed') && feedbackGiven && (
-          <div className="mt-8 p-6 bg-green-500/10 border border-green-500/20 rounded-2xl text-center animate-in fade-in zoom-in duration-300">
-             <span className="material-symbols-outlined text-4xl mb-2 block text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-            <h3 className="font-headline text-lg font-bold text-green-500 mb-1">Thank you!</h3>
-            <p className="text-xs text-green-600/80 uppercase tracking-widest font-bold">Your feedback is appreciated</p>
-          </div>
-        )}
       </main>
 
-      {showFeedbackModal && !feedbackGiven && (
+      {showFeedbackModal && (
         <div className="fixed inset-0 z-[120] flex items-end justify-center">
           <div className="absolute inset-0 bg-black/60" />
           <div className="relative w-full max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-surface-container-low border border-outline-variant/10 shadow-luxury p-6 transition-transform duration-300 ease-out translate-y-0">
@@ -658,7 +663,7 @@ export default function OrderStatus() {
               <h3 className="font-headline text-2xl font-bold text-on-surface mb-2">How was your meal?</h3>
               <p className="text-sm text-on-surface-variant">Your feedback helps the menu improve automatically.</p>
             </div>
-            {renderFeedbackForm('Submit Feedback')}
+            {renderFeedbackForm(feedbackGiven ? 'Update Feedback' : 'Submit Feedback', feedbackGiven)}
             <button
               type="button"
               onClick={() => setShowFeedbackModal(false)}

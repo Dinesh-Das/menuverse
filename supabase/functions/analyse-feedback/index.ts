@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { hasValidInternalSecret } from '../_shared/internal-auth.ts';
 
 type Analysis = {
   sentiment_label: 'positive' | 'neutral' | 'negative';
@@ -107,7 +108,7 @@ Return JSON with:
   };
 }
 
-// Trigger contract: database trigger or dashboard webhook posts { feedback_id: "<OrderFeedback.id>" }.
+// Internal contract: the queue processor posts { feedback_id: "<OrderFeedback.id>" }.
 serve(async (req) => {
   const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
   if (req.method === 'OPTIONS') return preflightResponse(req);
@@ -115,12 +116,12 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceRoleKey) {
+  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
+  if (!supabaseUrl || !serviceRoleKey || !internalSecret) {
     return json({ error: 'Feedback analysis service is not configured.' }, 503);
   }
 
-  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  if (bearer !== serviceRoleKey) {
+  if (!hasValidInternalSecret(req, internalSecret)) {
     return json({ error: 'Forbidden' }, 403);
   }
 
@@ -161,18 +162,25 @@ serve(async (req) => {
 
   if (updateError) return json({ error: updateError.message }, 500);
 
-  await supabase.rpc('recalculate_menu_rankings', {
-    p_restaurant_id: feedback.restaurant_id,
-  }).catch(() => null);
-
-  await supabase.rpc('update_guest_preferences', {
-    p_feedback_id: feedback.id,
-  }).catch(() => null);
-
   const { data: orderItems } = await supabase
     .from('OrderItem')
     .select('menu_item_id')
     .eq('order_id', feedback.order_id);
+
+  await Promise.all([
+    supabase
+      .from('Restaurant')
+      .update({ ranking_needs_recalc: true, updated_at: new Date().toISOString() })
+      .eq('id', feedback.restaurant_id),
+    supabase
+      .from('MenuItem')
+      .update({ ranking_needs_recalc: true, updated_at: new Date().toISOString() })
+      .in('id', (orderItems || []).map(item => item.menu_item_id).filter(Boolean)),
+  ]).catch(() => null);
+
+  await supabase.rpc('update_guest_preferences', {
+    p_feedback_id: feedback.id,
+  }).catch(() => null);
 
   if (finalAnalysis.sentiment_label === 'negative') {
     for (const { menu_item_id } of (orderItems || [])) {

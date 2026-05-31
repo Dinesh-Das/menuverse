@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { loadIntegrationConfig } from '../_shared/integration-config.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -92,12 +93,13 @@ serve(async (req) => {
   if (restaurantError) return json({ error: restaurantError.message }, 500);
   if (!restaurant) return json({ error: 'Restaurant not found.' }, 404);
 
-  const config = asRecord(restaurant.pos_config);
+  const privateConfig = await loadIntegrationConfig(supabase, restaurantId, 'pos');
+  const config = { ...asRecord(restaurant.pos_config), ...asRecord(privateConfig?.config) };
   const accessToken = asString(config.square_access_token) || Deno.env.get('SQUARE_ACCESS_TOKEN') || '';
   const locationId = asString(config.square_location_id) || Deno.env.get('SQUARE_LOCATION_ID') || '';
   const environment = (asString(config.square_environment) || Deno.env.get('SQUARE_ENVIRONMENT') || 'production').toLowerCase();
   const currency = (asString(config.square_currency) || 'USD').toUpperCase();
-  const squareVersion = Deno.env.get('SQUARE_VERSION') || '2024-01-18';
+  const squareVersion = Deno.env.get('SQUARE_VERSION') || '2026-05-20';
 
   if (!accessToken || !locationId) {
     const message = 'Square access token and location ID are required.';

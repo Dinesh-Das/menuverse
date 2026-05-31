@@ -2,9 +2,9 @@
 --
 -- Configure these protected Postgres settings in the Supabase project:
 --   alter database postgres set "app.settings.supabase_url" = 'https://your-project.supabase.co';
---   alter database postgres set "app.settings.service_role_key" = '<service-role-key>';
+--   alter database postgres set "app.settings.menuverse_internal_secret" = '<internal-secret>';
 --
--- The legacy aliases app.supabase_url and app.service_role_key are also supported.
+-- The legacy URL alias app.supabase_url is also supported.
 -- As an alternative, configure a Supabase Dashboard Database Webhook for
 -- public.OrderFeedback INSERT and drop trg_sentiment_analysis to avoid duplicate requests.
 
@@ -18,7 +18,7 @@ set search_path = public
 as $$
 declare
   v_url text;
-  v_service_role_key text;
+  v_internal_secret text;
 begin
   v_url := nullif(
     trim(trailing '/' from coalesce(
@@ -28,12 +28,12 @@ begin
     )),
     ''
   );
-  v_service_role_key := coalesce(
-    nullif(current_setting('app.settings.service_role_key', true), ''),
-    nullif(current_setting('app.service_role_key', true), '')
+  v_internal_secret := coalesce(
+    nullif(current_setting('app.settings.menuverse_internal_secret', true), ''),
+    nullif(current_setting('app.menuverse_internal_secret', true), '')
   );
 
-  if v_url is null or v_service_role_key is null then
+  if v_url is null or v_internal_secret is null then
     return new;
   end if;
 
@@ -45,7 +45,7 @@ begin
     url := v_url || '/analyse-feedback',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || v_service_role_key
+      'X-Menuverse-Internal-Secret', v_internal_secret
     ),
     body := jsonb_build_object('feedback_id', new.id::text),
     timeout_milliseconds := 2000
