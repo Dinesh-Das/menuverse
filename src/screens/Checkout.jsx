@@ -132,13 +132,17 @@ export default function Checkout() {
       .catch(err => console.warn('[Menuverse] Guest profile lookup skipped:', err.message));
   }, [tableSessionToken]);
 
-  const maxRedeemablePoints = guestProfile?.loyalty_points >= 100
+  const loyaltyPoints = Number(guestProfile?.loyalty_points || 0);
+  const pointsPerRupee = 10;
+  const redemptionStep = 100;
+  const maxRedeemablePoints = loyaltyPoints >= redemptionStep
     ? Math.min(
-      Math.floor(guestProfile.loyalty_points / 100) * 100,
-      Math.max(0, Math.floor(((total * 10) - 1) / 100) * 100)
+      Math.floor(loyaltyPoints / redemptionStep) * redemptionStep,
+      Math.max(0, Math.floor(((total * pointsPerRupee) - 1) / redemptionStep) * redemptionStep)
     )
     : 0;
-  const loyaltyDiscount = pointsToRedeem / 10;
+  const maxRedeemableValue = maxRedeemablePoints / pointsPerRupee;
+  const loyaltyDiscount = pointsToRedeem / pointsPerRupee;
   const deliveryFee = orderType === 'delivery'
     ? Number(deliveryQuote?.fee ?? restaurant?.delivery_fee_flat ?? 0)
     : 0;
@@ -188,6 +192,10 @@ export default function Checkout() {
     setSplitMode('equal');
     setItemAssignments({});
     setSplitCount(1);
+  };
+
+  const toggleLoyaltyDiscount = () => {
+    setPointsToRedeem(current => current > 0 ? 0 : maxRedeemablePoints);
   };
 
   const updateDeliveryAddress = (field, value) => {
@@ -804,6 +812,33 @@ export default function Checkout() {
                       <span className="font-headline font-bold text-on-surface">&#8377;{deliveryFee.toFixed(2)}</span>
                     </div>
                   )}
+                  {loyaltyPoints > 0 && (
+                    <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                      <div className="flex items-start gap-3">
+                        <span className="material-symbols-outlined text-primary">workspace_premium</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-on-surface">
+                            You have {loyaltyPoints} loyalty points
+                          </p>
+                          <p className="mt-1 text-xs text-on-surface-variant">
+                            {maxRedeemablePoints > 0
+                              ? <>Worth up to &#8377;{maxRedeemableValue.toFixed(2)} off this order. Redeem in 100-point blocks.</>
+                              : 'Redemptions start at 100 points and must leave a payable balance.'}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={toggleLoyaltyDiscount}
+                            disabled={maxRedeemablePoints === 0}
+                            className="mt-3 rounded-lg bg-primary/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-on-primary disabled:opacity-50"
+                          >
+                            {pointsToRedeem > 0
+                              ? 'Remove loyalty discount'
+                              : <>Apply &#8377;{maxRedeemableValue.toFixed(2)} discount</>}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="pt-4 md:pt-6 border-t border-outline-variant/20 flex justify-between items-center">
                   <span className="font-bold text-on-surface md:text-lg">Total</span>
@@ -917,27 +952,6 @@ export default function Checkout() {
                   )}
                 </div>
               </div>
-
-              {maxRedeemablePoints >= 100 && (
-                <div className="mb-6 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
-                  <p className="text-xs font-bold uppercase tracking-widest text-on-surface mb-2">
-                    Loyalty Points
-                  </p>
-                  <p className="text-sm text-on-surface-variant mb-4">
-                    You have {guestProfile.loyalty_points} points. Use 100 points for ₹10 off.
-                  </p>
-                  <input
-                    type="number"
-                    min={0}
-                    max={maxRedeemablePoints}
-                    step={100}
-                    value={pointsToRedeem}
-                    onChange={e => setPointsToRedeem(Math.min(maxRedeemablePoints, Math.max(0, Number(e.target.value))))}
-                    className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary/50"
-                  />
-                  <p className="text-xs text-primary mt-2">Discount: ₹{loyaltyDiscount.toFixed(2)}</p>
-                </div>
-              )}
 
               {error && (
                 <div className="mb-4 p-4 bg-error/10 border border-error/30 rounded-xl text-error text-sm font-medium">
