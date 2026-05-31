@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { guardProductionFlags } from './src/vite-plugins/guard-production-flags.js'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
+    guardProductionFlags(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',

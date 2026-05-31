@@ -29,6 +29,14 @@ const ENABLE_CLIENT_FEEDBACK_ANALYSIS = viteFlag('VITE_ENABLE_CLIENT_FEEDBACK_AN
 const ENABLE_AR_EDGE_PROCESSING = viteFlag('VITE_ENABLE_AR_EDGE_PROCESSING');
 const ENABLE_DELIVERY_QUOTE_EDGE = viteFlag('VITE_ENABLE_DELIVERY_QUOTE_EDGE');
 const ENABLE_POS_EDGE_SYNC = viteFlag('VITE_ENABLE_POS_EDGE_SYNC');
+const ALLOW_CLIENT_ORDER_FALLBACK = viteFlag('VITE_ALLOW_CLIENT_ORDER_FALLBACK');
+
+if (import.meta.env.PROD && ALLOW_CLIENT_ORDER_FALLBACK) {
+  console.error(
+    '[Menuverse] SECURITY WARNING: VITE_ALLOW_CLIENT_ORDER_FALLBACK is enabled in production. ' +
+    'This is a misconfiguration. The client fallback is unavailable in this build.'
+  );
+}
 
 function requireRestaurantId(restaurantId) {
   if (!restaurantId) throw new Error('Restaurant context is required for this operation.');
