@@ -59,7 +59,7 @@ https://your-project.supabase.co/functions/v1/pos-status-webhook?restaurant_id=<
 https://your-project.supabase.co/functions/v1/pos-status-webhook?restaurant_id=<id>&provider=petpooja
 ```
 
-Square uses `x-square-hmacsha256-signature`. Petpooja and custom POS callbacks use `x-menuverse-signature`, the lowercase hex HMAC-SHA256 digest of the raw request body.
+Square uses `x-square-hmacsha256-signature`. Register `catalog.version.updated` in addition to order status events when Square availability sync is enabled. Petpooja and custom POS callbacks use `x-menuverse-signature`, the lowercase hex HMAC-SHA256 digest of the raw request body.
 
 ## Delivery aggregator callbacks
 
@@ -89,3 +89,23 @@ https://your-project.supabase.co/functions/v1/meta-order-webhook?restaurant_id=<
 ```
 
 Configure the verify token and Meta app secret in **Settings > Integrations**. POST requests must include Meta's `x-hub-signature-256` HMAC header. Structured orders can be sent as a top-level `order` object or as JSON in a messaging postback payload.
+
+## Social publishing bridges
+
+For operator-authored Instagram and Facebook posts, configure a **Social publishing bridge endpoint** under **Settings > Integrations**. Menuverse sends:
+
+```json
+{
+  "restaurant_id": "<id>",
+  "channel": "instagram",
+  "message": "Tonight's special",
+  "image_url": "https://...",
+  "ordering_link": "https://..."
+}
+```
+
+The bridge is responsible for the provider-specific Meta publishing flow. Menuverse records the request as an `IntegrationJob`.
+
+## Email delivery bridge
+
+Campaign email uses Resend when `RESEND_API_KEY` is configured. To deliver through an SMTP relay or another provider, set `EMAIL_DELIVERY_WEBHOOK_URL` and optionally `EMAIL_DELIVERY_WEBHOOK_TOKEN`; Menuverse sends the rendered email payload to that server-side bridge.

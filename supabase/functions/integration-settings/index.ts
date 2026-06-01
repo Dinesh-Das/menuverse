@@ -37,6 +37,7 @@ function posSafeConfig(provider: string, input: Record<string, unknown>) {
       square_environment: asString(input.environment) || 'production',
       square_currency: (asString(input.currency) || 'USD').toUpperCase(),
       square_webhook_url: asString(input.webhook_url),
+      availability_sync_enabled: Boolean(input.availability_sync_enabled),
     };
   }
   if (provider === 'petpooja') {
@@ -149,6 +150,7 @@ serve(async (req) => {
       config: {
         endpoint: asString(settings.endpoint),
         menu_sync_url: asString(settings.menu_sync_url),
+        publish_url: asString(settings.publish_url),
         ordering_link: asString(settings.ordering_link),
         account_id: asString(settings.account_id),
         phone_number_id: asString(settings.phone_number_id),

@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { consumeRateLimit, getClientIp } from '../_shared/rate-limit.ts';
 
 function clampSplitCount(value: unknown) {
   const count = Number(value || 1);
@@ -42,6 +43,16 @@ serve(async (req) => {
   const splitDetail = body.split_detail && typeof body.split_detail === 'object' ? body.split_detail : null;
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+  try {
+    const allowed = await Promise.all([
+      consumeRateLimit(supabase, 'razorpay-session', tableSessionToken, 10, 60),
+      consumeRateLimit(supabase, 'razorpay-ip', getClientIp(req), 10, 60),
+    ]);
+    if (!allowed.every(Boolean)) return json({ error: 'Too many payment attempts. Please wait a minute and try again.' }, 429);
+  } catch {
+    return json({ error: 'Payment rate-limit service is unavailable.' }, 503);
+  }
+
   const { data, error } = await supabase.rpc('get_table_session_orders', {
     p_table_session_token: tableSessionToken,
   });

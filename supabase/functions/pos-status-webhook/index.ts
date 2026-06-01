@@ -70,6 +70,17 @@ serve(async (req) => {
     return json({ error: 'Invalid signature.' }, 403);
   }
 
+  if (provider === 'square' && asString(payload.type) === 'catalog.version.updated') {
+    const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
+    if (!internalSecret) return json({ error: 'Square catalog sync internal secret is not configured.' }, 503);
+    const { data, error } = await supabase.functions.invoke('sync-pos-catalog', {
+      body: { restaurant_id: restaurantId },
+      headers: { 'X-Menuverse-Internal-Secret': internalSecret },
+    });
+    if (error || data?.error) return json({ error: data?.error || error?.message || 'Square catalog sync failed.' }, 502);
+    return json(data);
+  }
+
   const parsed = parseStatus(provider, payload);
   if (!parsed.orderId || !parsed.status) return json({ error: 'POS order ID and status are required.' }, 400);
 

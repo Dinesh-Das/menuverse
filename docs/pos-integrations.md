@@ -13,21 +13,24 @@ Square support is implemented by `supabase/functions/pos-adapter-square`. Config
 }
 ```
 
-OAuth setup:
+Manual token setup:
 
 1. Create a Square app in the Square Developer Dashboard.
-2. Add an OAuth redirect URL that points to your owner onboarding flow.
-3. Request Orders API permissions, including order write access.
-4. Exchange the authorization code for an access token and save the token plus selected location ID in the Settings UI.
-5. For sandbox testing, use `"square_environment": "sandbox"` and a sandbox access token/location.
+2. Generate a scoped access token with `ORDERS_WRITE`, `ITEMS_READ`, and `MERCHANT_PROFILE_READ`.
+3. Save the token plus selected location ID in the Settings UI.
+4. For sandbox testing, use `"square_environment": "sandbox"` and a sandbox access token/location.
 
-The adapter creates a Square order through `POST /v2/orders`, tags the order metadata with `fulfillment_type: DINE_IN`, and includes the table number in the pickup fulfillment note for restaurant workflows.
+Square's OAuth flow can replace manual tokens during hosted onboarding, but it requires your Square application ID, secret, redirect URL, and token-refresh deployment. See the [Square OAuth overview](https://developer.squareup.com/docs/oauth-api/overview).
 
-Register this signed status callback:
+The adapter creates a Square order through `POST /v2/orders`. Square's fulfillment enum does not define `DINE_IN`, so restaurant orders use `PICKUP` with the Menuverse order ID and table number in metadata and the fulfillment note.
+
+Register this signed callback for order status and `catalog.version.updated` events:
 
 ```text
 https://your-project.supabase.co/functions/v1/pos-status-webhook?restaurant_id=<restaurant-id>&provider=square
 ```
+
+To synchronize sold-out state, enable **Sync mapped item availability from Square** and set each menu item's **Square Variation ID** in **Menu Assets**. Catalog webhooks and the manual sync button update Menuverse availability from Square variation location settings and sold-out overrides. See Square's [sold-out variation guide](https://developer.squareup.com/docs/inventory-api/monitor-sold-out-status-on-item-variation).
 
 ## Petpooja
 

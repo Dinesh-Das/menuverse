@@ -3,19 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { fetchTableInfo, getGuestProfileForSession, startOrResumeTableSession } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
-
-function getStoredTableSessionToken() {
-  const token = localStorage.getItem('mv_table_session_token');
-  const expiresAt = Number(localStorage.getItem('mv_table_session_expires') || 0);
-  if (!token) return null;
-  if (!expiresAt || Date.now() > expiresAt) {
-    localStorage.removeItem('mv_table_session_token');
-    localStorage.removeItem('mv_table_session_id');
-    localStorage.removeItem('mv_table_session_expires');
-    return null;
-  }
-  return token;
-}
+import { getStoredTableSessionToken } from '../lib/tableSessionStorage';
 
 function surfaceWelcome(table) {
   const identifier = table?.surface_label || table?.number || '';
@@ -36,6 +24,7 @@ export default function QRLanding() {
   const [returningGuest, setReturningGuest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [sessionError, setSessionError] = useState(null);
   const [deliveryAddress, setDeliveryAddress] = useState(localStorage.getItem('mv_delivery_address') || '');
   const cachedRestaurantName = localStorage.getItem('mv_restaurant_name') || restaurantSlug?.replace(/-/g, ' ') || 'Menuverse';
 
@@ -76,6 +65,9 @@ export default function QRLanding() {
           setActiveSessionToken(sessionPayload.tableSessionToken);
         } catch (sessionErr) {
           console.warn('[Menuverse] Table session RPC unavailable:', sessionErr.message);
+          if (/already has an active session/i.test(sessionErr.message)) {
+            setSessionError(sessionErr.message);
+          }
         }
 
         setSession(sessionPayload);
@@ -100,6 +92,10 @@ export default function QRLanding() {
       localStorage.setItem('mv_delivery_address', deliveryAddress.trim());
     }
     navigate(`/r/${restaurantSlug}/menu`);
+  };
+
+  const handleRescan = () => {
+    window.location.reload();
   };
 
   if (loading) {
@@ -188,6 +184,21 @@ export default function QRLanding() {
               <span className="material-symbols-outlined text-base">shopping_bag</span>
               Your session has {count} {count === 1 ? 'item' : 'items'} · Resume order
             </button>
+          )}
+          {sessionError && (
+            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-left">
+              <p className="text-sm font-bold text-amber-500">Another device is using this table.</p>
+              <p className="mt-1 text-xs leading-relaxed text-on-surface-variant">
+                Ask staff to share the table link or scan the QR on your table again.
+              </p>
+              <button
+                type="button"
+                onClick={handleRescan}
+                className="mt-3 w-full rounded-lg bg-primary px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-on-primary"
+              >
+                Scan the table QR again
+              </button>
+            </div>
           )}
         </div>
 

@@ -1,9 +1,15 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import {
+  TABLE_SESSION_TTL_MS,
+  getStoredTableSessionToken,
+  getTableSessionValue,
+  setTableSessionValue,
+} from '../lib/tableSessionStorage';
 
 const CartContext = createContext(null);
 const STORAGE_KEY = 'mv_cart';
-const TABLE_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const ORDER_TYPES = new Set(['dine_in', 'takeaway', 'delivery']);
 
 function loadFromStorage() {
   try {
@@ -31,15 +37,32 @@ function sendRealtimeMessage(channel, payload) {
     .catch(() => 'error');
 }
 
+function loadInitialTableSession() {
+  const tableSessionToken = getStoredTableSessionToken();
+  return {
+    tableId: getTableSessionValue('mv_table_id'),
+    tableNumber: getTableSessionValue('mv_table_num'),
+    restaurantSlug: getTableSessionValue('mv_restaurant_slug'),
+    tableSessionToken,
+    tableSessionId: getTableSessionValue('mv_table_session_id'),
+    orderType: getTableSessionValue('mv_order_type'),
+  };
+}
+
 export function CartProvider({ children }) {
+  const [initialTableSession] = useState(loadInitialTableSession);
   const [items, setItems] = useState(loadFromStorage);
   const [remoteCarts, setRemoteCarts] = useState({});
-  const [tableId, setTableId] = useState(localStorage.getItem('mv_table_id') || null);
-  const [tableNumber, setTableNumber] = useState(localStorage.getItem('mv_table_num') || null);
+  const [tableId, setTableId] = useState(initialTableSession.tableId);
+  const [tableNumber, setTableNumber] = useState(initialTableSession.tableNumber);
   const [restaurantId, setRestaurantId] = useState(localStorage.getItem('mv_restaurant_id') || null);
-  const [restaurantSlug, setRestaurantSlug] = useState(localStorage.getItem('mv_restaurant_slug') || null);
-  const [tableSessionToken, setTableSessionToken] = useState(localStorage.getItem('mv_table_session_token') || null);
-  const [tableSessionId, setTableSessionId] = useState(localStorage.getItem('mv_table_session_id') || null);
+  const [restaurantSlug, setRestaurantSlug] = useState(initialTableSession.restaurantSlug);
+  const [tableSessionToken, setTableSessionToken] = useState(initialTableSession.tableSessionToken);
+  const [tableSessionId, setTableSessionId] = useState(initialTableSession.tableSessionId);
+  const [orderType, setOrderTypeState] = useState(() => {
+    const stored = initialTableSession.orderType;
+    return ORDER_TYPES.has(stored) ? stored : 'dine_in';
+  });
   const [gstRateState, setGstRateState] = useState(localStorage.getItem('mv_gst_rate') || '0.05');
   const [paymentEnabled, setPaymentEnabled] = useState(localStorage.getItem('mv_payment_enabled') === 'true');
   const [paymentProvider, setPaymentProvider] = useState(localStorage.getItem('mv_payment_provider') || 'razorpay');
@@ -112,13 +135,11 @@ export function CartProvider({ children }) {
     
     if (tid !== undefined) {
       setTableId(tid);
-      if (tid) localStorage.setItem('mv_table_id', tid);
-      else localStorage.removeItem('mv_table_id');
+      setTableSessionValue('mv_table_id', tid);
     }
     if (tnum !== undefined) {
       setTableNumber(tnum);
-      if (tnum) localStorage.setItem('mv_table_num', tnum);
-      else localStorage.removeItem('mv_table_num');
+      setTableSessionValue('mv_table_num', tnum);
     }
     if (rid !== undefined) {
       setRestaurantId(rid);
@@ -127,23 +148,21 @@ export function CartProvider({ children }) {
     }
     if (slug !== undefined) {
       setRestaurantSlug(slug);
-      if (slug) localStorage.setItem('mv_restaurant_slug', slug);
-      else localStorage.removeItem('mv_restaurant_slug');
+      setTableSessionValue('mv_restaurant_slug', slug);
     }
     if (sessionData.tableSessionToken !== undefined) {
       setTableSessionToken(sessionData.tableSessionToken);
       if (sessionData.tableSessionToken) {
-        localStorage.setItem('mv_table_session_token', sessionData.tableSessionToken);
-        localStorage.setItem('mv_table_session_expires', String(Date.now() + TABLE_SESSION_TTL_MS));
+        setTableSessionValue('mv_table_session_token', sessionData.tableSessionToken);
+        setTableSessionValue('mv_table_session_expires', Date.now() + TABLE_SESSION_TTL_MS);
       } else {
-        localStorage.removeItem('mv_table_session_token');
-        localStorage.removeItem('mv_table_session_expires');
+        setTableSessionValue('mv_table_session_token', null);
+        setTableSessionValue('mv_table_session_expires', null);
       }
     }
     if (sessionData.tableSessionId !== undefined) {
       setTableSessionId(sessionData.tableSessionId);
-      if (sessionData.tableSessionId) localStorage.setItem('mv_table_session_id', sessionData.tableSessionId);
-      else localStorage.removeItem('mv_table_session_id');
+      setTableSessionValue('mv_table_session_id', sessionData.tableSessionId);
     }
     if (sessionData.gstRate !== undefined) {
       setGstRateState(sessionData.gstRate);
@@ -164,6 +183,12 @@ export function CartProvider({ children }) {
       if (sessionData.currency) localStorage.setItem('mv_currency', sessionData.currency);
       else localStorage.removeItem('mv_currency');
     }
+  }, []);
+
+  const setOrderType = useCallback((nextOrderType) => {
+    const normalized = ORDER_TYPES.has(nextOrderType) ? nextOrderType : 'dine_in';
+    setOrderTypeState(normalized);
+    setTableSessionValue('mv_order_type', normalized);
   }, []);
 
   const addItem = useCallback((dish, qty = 1, selectedModifiers = [], itemNote = '') => {
@@ -224,8 +249,8 @@ export function CartProvider({ children }) {
     <CartContext.Provider value={{
       items, remoteItems, allItems, count, subtotal, tax, total,
       tableId, tableNumber, restaurantId, restaurantSlug, tableSessionToken, tableSessionId,
-      paymentEnabled, paymentProvider, currency,
-      addItem, removeItem, updateQty, updateItemNote, clearCart, setSession
+      paymentEnabled, paymentProvider, currency, orderType,
+      addItem, removeItem, updateQty, updateItemNote, clearCart, setSession, setOrderType
     }}>
       {children}
     </CartContext.Provider>

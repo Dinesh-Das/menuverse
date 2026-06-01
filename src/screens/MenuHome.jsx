@@ -86,7 +86,17 @@ function loadDietFilter() {
 
 export default function MenuHome() {
   const { restaurantSlug } = useParams();
-  const { addItem, items, restaurantSlug: sessionSlug, setSession, updateQty, tableSessionToken } = useCart();
+  const {
+    addItem,
+    items,
+    restaurantSlug: sessionSlug,
+    setSession,
+    updateQty,
+    tableId,
+    tableSessionToken,
+    orderType,
+    setOrderType,
+  } = useCart();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const slug = restaurantSlug || sessionSlug || null;
@@ -108,6 +118,11 @@ export default function MenuHome() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [preferredLocale, setPreferredLocale] = useState(getPreferredMenuLocale);
+
+  useEffect(() => {
+    const campaignId = new window.URLSearchParams(window.location.search).get('utm_campaign');
+    if (campaignId) window.sessionStorage.setItem('mv_campaign_id', campaignId);
+  }, []);
 
   useEffect(() => {
     if (!slug) {
@@ -424,6 +439,38 @@ export default function MenuHome() {
       {/* Desktop: side-by-side content + cart; Mobile: stacked */}
       <div className="flex" style={{ paddingTop: 'var(--nav-height)' }}>
         <main className="flex-1 min-w-0 pb-36 lg:pb-12 px-4 lg:px-8 xl:px-12 pt-8">
+        {(restaurant?.takeaway_enabled !== false || restaurant?.delivery_enabled !== false) && (
+          <div className="mb-6 rounded-2xl border border-outline-variant/10 bg-surface-container-low p-3">
+            <p className="mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant">Order for</p>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'dine_in', label: 'Dine In', icon: 'table_restaurant', enabled: true },
+                { id: 'takeaway', label: 'Takeaway', icon: 'takeout_dining', enabled: restaurant?.takeaway_enabled !== false },
+                { id: 'delivery', label: 'Delivery', icon: 'local_shipping', enabled: restaurant?.delivery_enabled !== false },
+              ].filter(option => option.enabled).map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setOrderType(option.id)}
+                  className={`rounded-xl border px-2 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                    orderType === option.id
+                      ? 'border-primary bg-primary text-on-primary'
+                      : 'border-outline-variant/20 bg-surface-container text-on-surface-variant'
+                  }`}
+                >
+                  <span className="material-symbols-outlined mr-1 align-middle text-sm">{option.icon}</span>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {!tableId && orderType === 'dine_in' && (
+          <div className="mb-6 flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
+            <span className="material-symbols-outlined">qr_code_scanner</span>
+            <p>Scan the table QR to order dine-in, or choose takeaway or delivery above.</p>
+          </div>
+        )}
 
         {/* ── Hero Editorial ───────────────────────────────── */}
         <section className="mb-8">

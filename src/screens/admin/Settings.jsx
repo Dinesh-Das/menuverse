@@ -6,6 +6,7 @@ import {
   adminFetchIntegrationSettings,
   adminRemoveStaffMember,
   adminRetryIntegrationJob,
+  adminSyncPosCatalog,
   adminTestPosConnection,
   adminUpdateIntegrationChannel,
   adminUpdatePosSettings,
@@ -34,6 +35,15 @@ const LOGO_SIGNATURES = {
   png: { type: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47] },
   webp: { type: 'image/webp', bytes: [0x52, 0x49, 0x46, 0x46] },
 };
+
+function buildInboundWebhookUrl(restaurantId, channelType) {
+  const baseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+  if (!baseUrl || !restaurantId) return '';
+  const functionName = channelType === 'instagram' || channelType === 'facebook'
+    ? 'meta-order-webhook'
+    : 'aggregator-order-webhook';
+  return `${baseUrl}/functions/v1/${functionName}?restaurant_id=${encodeURIComponent(restaurantId)}&channel=${encodeURIComponent(channelType)}`;
+}
 
 async function logoMagicBytesMatch(file) {
   const ext = file.name.split('.').pop()?.toLowerCase();
@@ -82,6 +92,7 @@ export default function Settings() {
   const [posConfiguredSecrets, setPosConfiguredSecrets] = useState([]);
   const [posSaving, setPosSaving] = useState(false);
   const [posTesting, setPosTesting] = useState(false);
+  const [posCatalogSyncing, setPosCatalogSyncing] = useState(false);
   const [channels, setChannels] = useState({});
   const [channelSaving, setChannelSaving] = useState(null);
 
@@ -166,6 +177,7 @@ export default function Settings() {
             environment: channel.config?.square_environment || 'production',
             currency: channel.config?.square_currency || 'USD',
             webhook_url: channel.config?.square_webhook_url || channel.config?.status_webhook_url || '',
+            availability_sync_enabled: Boolean(channel.config?.availability_sync_enabled),
             restaurant_id: channel.config?.petpooja_restaurant_id || '',
             endpoint: channel.config?.petpooja_webhook_url || channel.config?.webhook_url || '',
           });
@@ -341,6 +353,19 @@ export default function Settings() {
       addToast(`POS test failed: ${err.message}`, 'error');
     } finally {
       setPosTesting(false);
+    }
+  };
+
+  const handleSyncPosCatalog = async () => {
+    setPosCatalogSyncing(true);
+    try {
+      const result = await adminSyncPosCatalog(user.restaurantId);
+      addToast(`Square catalog synced. ${result.updated_item_count || 0} mapped items updated.`, 'success');
+      await loadIntegrationSettings();
+    } catch (err) {
+      addToast(`Catalog sync failed: ${err.message}`, 'error');
+    } finally {
+      setPosCatalogSyncing(false);
     }
   };
 
@@ -601,7 +626,7 @@ export default function Settings() {
                   {paymentProvider === 'stripe'
                     ? 'Stripe can offer browser-native Apple Pay and Google Pay when the device, browser, domain, and account are eligible.'
                     : paymentProvider === 'razorpay'
-                      ? 'Razorpay Checkout supports its configured payment methods, but this setting does not promise a browser-native Apple Pay sheet.'
+                      ? 'Razorpay Standard Checkout exposes payment methods enabled on your Razorpay account, including eligible UPI apps, wallets, and Apple Pay after provider setup.'
                       : 'Manual links depend on the payment page you send to the guest.'}
                 </p>
                 <div className="grid md:grid-cols-2 gap-4">
@@ -651,6 +676,10 @@ export default function Settings() {
                       <input type="password" value={posSettings.access_token || ''} onChange={e => updatePosSetting('access_token', e.target.value)} placeholder={posConfiguredSecrets.includes('square_access_token') ? 'Access token saved - enter to replace' : 'Square access token'} className={inputClass} />
                       <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('square_webhook_signature_key') ? 'Webhook signature key saved - enter to replace' : 'Square webhook signature key'} className={inputClass} />
                       <input value={posSettings.webhook_url || ''} onChange={e => updatePosSetting('webhook_url', e.target.value)} placeholder="Exact Square webhook URL" className={`${inputClass} md:col-span-2`} />
+                      <label className="md:col-span-2 flex items-center justify-between gap-4 p-4 rounded-xl bg-surface-container border border-outline-variant/10">
+                        <span className="text-sm font-bold text-on-surface">Sync mapped item availability from Square</span>
+                        <input type="checkbox" checked={Boolean(posSettings.availability_sync_enabled)} onChange={e => updatePosSetting('availability_sync_enabled', e.target.checked)} className="w-5 h-5 accent-primary" />
+                      </label>
                     </>
                   )}
                   {posProvider === 'petpooja' && (
@@ -677,6 +706,11 @@ export default function Settings() {
                   <button onClick={handleTestPos} disabled={posTesting || posProvider === 'none'} className="px-5 py-3 rounded-xl bg-surface-container-high text-on-surface text-xs font-bold uppercase tracking-widest disabled:opacity-50">
                     {posTesting ? 'Testing...' : 'Test connection'}
                   </button>
+                  {posProvider === 'square' && (
+                    <button onClick={handleSyncPosCatalog} disabled={posCatalogSyncing || !posSettings.availability_sync_enabled} className="px-5 py-3 rounded-xl bg-surface-container-high text-on-surface text-xs font-bold uppercase tracking-widest disabled:opacity-50">
+                      {posCatalogSyncing ? 'Syncing...' : 'Sync Square availability'}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -704,8 +738,12 @@ export default function Settings() {
                           <div className="grid md:grid-cols-2 gap-3 mt-4">
                             <input value={channel.settings.endpoint || ''} onChange={e => updateChannelSetting(channelType, 'endpoint', e.target.value)} placeholder="Provider or inbound endpoint" className={inputClass} />
                             <input value={channel.settings.menu_sync_url || ''} onChange={e => updateChannelSetting(channelType, 'menu_sync_url', e.target.value)} placeholder="Optional menu sync endpoint" className={inputClass} />
+                            {(channelType === 'instagram' || channelType === 'facebook') && (
+                              <input value={channel.settings.publish_url || ''} onChange={e => updateChannelSetting(channelType, 'publish_url', e.target.value)} placeholder="Social publishing bridge endpoint" className={`${inputClass} md:col-span-2`} />
+                            )}
                             <input value={channel.settings.account_id || ''} onChange={e => updateChannelSetting(channelType, 'account_id', e.target.value)} placeholder={channelType === 'whatsapp' ? 'WhatsApp phone number ID' : 'Account, page, or store ID'} className={inputClass} />
                             <input value={channel.settings.ordering_link || ''} onChange={e => updateChannelSetting(channelType, 'ordering_link', e.target.value)} placeholder="Optional public ordering link" className={inputClass} />
+                            <input readOnly value={buildInboundWebhookUrl(user.restaurantId, channelType)} aria-label={`${label} inbound webhook URL`} className={`${inputClass} md:col-span-2 font-mono text-xs`} />
                             <input type="password" value={channel.settings.access_token || ''} onChange={e => updateChannelSetting(channelType, 'access_token', e.target.value)} placeholder={channel.configuredSecrets?.includes('access_token') ? 'Access token saved - enter to replace' : 'Access token'} className={inputClass} />
                             <input type="password" value={channel.settings.webhook_secret || ''} onChange={e => updateChannelSetting(channelType, 'webhook_secret', e.target.value)} placeholder={channel.configuredSecrets?.includes('webhook_secret') ? 'Webhook secret saved - enter to replace' : 'Webhook signing secret'} className={inputClass} />
                             {(channelType === 'whatsapp' || channelType === 'instagram' || channelType === 'facebook') && (

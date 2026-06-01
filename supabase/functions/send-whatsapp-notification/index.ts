@@ -2,11 +2,10 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 import { asString, loadIntegrationConfig } from '../_shared/integration-config.ts';
+import { hasValidInternalSecret } from '../_shared/internal-auth.ts';
 
 async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Request, restaurantId: string) {
-  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
-  const providedSecret = req.headers.get('X-Menuverse-Internal-Secret');
-  if (internalSecret && providedSecret === internalSecret) return true;
+  if (hasValidInternalSecret(req, Deno.env.get('MENUVERSE_INTERNAL_SECRET'))) return true;
 
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
   if (!jwt) return false;

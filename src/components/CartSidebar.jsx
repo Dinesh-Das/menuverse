@@ -116,9 +116,14 @@ export default function CartSidebar() {
                   </button>
                 </div>
                 {item.selectedModifiers?.length > 0 && (
-                  <p className="text-[10px] text-on-surface-variant mt-0.5 truncate">
-                    {item.selectedModifiers.map(m => m.name).join(', ')}
-                  </p>
+                  <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-on-surface-variant">
+                    {item.selectedModifiers.map(modifier => (
+                      <span key={modifier.id || modifier.name}>
+                        {modifier.name}
+                        {Number(modifier.price_delta || 0) > 0 ? ` (+₹${Number(modifier.price_delta).toFixed(2)})` : ''}
+                      </span>
+                    ))}
+                  </div>
                 )}
                 <p className="text-primary font-bold text-sm mt-0.5">₹{(item.price * item.qty).toFixed(2)}</p>
                 <textarea

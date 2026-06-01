@@ -182,6 +182,17 @@ serve(async (req) => {
     p_feedback_id: feedback.id,
   }).catch(() => null);
 
+  await supabase
+    .from('SentimentQueue')
+    .update({
+      status: 'processed',
+      last_error: null,
+      processed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('feedback_id', feedback.id)
+    .catch(() => null);
+
   if (finalAnalysis.sentiment_label === 'negative') {
     for (const { menu_item_id } of (orderItems || [])) {
       const { data: menuItem } = await supabase

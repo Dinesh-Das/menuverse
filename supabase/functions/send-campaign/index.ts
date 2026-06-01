@@ -101,13 +101,15 @@ serve(async (req) => {
     .eq('id', campaignId);
 
   const resendKey = Deno.env.get('RESEND_API_KEY');
-  const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Menuverse <no-reply@menuverse.app>';
+  const emailWebhookUrl = Deno.env.get('EMAIL_DELIVERY_WEBHOOK_URL');
+  const emailWebhookToken = Deno.env.get('EMAIL_DELIVERY_WEBHOOK_TOKEN');
+  const fromEmail = campaign.from_email || Deno.env.get('RESEND_FROM_EMAIL') || 'Menuverse <no-reply@menuverse.app>';
   const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
   let sentCount = 0;
   let failedCount = 0;
 
-  if ((campaign.channel === 'email' || campaign.channel === 'both') && !resendKey) {
-    return json({ error: 'Email delivery not configured. Set RESEND_API_KEY.' }, 503);
+  if ((campaign.channel === 'email' || campaign.channel === 'both') && !resendKey && !emailWebhookUrl) {
+    return json({ error: 'Email delivery not configured. Set RESEND_API_KEY or EMAIL_DELIVERY_WEBHOOK_URL.' }, 503);
   }
 
   for (const recipient of recipients || []) {
@@ -128,21 +130,29 @@ serve(async (req) => {
         },
         headers: internalSecret ? { 'X-Menuverse-Internal-Secret': internalSecret } : undefined,
       });
-      if (!whatsAppError && (whatsAppResult?.status === 'delivered' || whatsAppResult?.queued)) sentCount += 1;
+      const whatsAppSent = !whatsAppError && (whatsAppResult?.status === 'delivered' || whatsAppResult?.queued);
+      if (whatsAppSent) sentCount += 1;
       else failedCount += 1;
+      await supabase.from('CampaignSend').insert({
+        campaign_id: campaignId,
+        guest_profile_id: recipient.id,
+        channel: 'whatsapp',
+        external_id: whatsAppResult?.job_id || null,
+        status: whatsAppSent ? (whatsAppResult?.status === 'delivered' ? 'delivered' : 'sent') : 'failed',
+      });
     }
 
     if (campaign.channel === 'email' || campaign.channel === 'both') {
       if (!recipient.email) {
         failedCount += 1;
+        await supabase.from('CampaignSend').insert({
+          campaign_id: campaignId,
+          guest_profile_id: recipient.id,
+          channel: 'email',
+          status: 'failed',
+        });
       } else {
-        const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${resendKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        const emailPayload = {
           from: fromEmail,
           to: [recipient.email],
           subject: renderTemplate(campaign.subject || campaign.name, {
@@ -163,21 +173,38 @@ serve(async (req) => {
             { name: 'campaign_id', value: campaignId },
             { name: 'source', value: 'menuverse' },
           ],
-        }),
-      });
-      if (response.ok) {
-        sentCount += 1;
-        const responseJson = await response.json().catch(() => ({}));
-        await supabase.from('CampaignSend').insert({
-          campaign_id: campaignId,
-          guest_profile_id: recipient.id,
-          channel: 'email',
-          external_id: responseJson.id || null,
-          status: 'sent',
+        };
+        const response = await fetch(resendKey ? 'https://api.resend.com/emails' : emailWebhookUrl!, {
+          method: 'POST',
+          headers: {
+            ...(resendKey
+              ? { Authorization: `Bearer ${resendKey}` }
+              : emailWebhookToken
+                ? { Authorization: `Bearer ${emailWebhookToken}` }
+                : {}),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(emailPayload),
         });
-      } else {
-        failedCount += 1;
-      }
+        if (response.ok) {
+          sentCount += 1;
+          const responseJson = await response.json().catch(() => ({}));
+          await supabase.from('CampaignSend').insert({
+            campaign_id: campaignId,
+            guest_profile_id: recipient.id,
+            channel: 'email',
+            external_id: responseJson.id || null,
+            status: 'sent',
+          });
+        } else {
+          failedCount += 1;
+          await supabase.from('CampaignSend').insert({
+            campaign_id: campaignId,
+            guest_profile_id: recipient.id,
+            channel: 'email',
+            status: 'failed',
+          });
+        }
       }
     }
 

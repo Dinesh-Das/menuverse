@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { canTransitionOrderStatus, safeParseModifiers } from './businessRules';
+import { getStoredTableSessionToken } from './tableSessionStorage';
 
 const now = () => new Date().toISOString();
 const AR_BUCKET = 'ar-models';
@@ -30,9 +31,9 @@ const ENABLE_DELIVERY_QUOTE_EDGE = viteFlag('VITE_ENABLE_DELIVERY_QUOTE_EDGE');
 const ALLOW_CLIENT_ORDER_FALLBACK = viteFlag('VITE_ALLOW_CLIENT_ORDER_FALLBACK');
 
 if (import.meta.env.PROD && ALLOW_CLIENT_ORDER_FALLBACK) {
-  console.error(
-    '[Menuverse] SECURITY WARNING: VITE_ALLOW_CLIENT_ORDER_FALLBACK is enabled in production. ' +
-    'This is a misconfiguration. The client fallback is unavailable in this build.'
+  throw new Error(
+    '[Menuverse] FATAL: VITE_ALLOW_CLIENT_ORDER_FALLBACK is enabled in production. ' +
+    'Remove it before deploying.'
   );
 }
 
@@ -267,7 +268,7 @@ export async function fetchMenuItem(dishId) {
 
 export async function placeOrder(payload) {
   const restaurantId = requireRestaurantId(payload.restaurant_id);
-  const tableSessionToken = payload.table_session_token || localStorage.getItem('mv_table_session_token');
+  const tableSessionToken = payload.table_session_token || getStoredTableSessionToken();
   const rpcPayload = {
     p_restaurant_id: restaurantId,
     p_table_id: payload.table_id,
@@ -282,6 +283,7 @@ export async function placeOrder(payload) {
   const { data, error } = await supabase.rpc('create_order_secure', rpcPayload);
   if (error) throw new Error(`Secure order creation failed: ${error.message}`);
   const orderResult = Array.isArray(data) ? data[0] : data;
+  let finalResult = orderResult;
 
   if (payload.order_type && payload.order_type !== 'dine_in') {
     const { data: fulfillment, error: fulfillmentError } = await supabase.rpc('set_order_fulfillment_details', {
@@ -293,17 +295,32 @@ export async function placeOrder(payload) {
       p_delivery_distance_km: payload.delivery_distance_km ?? null,
     });
     if (fulfillmentError) throw new Error(fulfillmentError.message);
-    return {
+    finalResult = {
       ...orderResult,
       total_amount: fulfillment?.total_amount ?? orderResult.total_amount,
     };
   }
 
-  return orderResult;
+  const campaignId = window.sessionStorage.getItem('mv_campaign_id');
+  if (campaignId) {
+    const { error: attributionError } = await supabase.rpc('attribute_order_to_campaign_secure', {
+      p_order_id: orderResult.order_ref,
+      p_restaurant_id: restaurantId,
+      p_idempotency_key: rpcPayload.p_idempotency_key,
+      p_campaign_id: campaignId,
+    });
+    if (attributionError) {
+      console.warn('[Menuverse] Campaign attribution skipped:', attributionError.message);
+    } else {
+      window.sessionStorage.removeItem('mv_campaign_id');
+    }
+  }
+
+  return finalResult;
 }
 
 export async function fetchOrderStatus(orderId) {
-  const tableSessionToken = localStorage.getItem('mv_table_session_token');
+  const tableSessionToken = getStoredTableSessionToken();
   const { data, error } = await supabase.rpc('get_order_status_secure', {
     p_order_id: orderId,
     p_table_session_token: tableSessionToken || null,
@@ -314,7 +331,7 @@ export async function fetchOrderStatus(orderId) {
 }
 
 export async function fetchTableOrders(_tableId) {
-  const tableSessionToken = localStorage.getItem('mv_table_session_token');
+  const tableSessionToken = getStoredTableSessionToken();
   if (tableSessionToken) {
     const { data, error } = await supabase.rpc('get_table_session_orders', {
       p_table_session_token: tableSessionToken,
@@ -327,7 +344,7 @@ export async function fetchTableOrders(_tableId) {
 
 export async function createPayment(payload) {
   const body = {
-    table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
+    table_session_token: payload.table_session_token || getStoredTableSessionToken(),
     order_id: payload.order_id || null,
     amount: payload.amount,
     split_count: payload.split_count || 1,
@@ -346,7 +363,7 @@ export async function createPayment(payload) {
 
 export async function createStripePaymentIntent(payload) {
   const body = {
-    table_session_token: payload.table_session_token || localStorage.getItem('mv_table_session_token'),
+    table_session_token: payload.table_session_token || getStoredTableSessionToken(),
     amount: payload.amount,
     split_count: payload.split_count || 1,
     split_detail: payload.split_detail || null,
@@ -367,7 +384,7 @@ export async function createStaffRequest({ restaurantId, tableId, tableSessionTo
   const { data, error } = await supabase.rpc('create_staff_request_secure', {
     p_restaurant_id: requireRestaurantId(restaurantId),
     p_table_id: tableId,
-    p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+    p_table_session_token: tableSessionToken || getStoredTableSessionToken(),
     p_request_type: requestType,
     p_message: message,
   });
@@ -397,7 +414,7 @@ export async function submitOrderFeedback({
 }) {
   const extendedPayload = {
     p_order_id: orderId,
-    p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+    p_table_session_token: tableSessionToken || getStoredTableSessionToken(),
     p_rating: rating,
     p_comment: comment,
     p_food_rating: foodRating,
@@ -432,7 +449,7 @@ export async function saveGuestContact({
 }) {
   const { data, error } = await supabase.rpc('upsert_guest_contact_secure', {
     p_restaurant_id: requireRestaurantId(restaurantId),
-    p_table_session_token: tableSessionToken || localStorage.getItem('mv_table_session_token'),
+    p_table_session_token: tableSessionToken || getStoredTableSessionToken(),
     p_name: name,
     p_phone: phone,
     p_email: email,
@@ -463,7 +480,7 @@ export async function resolveOrCreateGuestProfile({
 }
 
 export async function getGuestProfileForSession(tableSessionToken) {
-  const token = tableSessionToken || localStorage.getItem('mv_table_session_token');
+  const token = tableSessionToken || getStoredTableSessionToken();
   if (!token) return null;
   const { data, error } = await supabase.rpc('get_guest_profile_for_session', {
     p_session_token: token,
@@ -655,12 +672,23 @@ export async function adminRetryIntegrationJob(jobId, restaurantId) {
     });
     if (retryError) throw new Error(retryError.message);
   }
+  if (job.job_type === 'social_publish') {
+    const { error: retryError } = await supabase.functions.invoke('publish-social-post', {
+      body: {
+        ...(job.payload || {}),
+        restaurant_id: restaurantId,
+        channel_type: job.provider,
+        job_id: job.id,
+      },
+    });
+    if (retryError) throw new Error(retryError.message);
+  }
 
   return data;
 }
 
 export async function fetchSessionBill(tableSessionToken) {
-  const token = tableSessionToken || localStorage.getItem('mv_table_session_token');
+  const token = tableSessionToken || getStoredTableSessionToken();
   if (!token) return null;
   const { data, error } = await supabase.rpc('get_session_bill_secure', {
     p_table_session_token: token,
@@ -699,6 +727,16 @@ export async function adminUpdatePosSettings(restaurantId, payload) {
 export async function adminTestPosConnection(restaurantId) {
   requireRestaurantId(restaurantId);
   return invokeIntegrationSettings({ action: 'test_pos', restaurant_id: restaurantId });
+}
+
+export async function adminSyncPosCatalog(restaurantId) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.functions.invoke('sync-pos-catalog', {
+    body: { restaurant_id: restaurantId },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
 export async function adminUpdateIntegrationChannel(restaurantId, payload) {
@@ -802,6 +840,7 @@ export async function adminCreateCampaign(restaurantId, payload) {
       restaurant_id: restaurantId,
       name: payload.name,
       channel: payload.channel,
+      from_email: payload.from_email || null,
       subject: payload.subject || null,
       message_body: payload.message_body,
       audience_filter: payload.audience_filter || {},
@@ -820,6 +859,16 @@ export async function adminSendCampaign(campaignId) {
     body: { campaign_id: campaignId },
   });
   if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminPublishSocialPost(restaurantId, payload) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.functions.invoke('publish-social-post', {
+    body: { restaurant_id: restaurantId, ...payload },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
   return data;
 }
 
@@ -846,6 +895,13 @@ export async function adminFetchCampaignAnalytics(restaurantId, campaignId) {
     .select('status, channel')
     .eq('campaign_id', campaignId);
   if (error) throw new Error(error.message);
+  const { data: attributedOrders, error: attributedOrdersError } = await supabase
+    .from('Order')
+    .select('id, status, total_amount')
+    .eq('restaurant_id', restaurantId)
+    .eq('source_campaign_id', campaignId)
+    .neq('status', 'cancelled');
+  if (attributedOrdersError) throw new Error(attributedOrdersError.message);
 
   const totals = {
     sent: 0,
@@ -854,6 +910,10 @@ export async function adminFetchCampaignAnalytics(restaurantId, campaignId) {
     clicked: 0,
     bounced: 0,
     failed: 0,
+    conversions: attributedOrders?.length || 0,
+    attributed_revenue: (attributedOrders || [])
+      .filter(order => ['served', 'completed'].includes(order.status))
+      .reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
   };
   (data || []).forEach(send => {
     const status = send.status || 'sent';

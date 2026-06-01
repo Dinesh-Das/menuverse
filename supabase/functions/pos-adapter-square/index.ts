@@ -2,6 +2,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 import { loadIntegrationConfig } from '../_shared/integration-config.ts';
+import { hasValidInternalSecret } from '../_shared/internal-auth.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -54,9 +55,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return preflightResponse(req);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
-  const providedSecret = req.headers.get('X-Menuverse-Internal-Secret');
-  if (!internalSecret || providedSecret !== internalSecret) {
+  if (!hasValidInternalSecret(req, Deno.env.get('MENUVERSE_INTERNAL_SECRET'))) {
     return json({ error: 'Forbidden' }, 403);
   }
 

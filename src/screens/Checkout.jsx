@@ -57,6 +57,8 @@ export default function Checkout() {
     paymentEnabled,
     paymentProvider,
     currency,
+    orderType,
+    setOrderType,
   } = useCart();
   const { isDark, toggleTheme } = useTheme();
   const { addToast } = useToast();
@@ -81,7 +83,7 @@ export default function Checkout() {
   const [billRequested, setBillRequested] = useState(false);
   const [billRequesting, setBillRequesting] = useState(false);
   const [restaurant, setRestaurant] = useState(null);
-  const [orderType, setOrderType] = useState('dine_in');
+  const [checkoutPhase, setCheckoutPhase] = useState(null);
   const [deliveryAddress, setDeliveryAddress] = useState({
     street: localStorage.getItem('mv_delivery_address') || '',
     city: '',
@@ -154,6 +156,20 @@ export default function Checkout() {
   );
   const deliveryAddressComplete = ['street', 'city', 'pincode'].every(key => deliveryAddress[key].trim());
   const canPlaceWithoutTable = orderType === 'takeaway' || orderType === 'delivery';
+  const orderTypeOptions = [
+    { id: 'dine_in', label: 'Dine In', icon: 'table_restaurant' },
+    { id: 'takeaway', label: 'Takeaway', icon: 'takeout_dining', enabled: restaurant?.takeaway_enabled !== false },
+    { id: 'delivery', label: 'Delivery', icon: 'local_shipping', enabled: restaurant?.delivery_enabled !== false },
+  ].filter(option => option.enabled !== false);
+
+  React.useEffect(() => {
+    if (
+      (orderType === 'takeaway' && restaurant?.takeaway_enabled === false)
+      || (orderType === 'delivery' && restaurant?.delivery_enabled === false)
+    ) {
+      setOrderType('dine_in');
+    }
+  }, [orderType, restaurant?.delivery_enabled, restaurant?.takeaway_enabled, setOrderType]);
 
   React.useEffect(() => {
     if (pointsToRedeem > maxRedeemablePoints) setPointsToRedeem(maxRedeemablePoints);
@@ -316,6 +332,7 @@ export default function Checkout() {
     }
 
     setLoading(true);
+    setCheckoutPhase('sending');
     setError(null);
 
     try {
@@ -345,6 +362,7 @@ export default function Checkout() {
       };
 
       const result = await placeOrder(payload);
+      setCheckoutPhase('confirmed');
       const hasContact = guestName.trim() || guestPhone.trim() || guestEmail.trim();
       if (hasContact && !localStorage.getItem('mv_contact_saved')) {
         saveGuestContact({
@@ -379,6 +397,7 @@ export default function Checkout() {
       }, 2500);
       return result;
     } catch (err) {
+      setCheckoutPhase(null);
       setError(err.message);
       addToast(`Failed to place order: ${err.message}`, 'error');
       throw err;
@@ -397,6 +416,7 @@ export default function Checkout() {
       const ready = walletPayReadyRef.current;
       if (!ready) throw new Error('Wallet payment is not ready yet.');
       const orderResult = await handleCheckoutRef.current({ skipCelebration: true });
+      setCheckoutPhase('payment');
       const paymentIntent = await createStripePaymentIntent({
         table_session_token: tableSessionToken,
         amount: amountForPayment,
@@ -409,11 +429,13 @@ export default function Checkout() {
       if (result.error) throw result.error;
 
       ev.complete('success');
+      setCheckoutPhase('confirmed');
       addToast('Payment submitted. We will update your order after verification.', 'success');
       const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
       navigate(`${basePath}/order/${orderResult.order_ref}`);
     } catch (err) {
       ev.complete('fail');
+      setCheckoutPhase(null);
       const message = humanizePaymentFailure(err, 'Stripe');
       setError(message);
       addToast(message, 'error');
@@ -485,6 +507,7 @@ export default function Checkout() {
     if (!paymentEnabled || share.total <= 0) return;
     try {
       const orderResult = await handleCheckoutRef.current({ skipCelebration: true });
+      setCheckoutPhase('payment');
       const splitDetail = {
         mode: 'byItem',
         person: share.person,
@@ -503,10 +526,14 @@ export default function Checkout() {
           clientSecret: paymentIntent.client_secret,
           publishableKey: paymentIntent.publishable_key,
           onSuccess: () => {
+            setCheckoutPhase('confirmed');
             const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
             navigate(`${basePath}/order/${orderResult.order_ref}`);
           },
-          onDismiss: () => setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Stripe')),
+          onDismiss: () => {
+            setCheckoutPhase(null);
+            setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Stripe'));
+          },
         });
         return;
       }
@@ -523,12 +550,17 @@ export default function Checkout() {
         restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
         tableNumber,
         onSuccess: () => {
+          setCheckoutPhase('confirmed');
           const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
           navigate(`${basePath}/order/${orderResult.order_ref}`);
         },
-        onDismiss: () => setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Razorpay')),
+        onDismiss: () => {
+          setCheckoutPhase(null);
+          setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Razorpay'));
+        },
       });
     } catch (err) {
+      setCheckoutPhase(null);
       const message = humanizePaymentFailure(err, paymentProvider === 'stripe' ? 'Stripe' : 'Razorpay');
       setError(message);
       addToast(message, 'error');
@@ -589,11 +621,7 @@ export default function Checkout() {
               <div className="mb-8 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
                 <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-4">Order Type</h3>
                 <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'dine_in', label: 'Dine In', icon: 'table_restaurant' },
-                    { id: 'takeaway', label: 'Takeaway', icon: 'takeout_dining' },
-                    { id: 'delivery', label: 'Delivery', icon: 'local_shipping' },
-                  ].map(option => (
+                  {orderTypeOptions.map(option => (
                     <button
                       key={option.id}
                       type="button"
@@ -792,26 +820,6 @@ export default function Checkout() {
               <div className="bg-surface-container-low p-6 md:p-8 rounded-2xl border border-outline-variant/10 mb-8 shadow-sm">
                 <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant mb-5 md:mb-6">Order Summary</h3>
                 <div className="space-y-3 md:space-y-4 mb-4 md:mb-6">
-                  <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
-                    <span>Subtotal</span>
-                    <span className="font-headline font-bold text-on-surface">₹{subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
-                    <span>GST ({gstPct}%)</span>
-                    <span className="font-headline font-bold text-on-surface">₹{tax.toFixed(2)}</span>
-                  </div>
-                  {pointsToRedeem > 0 && (
-                    <div className="flex justify-between text-sm md:text-base text-green-500">
-                      <span>Loyalty discount</span>
-                      <span className="font-headline font-bold">-₹{loyaltyDiscount.toFixed(2)}</span>
-                    </div>
-                  )}
-                  {orderType === 'delivery' && (
-                    <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
-                      <span>Delivery fee</span>
-                      <span className="font-headline font-bold text-on-surface">&#8377;{deliveryFee.toFixed(2)}</span>
-                    </div>
-                  )}
                   {loyaltyPoints > 0 && (
                     <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
                       <div className="flex items-start gap-3">
@@ -837,6 +845,26 @@ export default function Checkout() {
                           </button>
                         </div>
                       </div>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
+                    <span>Subtotal</span>
+                    <span className="font-headline font-bold text-on-surface">₹{subtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
+                    <span>GST ({gstPct}%)</span>
+                    <span className="font-headline font-bold text-on-surface">₹{tax.toFixed(2)}</span>
+                  </div>
+                  {pointsToRedeem > 0 && (
+                    <div className="flex justify-between text-sm md:text-base text-green-500">
+                      <span>Loyalty discount</span>
+                      <span className="font-headline font-bold">-₹{loyaltyDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {orderType === 'delivery' && (
+                    <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
+                      <span>Delivery fee</span>
+                      <span className="font-headline font-bold text-on-surface">&#8377;{deliveryFee.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
@@ -997,7 +1025,7 @@ export default function Checkout() {
                 disabled={loading || (!canPlaceWithoutTable && !tableId)}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >
-                {loading ? 'Placing Order...' : `Place Order · ₹${checkoutTotal.toFixed(2)}`}
+                {loading ? 'Sending your order...' : `${paymentEnabled ? 'Confirm Order' : 'Place Order'} · ₹${checkoutTotal.toFixed(2)}`}
                 <span className="material-symbols-outlined text-lg ml-1">arrow_forward</span>
               </button>
               <div className="flex items-center justify-center gap-3 text-on-surface-variant/40 mt-2 mb-8">
@@ -1027,6 +1055,18 @@ export default function Checkout() {
           </div>
         )}
       </main>
+
+      {checkoutPhase && checkoutPhase !== 'confirmed' && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-background/70 px-6 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-outline-variant/20 bg-surface-container-low p-6 text-center shadow-luxury">
+            <span className="material-symbols-outlined animate-spin text-4xl text-primary">progress_activity</span>
+            <p className="mt-4 font-headline text-xl font-bold text-on-surface">
+              {checkoutPhase === 'payment' ? 'Securing payment...' : 'Sending your order...'}
+            </p>
+            <p className="mt-2 text-sm text-on-surface-variant">Please keep this page open for a moment.</p>
+          </div>
+        </div>
+      )}
 
       {/* Celebration Overlay */}
       {celebration && (

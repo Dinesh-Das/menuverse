@@ -22,6 +22,9 @@ verify_jwt = false
 [functions.sync-menu-to-channel]
 verify_jwt = false
 
+[functions.publish-social-post]
+verify_jwt = false
+
 [functions.create-payment-order]
 verify_jwt = false
 
@@ -50,6 +53,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.sync-to-pos]
+verify_jwt = false
+
+[functions.sync-pos-catalog]
 verify_jwt = false
 
 [functions.verify-payment-webhook]

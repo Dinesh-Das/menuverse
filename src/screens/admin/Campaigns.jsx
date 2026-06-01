@@ -9,6 +9,7 @@ import {
   adminEstimateCampaignRecipients,
   adminFetchCampaignAnalytics,
   adminFetchCampaigns,
+  adminPublishSocialPost,
   adminSendCampaign,
 } from '../../lib/api';
 
@@ -32,6 +33,8 @@ export default function Campaigns() {
   const [saving, setSaving] = useState(false);
   const [expandedCampaignId, setExpandedCampaignId] = useState(null);
   const [analyticsByCampaign, setAnalyticsByCampaign] = useState({});
+  const [socialPost, setSocialPost] = useState({ channel_type: 'instagram', message: '', image_url: '', ordering_link: '' });
+  const [socialPublishing, setSocialPublishing] = useState(false);
 
   const audienceFilter = React.useMemo(() => ({
     min_visits: Number(form.min_visits || 0),
@@ -76,6 +79,7 @@ export default function Campaigns() {
       const campaign = await adminCreateCampaign(user.restaurantId, {
         name: form.name.trim(),
         channel: form.channel,
+        from_email: form.from_email.trim(),
         subject: form.subject.trim(),
         message_body: form.message_body.trim(),
         audience_filter: audienceFilter,
@@ -105,6 +109,22 @@ export default function Campaigns() {
   };
 
   const rate = (value, total) => total > 0 ? `${Math.round((value / total) * 100)}%` : '-';
+  const publishSocialPost = async () => {
+    if (!socialPost.message.trim()) {
+      addToast('Social post message is required.', 'error');
+      return;
+    }
+    setSocialPublishing(true);
+    try {
+      await adminPublishSocialPost(user.restaurantId, socialPost);
+      setSocialPost(current => ({ ...current, message: '', image_url: '', ordering_link: '' }));
+      addToast('Social post delivered to the configured publishing bridge.', 'success');
+    } catch (err) {
+      addToast(`Social publish failed: ${err.message}`, 'error');
+    } finally {
+      setSocialPublishing(false);
+    }
+  };
 
   return (
     <AdminLayout>
@@ -117,6 +137,23 @@ export default function Campaigns() {
             className="px-5 py-3 rounded-xl bg-primary text-on-primary text-xs font-bold uppercase tracking-widest"
           >
             New Campaign
+          </button>
+        </div>
+
+        <div className="mb-8 bg-surface-container-low border border-outline-variant/10 rounded-[2rem] p-8">
+          <h2 className="font-headline text-xl font-bold text-on-surface">Publish Social Post</h2>
+          <p className="mt-1 text-sm text-on-surface-variant">Send a post through the Instagram or Facebook publishing bridge configured in Settings.</p>
+          <div className="mt-4 grid md:grid-cols-2 gap-4">
+            <select value={socialPost.channel_type} onChange={e => setSocialPost(current => ({ ...current, channel_type: e.target.value }))} className="rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary">
+              <option value="instagram">Instagram</option>
+              <option value="facebook">Facebook</option>
+            </select>
+            <input value={socialPost.ordering_link} onChange={e => setSocialPost(current => ({ ...current, ordering_link: e.target.value }))} className="rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary" placeholder="Optional ordering link" />
+            <input value={socialPost.image_url} onChange={e => setSocialPost(current => ({ ...current, image_url: e.target.value }))} className="rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary md:col-span-2" placeholder="Optional image URL" />
+            <textarea value={socialPost.message} onChange={e => setSocialPost(current => ({ ...current, message: e.target.value }))} className="rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary md:col-span-2 min-h-24" placeholder="Post message" />
+          </div>
+          <button onClick={publishSocialPost} disabled={socialPublishing} className="mt-4 px-5 py-3 rounded-xl bg-primary text-on-primary text-xs font-bold uppercase tracking-widest disabled:opacity-50">
+            {socialPublishing ? 'Publishing...' : 'Publish Post'}
           </button>
         </div>
 
@@ -266,12 +303,14 @@ export default function Campaigns() {
                             <div className="text-sm text-on-surface-variant">Analytics: -</div>
                           ) : (
                             <div className="grid md:grid-cols-[1fr_220px] gap-5 items-center">
-                              <div className="grid grid-cols-4 gap-3">
+                              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
                                 {[
                                   ['Sent', analytics.sent, ''],
                                   ['Delivered', analytics.delivered, rate(analytics.delivered, analytics.sent)],
                                   ['Opened', analytics.opened, rate(analytics.opened, analytics.sent)],
                                   ['Clicked', analytics.clicked, rate(analytics.clicked, analytics.sent)],
+                                  ['Conversions', analytics.conversions, rate(analytics.conversions, analytics.sent)],
+                                  ['Revenue', `₹${Number(analytics.attributed_revenue || 0).toFixed(2)}`, 'served orders'],
                                 ].map(([label, value, suffix]) => (
                                   <div key={label} className="rounded-xl bg-surface-container-low border border-outline-variant/10 p-3">
                                     <p className="text-[9px] uppercase tracking-widest text-on-surface-variant">{label}</p>

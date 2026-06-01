@@ -8,6 +8,7 @@ import CallWaiterFAB from '../components/CallWaiterFAB';
 import { safeParseModifiers } from '../lib/businessRules';
 import { sendWhatsAppNotification } from '../lib/integrations';
 import { downloadOrderReceipt } from '../lib/receipt';
+import { getStoredTableSessionToken } from '../lib/tableSessionStorage';
 
 const STATUS_STEPS = ['pending', 'accepted', 'preparing', 'ready', 'served'];
 const STATUS_LABELS = {
@@ -87,7 +88,7 @@ export default function OrderStatus() {
   }, [order]);
 
   useEffect(() => {
-    const token = localStorage.getItem('mv_table_session_token');
+    const token = getStoredTableSessionToken();
     if (!token) return;
     getGuestProfileForSession(token)
       .then(profile => setGuestPhone(profile?.phone || ''))
@@ -102,7 +103,7 @@ export default function OrderStatus() {
     feedbackNudgeSentRef.current = true;
 
     Promise.resolve().then(async () => {
-      const token = localStorage.getItem('mv_table_session_token');
+      const token = getStoredTableSessionToken();
       const profile = guestPhone
         ? { phone: guestPhone }
         : token
@@ -125,6 +126,12 @@ export default function OrderStatus() {
     }).catch(err => console.warn('[Menuverse] Feedback WhatsApp nudge skipped:', err.message));
   }, [feedbackGiven, guestPhone]);
 
+  useEffect(() => {
+    if (!feedbackGiven && ['served', 'completed'].includes(order?.status)) {
+      triggerServedFeedbackNudge(order);
+    }
+  }, [feedbackGiven, order, triggerServedFeedbackNudge]);
+
   // Supabase Realtime updates via socket.js, with token-based refresh as a fallback.
   useEffect(() => {
     if (!orderId) return;
@@ -141,10 +148,6 @@ export default function OrderStatus() {
 
     const handleStatusUpdate = ({ orderId: id, status }) => {
       if (id === orderId) {
-        const previousOrder = orderRef.current;
-        if (status === 'served' && previousOrder?.status !== 'served') {
-          triggerServedFeedbackNudge(previousOrder);
-        }
         setOrder(prev => prev ? { ...prev, status } : prev);
         setSocketConnected(true);
         loadOrder();
@@ -152,10 +155,6 @@ export default function OrderStatus() {
     };
     const handleOrderUpdated = (updatedOrder) => {
       if (updatedOrder?.id !== orderId) return;
-      const previousOrder = orderRef.current;
-      if (updatedOrder.status === 'served' && previousOrder?.status !== 'served') {
-        triggerServedFeedbackNudge(updatedOrder);
-      }
       setOrder(prev => prev ? { ...prev, ...updatedOrder } : updatedOrder);
     };
     const handleConnect = () => setSocketConnected(true);
@@ -198,7 +197,7 @@ export default function OrderStatus() {
     try {
       await submitOrderFeedback({
         orderId: order.id,
-        tableSessionToken: localStorage.getItem('mv_table_session_token'),
+        tableSessionToken: getStoredTableSessionToken(),
         rating: ratingOverride,
         comment: feedbackComment.trim(),
         foodRating: foodRating || null,
@@ -243,7 +242,7 @@ export default function OrderStatus() {
     try {
       await saveGuestContact({
         restaurantId: order.restaurant_id,
-        tableSessionToken: localStorage.getItem('mv_table_session_token'),
+        tableSessionToken: getStoredTableSessionToken(),
         name: receiptName,
         phone: receiptPhone,
         email: receiptEmail,
