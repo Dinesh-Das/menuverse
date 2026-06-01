@@ -36,7 +36,7 @@ export default function MenuInventory() {
   // Modal State
   const [editingItem, setEditingItem] = useState(null); // null = closed, {} = new, {id...} = existing
   const [formData, setFormData] = useState({
-    name: '', description: '', price: '', category_id: '', image_url: '', dietary_flag: 'none', available: true, pos_catalog_variation_id: '', modifiers: []
+    name: '', description: '', price: '', category_id: '', image_url: '', dietary_flag: 'none', available: true, pos_catalog_variation_id: '', petpooja_item_id: '', modifiers: []
   });
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -63,7 +63,7 @@ export default function MenuInventory() {
   }, [loadData]);
 
   const openNewModal = () => {
-    setFormData({ name: '', description: '', price: '', category_id: categories[0]?.id || '', image_url: '', dietary_flag: 'none', available: true, pos_catalog_variation_id: '', modifiers: [] });
+    setFormData({ name: '', description: '', price: '', category_id: categories[0]?.id || '', image_url: '', dietary_flag: 'none', available: true, pos_catalog_variation_id: '', petpooja_item_id: '', modifiers: [] });
     setEditingItem({});
   };
 
@@ -77,6 +77,7 @@ export default function MenuInventory() {
       dietary_flag: item.dietary_flag || 'none',
       available: item.available,
       pos_catalog_variation_id: item.pos_catalog_variation_id || '',
+      petpooja_item_id: item.petpooja_item_id || '',
       modifiers: item.modifier_groups || []
     });
     setEditingItem(item);
@@ -96,7 +97,8 @@ export default function MenuInventory() {
         available: formData.available,
         price: parseFloat(formData.price),
         dietary_flag: formData.dietary_flag === 'none' ? null : formData.dietary_flag,
-        pos_catalog_variation_id: formData.pos_catalog_variation_id.trim() || null
+        pos_catalog_variation_id: formData.pos_catalog_variation_id.trim() || null,
+        petpooja_item_id: formData.petpooja_item_id.trim() || null
       };
       
       if (editingItem.id) {
@@ -316,6 +318,11 @@ export default function MenuInventory() {
                   <div className="col-span-2">
                     <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Square Variation ID</label>
                     <input type="text" value={formData.pos_catalog_variation_id} onChange={e => setFormData({...formData, pos_catalog_variation_id: e.target.value})} className="w-full bg-surface-container border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary" placeholder="Optional Square catalog variation ID for availability sync" />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Petpooja Item ID</label>
+                    <input type="text" value={formData.petpooja_item_id} onChange={e => setFormData({...formData, petpooja_item_id: e.target.value})} className="w-full bg-surface-container border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary" placeholder="Optional Petpooja item ID for availability sync" />
                   </div>
 
                   <div className="col-span-2">

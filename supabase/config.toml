@@ -58,6 +58,18 @@ verify_jwt = false
 [functions.sync-pos-catalog]
 verify_jwt = false
 
+[functions.square-oauth-start]
+verify_jwt = false
+
+[functions.square-oauth-callback]
+verify_jwt = false
+
+[functions.refresh-square-tokens]
+verify_jwt = false
+
+[functions.sync-petpooja-availability]
+verify_jwt = false
+
 [functions.verify-payment-webhook]
 verify_jwt = false
 

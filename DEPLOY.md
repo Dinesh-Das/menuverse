@@ -57,6 +57,13 @@ SQUARE_ACCESS_TOKEN=server-only-fallback
 SQUARE_LOCATION_ID=square-location-id
 SQUARE_ENVIRONMENT=sandbox
 SQUARE_VERSION=2026-05-20
+SQUARE_APP_ID=square-application-id
+SQUARE_APP_SECRET=server-only-square-application-secret
+APP_URL=https://your-menuverse-domain.com
+PETPOOJA_API_KEY=server-only-fallback
+PETPOOJA_APP_KEY=server-only-fallback
+PETPOOJA_RESTAURANT_ID=restaurant-id-fallback
+PETPOOJA_WEBHOOK_URL=https://mapi.petpooja.com
 SHIPROCKET_API_TOKEN=server-only
 SHIPROCKET_PICKUP_POSTCODE=110030
 WHATSAPP_VERIFY_TOKEN=shared-webhook-verify-token
@@ -161,12 +168,18 @@ supabase functions deploy pos-status-webhook
 supabase functions deploy process-sentiment-queue
 supabase functions deploy process-ar-asset
 supabase functions deploy process-ar-video
+supabase functions deploy publish-social-post
 supabase functions deploy replicate-webhook
+supabase functions deploy refresh-square-tokens
 supabase functions deploy request-kitchen-print
 supabase functions deploy send-campaign
 supabase functions deploy send-whatsapp-notification
 supabase functions deploy sync-to-pos
 supabase functions deploy sync-menu-to-channel
+supabase functions deploy sync-pos-catalog
+supabase functions deploy sync-petpooja-availability
+supabase functions deploy square-oauth-start
+supabase functions deploy square-oauth-callback
 supabase functions deploy translate-menu-item
 supabase functions deploy verify-payment-webhook
 supabase functions deploy verify-stripe-webhook
@@ -210,6 +223,14 @@ POST /functions/v1/sync-menu-to-channel
 ```
 
 `aggregator-order-webhook` supports `swiggy`, `zomato`, `ubereats`, `doordash`, `google_food`, and `custom` normalized signed payloads. Failed deliveries and rejected callbacks create `IntegrationJob` or `AdminAlert` records visible to operators.
+
+Square OAuth requires `SQUARE_APP_ID`, `SQUARE_APP_SECRET`, and `APP_URL`. Add this redirect URL in the Square developer dashboard:
+
+```text
+https://your-project.supabase.co/functions/v1/square-oauth-callback
+```
+
+Scheduled Square token refresh, Square catalog polling, and Petpooja availability polling also require the protected database settings under **Post-Deploy Configuration**.
 
 ## Troubleshooting
 

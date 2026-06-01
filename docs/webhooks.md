@@ -96,15 +96,28 @@ For operator-authored Instagram and Facebook posts, configure a **Social publish
 
 ```json
 {
+  "job_id": "<IntegrationJob.id>",
   "restaurant_id": "<id>",
   "channel": "instagram",
   "message": "Tonight's special",
   "image_url": "https://...",
-  "ordering_link": "https://..."
+  "ordering_link": "https://...",
+  "requested_at": "2026-06-01T12:00:00.000Z"
 }
 ```
 
-The bridge is responsible for the provider-specific Meta publishing flow. Menuverse records the request as an `IntegrationJob`.
+The bridge endpoint must return an HTTP 2xx response. Menuverse treats any non-2xx response as a failed `IntegrationJob` and surfaces it under **Settings > Integrations**.
+
+### Make or Zapier bridge
+
+1. Create a webhook-triggered workflow and paste its URL into **Settings > Integrations > Social publishing bridge endpoint**.
+2. Add an Instagram or Facebook publishing action.
+3. Map `message`, `image_url`, and `ordering_link` from the webhook body.
+4. Activate the workflow and publish a test campaign.
+
+### Self-hosted bridge
+
+Accept the JSON body above, publish through Meta's provider-specific flow, and return `{"ok": true}` with status `200`. Keep Meta page tokens on the bridge server rather than in browser code.
 
 ## Email delivery bridge
 

@@ -19,6 +19,7 @@ import { useToast } from '../components/Toast';
 import { sortRecommendedItems } from '../lib/recommendations';
 import { supabase } from '../lib/supabase';
 import { createStripePaymentRequest, humanizePaymentFailure, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
+import QRCode from 'qrcode';
 
 function buildCartSplitItems(items) {
   return items.map((item, index) => {
@@ -95,6 +96,9 @@ export default function Checkout() {
   const [deliveryQuote, setDeliveryQuote] = useState(null);
   const [deliveryQuoteLoading, setDeliveryQuoteLoading] = useState(false);
   const [walletPayReady, setWalletPayReady] = useState(null);
+  const [razorpayOrder, setRazorpayOrder] = useState(null);
+  const [pendingOrderResult, setPendingOrderResult] = useState(null);
+  const [upiQR, setUpiQR] = useState(null);
   const walletButtonRef = React.useRef(null);
   const walletElementRef = React.useRef(null);
   const walletPayReadyRef = React.useRef(null);
@@ -149,6 +153,36 @@ export default function Checkout() {
     ? Number(deliveryQuote?.fee ?? restaurant?.delivery_fee_flat ?? 0)
     : 0;
   const checkoutTotal = Math.max(0, total - loyaltyDiscount + deliveryFee);
+  const upiString = React.useMemo(() => {
+    if (!razorpayOrder?.razorpay_order_id || !restaurant?.upi_vpa) return '';
+    return [
+      'upi://pay',
+      `?pa=${encodeURIComponent(restaurant.upi_vpa)}`,
+      `&pn=${encodeURIComponent(restaurant.name || 'Menuverse')}`,
+      `&am=${Number(razorpayOrder.share_amount || checkoutTotal).toFixed(2)}`,
+      '&cu=INR',
+      `&tn=${encodeURIComponent(`Menuverse order ${razorpayOrder.razorpay_order_id.slice(-6)}`)}`,
+    ].join('');
+  }, [checkoutTotal, razorpayOrder, restaurant?.name, restaurant?.upi_vpa]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!upiString) {
+      setUpiQR(null);
+      return undefined;
+    }
+    QRCode.toDataURL(upiString, { width: 240, margin: 1 })
+      .then(dataUrl => {
+        if (!cancelled) setUpiQR(dataUrl);
+      })
+      .catch(error => {
+        console.warn('[Menuverse] UPI QR generation failed:', error.message);
+        if (!cancelled) setUpiQR(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [upiString]);
   const cartSplitItems = React.useMemo(() => buildCartSplitItems(allItems), [allItems]);
   const itemSplitShares = React.useMemo(
     () => calculateCartSplitShares(cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount),
@@ -562,6 +596,49 @@ export default function Checkout() {
     } catch (err) {
       setCheckoutPhase(null);
       const message = humanizePaymentFailure(err, paymentProvider === 'stripe' ? 'Stripe' : 'Razorpay');
+      setError(message);
+      addToast(message, 'error');
+    }
+  };
+
+  const navigateToPendingOrder = React.useCallback(() => {
+    if (!pendingOrderResult?.order_ref) return;
+    const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+    navigate(`${basePath}/order/${pendingOrderResult.order_ref}`);
+  }, [navigate, pendingOrderResult?.order_ref, restaurantSlug]);
+
+  const openPreparedRazorpayCheckout = async () => {
+    if (!razorpayOrder) return;
+    await openRazorpayCheckout({
+      paymentOrder: razorpayOrder,
+      restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+      tableNumber,
+      onSuccess: navigateToPendingOrder,
+      onDismiss: () => setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Razorpay')),
+    });
+  };
+
+  const handlePrimaryCheckout = async () => {
+    if (!paymentEnabled || paymentProvider !== 'razorpay' || !tableSessionToken) {
+      await handleCheckout();
+      return;
+    }
+
+    try {
+      const amount = checkoutTotal;
+      const orderResult = await handleCheckout({ skipCelebration: true });
+      setCheckoutPhase('payment');
+      const paymentOrder = await createPayment({
+        table_session_token: tableSessionToken,
+        amount,
+        split_count: splitCount,
+      });
+      setPendingOrderResult(orderResult);
+      setRazorpayOrder({ ...paymentOrder, share_amount: paymentOrder.share_amount || amount });
+      setCheckoutPhase(null);
+    } catch (err) {
+      setCheckoutPhase(null);
+      const message = humanizePaymentFailure(err, 'Razorpay');
       setError(message);
       addToast(message, 'error');
     }
@@ -1021,7 +1098,7 @@ export default function Checkout() {
                 <div id="payment-request-button" ref={walletButtonRef} className="mb-3" />
               )}
               <button
-                onClick={() => handleCheckout().catch(() => {})}
+                onClick={() => handlePrimaryCheckout().catch(() => {})}
                 disabled={loading || (!canPlaceWithoutTable && !tableId)}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >
@@ -1064,6 +1141,44 @@ export default function Checkout() {
               {checkoutPhase === 'payment' ? 'Securing payment...' : 'Sending your order...'}
             </p>
             <p className="mt-2 text-sm text-on-surface-variant">Please keep this page open for a moment.</p>
+          </div>
+        </div>
+      )}
+
+      {razorpayOrder && pendingOrderResult && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center overflow-y-auto bg-background/80 px-6 py-8 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-outline-variant/20 bg-surface-container-low p-6 text-center shadow-luxury">
+            <h2 className="font-headline text-2xl font-bold text-on-surface">Choose how to pay</h2>
+            <p className="mt-2 text-sm text-on-surface-variant">
+              Razorpay checkout is verified automatically. Direct UPI QR transfers are verified by restaurant staff.
+            </p>
+            {upiQR ? (
+              <div className="mt-5 flex flex-col items-center gap-2 rounded-xl bg-surface-container p-4">
+                <p className="text-sm font-bold text-on-surface">Scan with any UPI app</p>
+                <img src={upiQR} alt="UPI QR code" className="h-52 w-52 rounded-lg bg-white p-2" />
+                <p className="text-xs text-on-surface-variant">
+                  &#8377;{Number(razorpayOrder.share_amount || checkoutTotal).toFixed(2)} - {restaurant?.name}
+                </p>
+              </div>
+            ) : (
+              <p className="mt-5 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-500">
+                Direct UPI QR is not enabled for this restaurant.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => openPreparedRazorpayCheckout().catch(err => setError(humanizePaymentFailure(err, 'Razorpay')))}
+              className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-primary"
+            >
+              Pay via Razorpay checkout
+            </button>
+            <button
+              type="button"
+              onClick={navigateToPendingOrder}
+              className="mt-3 w-full rounded-xl border border-outline-variant/20 px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-surface-variant"
+            >
+              Continue to order status
+            </button>
           </div>
         </div>
       )}

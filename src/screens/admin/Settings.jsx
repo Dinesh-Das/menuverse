@@ -7,6 +7,7 @@ import {
   adminRemoveStaffMember,
   adminRetryIntegrationJob,
   adminSyncPosCatalog,
+  adminStartSquareOAuth,
   adminTestPosConnection,
   adminUpdateIntegrationChannel,
   adminUpdatePosSettings,
@@ -18,6 +19,12 @@ import { useToast } from '../../components/Toast';
 import { INTEGRATION_READINESS } from '../../lib/integrations';
 
 const TABS = ['Brand', 'Operations', 'Integrations', 'Team'];
+const SERVICE_MODES = [
+  { value: 'dine_only', label: 'Dine-in only', takeaway: false, delivery: false },
+  { value: 'dine_takeaway', label: 'Dine-in + Takeaway', takeaway: true, delivery: false },
+  { value: 'dine_delivery', label: 'Dine-in + Delivery', takeaway: false, delivery: true },
+  { value: 'dine_both', label: 'Dine-in + Takeaway + Delivery', takeaway: true, delivery: true },
+];
 const CHANNEL_OPTIONS = [
   ['whatsapp', 'WhatsApp', 'chat'],
   ['swiggy', 'Swiggy', 'delivery_dining'],
@@ -43,6 +50,10 @@ function buildInboundWebhookUrl(restaurantId, channelType) {
     ? 'meta-order-webhook'
     : 'aggregator-order-webhook';
   return `${baseUrl}/functions/v1/${functionName}?restaurant_id=${encodeURIComponent(restaurantId)}&channel=${encodeURIComponent(channelType)}`;
+}
+
+function serviceModeFromFlags(takeaway, delivery) {
+  return SERVICE_MODES.find(mode => mode.takeaway === Boolean(takeaway) && mode.delivery === Boolean(delivery))?.value || 'dine_only';
 }
 
 async function logoMagicBytesMatch(file) {
@@ -75,6 +86,8 @@ export default function Settings() {
   const [paymentEnabled, setPaymentEnabled] = useState(false);
   const [paymentProvider, setPaymentProvider] = useState('razorpay');
   const [currency, setCurrency] = useState('inr');
+  const [upiVpa, setUpiVpa] = useState('');
+  const [serviceMode, setServiceMode] = useState('dine_only');
 
   // ── Team state ────────────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState([]);
@@ -93,6 +106,7 @@ export default function Settings() {
   const [posSaving, setPosSaving] = useState(false);
   const [posTesting, setPosTesting] = useState(false);
   const [posCatalogSyncing, setPosCatalogSyncing] = useState(false);
+  const [squareOAuthStarting, setSquareOAuthStarting] = useState(false);
   const [channels, setChannels] = useState({});
   const [channelSaving, setChannelSaving] = useState(null);
 
@@ -129,6 +143,8 @@ export default function Settings() {
           setPaymentEnabled(Boolean(data.payment_enabled));
           setPaymentProvider(data.payment_provider || 'razorpay');
           setCurrency(data.currency || 'inr');
+          setUpiVpa(data.upi_vpa || '');
+          setServiceMode(serviceModeFromFlags(data.takeaway_enabled, data.delivery_enabled));
         }
         setLoading(false);
       })
@@ -180,6 +196,7 @@ export default function Settings() {
             availability_sync_enabled: Boolean(channel.config?.availability_sync_enabled),
             restaurant_id: channel.config?.petpooja_restaurant_id || '',
             endpoint: channel.config?.petpooja_webhook_url || channel.config?.webhook_url || '',
+            inventory_url: channel.config?.petpooja_inventory_url || '',
           });
           setPosConfiguredSecrets(channel.configured_secret_keys || []);
           return;
@@ -259,6 +276,7 @@ export default function Settings() {
     try {
       const rate = parseFloat(gstRate);
       const serviceRate = parseFloat(serviceChargeRate);
+      const selectedServiceMode = SERVICE_MODES.find(mode => mode.value === serviceMode) || SERVICE_MODES[0];
       await adminUpdateRestaurant(user.restaurantId, {
         name: restaurantName,
         description,
@@ -270,6 +288,9 @@ export default function Settings() {
         payment_enabled: paymentEnabled,
         payment_provider: paymentProvider,
         currency,
+        upi_vpa: upiVpa.trim() || null,
+        takeaway_enabled: selectedServiceMode.takeaway,
+        delivery_enabled: selectedServiceMode.delivery,
       });
       if (!isNaN(rate) && rate >= 0 && rate <= 30) {
         localStorage.setItem('mv_gst_rate', String(rate / 100));
@@ -366,6 +387,17 @@ export default function Settings() {
       addToast(`Catalog sync failed: ${err.message}`, 'error');
     } finally {
       setPosCatalogSyncing(false);
+    }
+  };
+
+  const handleConnectSquare = async () => {
+    setSquareOAuthStarting(true);
+    try {
+      const authorizeUrl = await adminStartSquareOAuth(user.restaurantId, posSettings.environment || 'production');
+      window.location.assign(authorizeUrl);
+    } catch (err) {
+      addToast(`Square connection failed: ${err.message}`, 'error');
+      setSquareOAuthStarting(false);
     }
   };
 
@@ -596,6 +628,37 @@ export default function Settings() {
               </div>
             )}
 
+            {activeTab === 'Operations' && (
+              <div className={`p-10 mb-8 ${cardBg}`}>
+                <h3 className="font-headline text-xl font-bold mb-2 text-on-surface">Order Types Offered</h3>
+                <p className="text-sm text-on-surface-variant mb-6">
+                  Keep the customer menu focused on the fulfillment modes this restaurant supports.
+                </p>
+                <fieldset className="grid gap-3 md:grid-cols-2">
+                  {SERVICE_MODES.map(mode => (
+                    <label
+                      key={mode.value}
+                      className={`flex cursor-pointer items-center gap-2 rounded-xl border p-4 text-sm ${
+                        serviceMode === mode.value
+                          ? 'border-primary bg-primary/10 font-bold text-primary'
+                          : 'border-outline-variant/20 bg-surface-container text-on-surface'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="serviceMode"
+                        value={mode.value}
+                        checked={serviceMode === mode.value}
+                        onChange={() => setServiceMode(mode.value)}
+                        className="sr-only"
+                      />
+                      {mode.label}
+                    </label>
+                  ))}
+                </fieldset>
+              </div>
+            )}
+
             {/* ── Team Tab ───────────────────────────────────────── */}
             {activeTab === 'Operations' && (
               <div className={`p-10 mb-8 ${cardBg}`}>
@@ -621,7 +684,20 @@ export default function Settings() {
                     <option value="aud">AUD - Australian Dollar</option>
                     <option value="cad">CAD - Canadian Dollar</option>
                   </select>
+                  {paymentProvider === 'razorpay' && (
+                    <input
+                      value={upiVpa}
+                      onChange={e => setUpiVpa(e.target.value)}
+                      placeholder="UPI VPA for direct QR payments, e.g. restaurant@bank"
+                      className={`${inputClass} md:col-span-2`}
+                    />
+                  )}
                 </div>
+                {paymentProvider === 'razorpay' && !upiVpa.trim() && (
+                  <p className="text-xs text-amber-500 mb-4">
+                    Add your UPI VPA to enable direct QR payments at checkout.
+                  </p>
+                )}
                 <p className="text-xs text-on-surface-variant mb-8">
                   {paymentProvider === 'stripe'
                     ? 'Stripe can offer browser-native Apple Pay and Google Pay when the device, browser, domain, and account are eligible.'
@@ -668,6 +744,17 @@ export default function Settings() {
                   </label>
                   {posProvider === 'square' && (
                     <>
+                      <button
+                        type="button"
+                        onClick={handleConnectSquare}
+                        disabled={squareOAuthStarting}
+                        className="md:col-span-2 rounded-xl bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-on-primary disabled:opacity-50"
+                      >
+                        {squareOAuthStarting ? 'Opening Square...' : 'Connect Square Account'}
+                      </button>
+                      <p className="md:col-span-2 text-xs text-on-surface-variant">
+                        OAuth is recommended. The manual token field below remains available for controlled fallback setups.
+                      </p>
                       <input value={posSettings.location_id || ''} onChange={e => updatePosSetting('location_id', e.target.value)} placeholder="Square location ID" className={inputClass} />
                       <select value={posSettings.environment || 'production'} onChange={e => updatePosSetting('environment', e.target.value)} className={inputClass}>
                         <option value="sandbox">Square sandbox</option>
@@ -686,6 +773,7 @@ export default function Settings() {
                     <>
                       <input value={posSettings.restaurant_id || ''} onChange={e => updatePosSetting('restaurant_id', e.target.value)} placeholder="Petpooja restaurant ID" className={inputClass} />
                       <input value={posSettings.endpoint || ''} onChange={e => updatePosSetting('endpoint', e.target.value)} placeholder="Petpooja API endpoint" className={inputClass} />
+                      <input value={posSettings.inventory_url || ''} onChange={e => updatePosSetting('inventory_url', e.target.value)} placeholder="Optional Petpooja getitems endpoint" className={`${inputClass} md:col-span-2`} />
                       <input type="password" value={posSettings.api_key || ''} onChange={e => updatePosSetting('api_key', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_api_key') ? 'API key saved - enter to replace' : 'Petpooja API key'} className={inputClass} />
                       <input type="password" value={posSettings.app_key || ''} onChange={e => updatePosSetting('app_key', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_app_key') ? 'App key saved - enter to replace' : 'Petpooja app key'} className={inputClass} />
                       <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_webhook_secret') ? 'Webhook secret saved - enter to replace' : 'Petpooja webhook shared secret'} className={`${inputClass} md:col-span-2`} />
@@ -739,7 +827,22 @@ export default function Settings() {
                             <input value={channel.settings.endpoint || ''} onChange={e => updateChannelSetting(channelType, 'endpoint', e.target.value)} placeholder="Provider or inbound endpoint" className={inputClass} />
                             <input value={channel.settings.menu_sync_url || ''} onChange={e => updateChannelSetting(channelType, 'menu_sync_url', e.target.value)} placeholder="Optional menu sync endpoint" className={inputClass} />
                             {(channelType === 'instagram' || channelType === 'facebook') && (
-                              <input value={channel.settings.publish_url || ''} onChange={e => updateChannelSetting(channelType, 'publish_url', e.target.value)} placeholder="Social publishing bridge endpoint" className={`${inputClass} md:col-span-2`} />
+                              <>
+                                <input value={channel.settings.publish_url || ''} onChange={e => updateChannelSetting(channelType, 'publish_url', e.target.value)} placeholder="Social publishing bridge endpoint" className={`${inputClass} md:col-span-2`} />
+                                <div className="md:col-span-2 space-y-1 rounded-lg bg-surface-container-high p-3 text-xs text-on-surface-variant">
+                                  <p className="font-bold text-on-surface">How to connect your Meta page</p>
+                                  <p>
+                                    This bridge URL receives a <code>POST</code> with <code>{'{restaurant_id, channel, message, image_url, ordering_link}'}</code>.
+                                    Menuverse does not call Meta directly.
+                                  </p>
+                                  <p>
+                                    Use <a href="https://www.make.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">Make</a>,{' '}
+                                    <a href="https://zapier.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">Zapier</a>, or the{' '}
+                                    <a href="https://developers.facebook.com/docs/instagram-platform/content-publishing" target="_blank" rel="noopener noreferrer" className="text-primary underline">Meta content publishing API</a>.
+                                  </p>
+                                  <p>See <code>docs/webhooks.md</code>: Social publishing bridges for the exact payload.</p>
+                                </div>
+                              </>
                             )}
                             <input value={channel.settings.account_id || ''} onChange={e => updateChannelSetting(channelType, 'account_id', e.target.value)} placeholder={channelType === 'whatsapp' ? 'WhatsApp phone number ID' : 'Account, page, or store ID'} className={inputClass} />
                             <input value={channel.settings.ordering_link || ''} onChange={e => updateChannelSetting(channelType, 'ordering_link', e.target.value)} placeholder="Optional public ordering link" className={inputClass} />

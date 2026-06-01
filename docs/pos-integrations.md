@@ -20,7 +20,7 @@ Manual token setup:
 3. Save the token plus selected location ID in the Settings UI.
 4. For sandbox testing, use `"square_environment": "sandbox"` and a sandbox access token/location.
 
-Square's OAuth flow can replace manual tokens during hosted onboarding, but it requires your Square application ID, secret, redirect URL, and token-refresh deployment. See the [Square OAuth overview](https://developer.squareup.com/docs/oauth-api/overview).
+Square OAuth is available from onboarding and POS Settings. Configure `SQUARE_APP_ID`, `SQUARE_APP_SECRET`, and `APP_URL`, then use **Connect Square Account**. Menuverse generates an expiring OAuth state value, stores access and refresh tokens server-side, and refreshes OAuth tokens daily when they enter the seven-day renewal window. See the [Square OAuth overview](https://developer.squareup.com/docs/oauth-api/overview).
 
 The adapter creates a Square order through `POST /v2/orders`. Square's fulfillment enum does not define `DINE_IN`, so restaurant orders use `PICKUP` with the Menuverse order ID and table number in metadata and the fulfillment note.
 
@@ -41,6 +41,8 @@ https://your-project.supabase.co/functions/v1/pos-status-webhook?restaurant_id=<
 ```
 
 Sign custom/Petpooja callbacks with `x-menuverse-signature`, the lowercase hex HMAC-SHA256 digest of the raw request body.
+
+Menuverse can also poll Petpooja item availability every 15 minutes. Set each menu item's **Petpooja Item ID** in **Menu Assets**. If your Petpooja account uses a custom inventory endpoint, enter its `getitems` URL in POS Settings; otherwise Menuverse uses `/api/v1/getitems` under the configured Petpooja API base URL.
 
 ## Custom POS webhook
 

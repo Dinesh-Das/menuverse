@@ -10,6 +10,7 @@ import {
   adminFetchTables,
   adminFetchSentimentConfigurationStatus,
   adminSeedSampleMenu,
+  adminStartSquareOAuth,
   adminUpdateRestaurant,
 } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
@@ -17,6 +18,12 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/Toast';
 
 const STEP_LABELS = ['Profile', 'Menu', 'Tables', 'Payments', 'Ready'];
+const SERVICE_MODES = [
+  { value: 'dine_only', label: 'Dine-in only', takeaway: false, delivery: false },
+  { value: 'dine_takeaway', label: 'Dine-in + Takeaway', takeaway: true, delivery: false },
+  { value: 'dine_delivery', label: 'Dine-in + Delivery', takeaway: false, delivery: true },
+  { value: 'dine_both', label: 'Dine-in + Takeaway + Delivery', takeaway: true, delivery: true },
+];
 const cardClass = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-2xl';
 const inputClass = 'w-full rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary';
 
@@ -83,7 +90,14 @@ export default function Onboarding() {
     razorpay_key_id: '',
     razorpay_key_secret: '',
   });
+  const [serviceMode, setServiceMode] = useState(() => (
+    SERVICE_MODES.find(mode => (
+      mode.takeaway === Boolean(restaurant?.takeaway_enabled)
+      && mode.delivery === Boolean(restaurant?.delivery_enabled)
+    ))?.value || 'dine_only'
+  ));
   const [sentimentConfig, setSentimentConfig] = useState(null);
+  const [squareOAuthStarting, setSquareOAuthStarting] = useState(false);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -157,12 +171,15 @@ export default function Onboarding() {
     }
     setSaving(true);
     try {
+      const selectedServiceMode = SERVICE_MODES.find(mode => mode.value === serviceMode) || SERVICE_MODES[0];
       await saveProgress(1, {
         name: profile.name.trim(),
         address: profile.address || null,
         phone: profile.phone || null,
         gstin: profile.gstin || null,
         currency: profile.currency,
+        takeaway_enabled: selectedServiceMode.takeaway,
+        delivery_enabled: selectedServiceMode.delivery,
         ...(profile.logo_url ? { logo_url: profile.logo_url } : {}),
       });
       setStep(2);
@@ -287,6 +304,17 @@ export default function Onboarding() {
     setQuickItems(prev => [...prev, { name: '', price: '', category: 'Mains' }]);
   };
 
+  const connectSquare = async () => {
+    setSquareOAuthStarting(true);
+    try {
+      const authorizeUrl = await adminStartSquareOAuth(restaurantId);
+      window.location.assign(authorizeUrl);
+    } catch (err) {
+      addToast(`Square connection failed: ${err.message}`, 'error');
+      setSquareOAuthStarting(false);
+    }
+  };
+
   const updateQuickItem = (index, field, value) => {
     setQuickItems(prev => prev.map((item, itemIndex) => (
       itemIndex === index ? { ...item, [field]: value } : item
@@ -326,6 +354,31 @@ export default function Onboarding() {
                   <option value="usd">USD</option>
                 </select>
               </div>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-bold text-on-surface">Order types offered</legend>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {SERVICE_MODES.map(mode => (
+                    <label
+                      key={mode.value}
+                      className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm ${
+                        serviceMode === mode.value
+                          ? 'border-primary bg-primary/10 font-bold text-primary'
+                          : 'border-outline-variant/20 bg-surface-container text-on-surface'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="serviceMode"
+                        value={mode.value}
+                        checked={serviceMode === mode.value}
+                        onChange={() => setServiceMode(mode.value)}
+                        className="sr-only"
+                      />
+                      {mode.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-outline-variant/20 bg-surface-container px-4 py-3">
                 <span className="text-sm font-bold">{profile.logo_url ? 'Logo uploaded' : 'Upload logo'}</span>
                 <input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadLogo} className="hidden" />
@@ -448,6 +501,14 @@ export default function Onboarding() {
                     Open my dashboard
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={connectSquare}
+                  disabled={squareOAuthStarting}
+                  className="mt-4 rounded-xl border border-outline-variant/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-on-surface disabled:opacity-50"
+                >
+                  {squareOAuthStarting ? 'Opening Square...' : 'Connect Square POS'}
+                </button>
               </div>
               <div className="rounded-2xl bg-white p-4 text-center text-neutral-900">
                 {firstQr ? <img src={firstQr} alt="First table QR" className="mx-auto h-44 w-44" /> : <div className="h-44 w-44" />}

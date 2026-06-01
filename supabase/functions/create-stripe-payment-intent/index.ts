@@ -50,8 +50,9 @@ serve(async (req) => {
       consumeRateLimit(supabase, `${scope}-ip`, getClientIp(req), limit, 60),
     ]);
     if (!allowed.every(Boolean)) return json({ error: 'Too many payment attempts. Please wait a minute and try again.' }, 429);
-  } catch {
-    return json({ error: 'Payment rate-limit service is unavailable.' }, 503);
+  } catch (error) {
+    console.error('[rate-limit] consumeRateLimit failed, allowing through:', error);
+    // Payment availability takes precedence while the rate-limit store is unavailable.
   }
 
   const { data: session, error: sessionError } = await supabase

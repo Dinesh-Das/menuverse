@@ -51,7 +51,7 @@ serve(async (req) => {
       headers: { 'X-Menuverse-Internal-Secret': internalSecret },
     });
 
-    if (!invokeError && data?.analysed) {
+    if (!invokeError && (data?.analysed || data?.skipped)) {
       await supabase
         .from('SentimentQueue')
         .update({

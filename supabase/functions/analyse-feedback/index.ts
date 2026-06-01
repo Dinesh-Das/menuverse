@@ -132,12 +132,25 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data: feedback, error: feedbackError } = await supabase
     .from('OrderFeedback')
-    .select('id, restaurant_id, order_id, rating, comment')
+    .select('id, restaurant_id, order_id, rating, comment, analysis_locked')
     .eq('id', feedbackId)
     .maybeSingle();
 
   if (feedbackError) return json({ error: feedbackError.message }, 500);
   if (!feedback) return json({ error: 'Feedback not found.' }, 404);
+  if (feedback.analysis_locked) {
+    await supabase
+      .from('SentimentQueue')
+      .update({
+        status: 'processed',
+        last_error: null,
+        processed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('feedback_id', feedback.id)
+      .catch(() => null);
+    return json({ analysed: false, skipped: true, reason: 'analysis_locked', feedback_id: feedback.id });
+  }
 
   const comment = feedback.comment || '';
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') || Deno.env.get('CLAUDE_API_KEY');

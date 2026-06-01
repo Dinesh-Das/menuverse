@@ -555,7 +555,7 @@ export async function adminFetchFlaggedFeedback(restaurantId) {
   requireRestaurantId(restaurantId);
   const { data, error } = await supabase
     .from('OrderFeedback')
-    .select('id, order_id, rating, comment, sentiment_label, created_at')
+    .select('id, order_id, rating, comment, sentiment_label, analysis_locked, created_at')
     .eq('restaurant_id', restaurantId)
     .eq('flag_for_review', true)
     .lte('rating', 2)
@@ -573,6 +573,19 @@ export async function adminResolveFeedback(feedbackId, restaurantId) {
     .eq('id', feedbackId)
     .eq('restaurant_id', restaurantId)
     .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function adminToggleFeedbackAnalysisLock(feedbackId, restaurantId, analysisLocked) {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase
+    .from('OrderFeedback')
+    .update({ analysis_locked: Boolean(analysisLocked) })
+    .eq('id', feedbackId)
+    .eq('restaurant_id', restaurantId)
+    .select('id, analysis_locked')
     .single();
   if (error) throw new Error(error.message);
   return data;
@@ -737,6 +750,16 @@ export async function adminSyncPosCatalog(restaurantId) {
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
   return data;
+}
+
+export async function adminStartSquareOAuth(restaurantId, environment = 'production') {
+  requireRestaurantId(restaurantId);
+  const { data, error } = await supabase.functions.invoke('square-oauth-start', {
+    body: { restaurant_id: restaurantId, environment },
+  });
+  if (error) throw new Error(error.message);
+  if (!data?.authorize_url) throw new Error(data?.error || 'Square OAuth did not return an authorization URL.');
+  return data.authorize_url;
 }
 
 export async function adminUpdateIntegrationChannel(restaurantId, payload) {

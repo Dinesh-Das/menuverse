@@ -26,6 +26,7 @@ import {
   adminFetchRevenueForecast,
   adminFetchSentimentTrend,
   adminResolveFeedback,
+  adminToggleFeedbackAnalysisLock,
 } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
@@ -192,6 +193,16 @@ export default function Dashboard() {
       addToast('Review marked resolved.', 'success');
     } catch (err) {
       addToast(`Failed to resolve review: ${err.message}`, 'error');
+    }
+  };
+
+  const toggleAnalysisLock = async (feedbackId, currentValue) => {
+    try {
+      const updated = await adminToggleFeedbackAnalysisLock(feedbackId, user.restaurantId, !currentValue);
+      setFlaggedFeedback(prev => prev.map(item => item.id === feedbackId ? { ...item, ...updated } : item));
+      addToast(updated.analysis_locked ? 'Review analysis locked.' : 'Review analysis unlocked.', 'success');
+    } catch (err) {
+      addToast(`Could not update analysis lock: ${err.message}`, 'error');
     }
   };
 
@@ -469,12 +480,25 @@ export default function Dashboard() {
                   <p className="text-sm text-on-surface-variant line-clamp-2">{item.comment || 'No written comment.'}</p>
                   <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-2">{new Date(item.created_at).toLocaleString()}</p>
                 </div>
-                <button
-                  onClick={() => handleResolveFeedback(item.id)}
-                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-bold uppercase tracking-widest"
-                >
-                  Resolved
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => toggleAnalysisLock(item.id, item.analysis_locked)}
+                    title={item.analysis_locked ? 'Unlock for re-analysis' : 'Lock analysis'}
+                    className={`rounded-xl border px-4 py-2 text-xs font-bold uppercase tracking-widest ${
+                      item.analysis_locked
+                        ? 'border-amber-500/40 text-amber-500'
+                        : 'border-outline-variant/30 text-on-surface-variant'
+                    }`}
+                  >
+                    {item.analysis_locked ? 'Locked' : 'Lock analysis'}
+                  </button>
+                  <button
+                    onClick={() => handleResolveFeedback(item.id)}
+                    className="rounded-xl bg-primary px-4 py-2 text-xs font-bold uppercase tracking-widest text-on-primary"
+                  >
+                    Resolved
+                  </button>
+                </div>
               </div>
             ))}
           </div>

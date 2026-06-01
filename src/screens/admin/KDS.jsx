@@ -357,7 +357,7 @@ export default function KDS() {
   }, []);
 
   const requestPrintForOrder = useCallback((order) => {
-    requestKitchenPrint({
+    return requestKitchenPrint({
       restaurant_id: user.restaurantId,
       order_id: order.id,
       ticket: {
@@ -380,6 +380,18 @@ export default function KDS() {
       console.warn('KOT print request skipped:', error.message);
     });
   }, [user?.restaurantId, addToast]);
+
+  const handlePrintSessionTicket = useCallback((ticket) => {
+    const order = ticket.orders.find(candidate => candidate.table_session_id) || ticket.orders[0];
+    if (!order) return;
+    requestPrintForOrder(order).then(result => {
+      if (result?.status === 'disabled') {
+        addToast('Enable KOT Edge printing to send full table tickets.', 'error');
+      } else if (result?.status === 'delivered') {
+        addToast('Full table ticket sent to the kitchen printer.', 'success');
+      }
+    });
+  }, [addToast, requestPrintForOrder]);
 
   const updateManyOrders = useCallback(async (targetOrders, nextStatus) => {
     const eligible = targetOrders.filter(order => canTransitionOrderStatus(order.status, nextStatus));
@@ -411,7 +423,12 @@ export default function KDS() {
       const reason = results.find(result => result.status === 'rejected')?.reason;
       addToast(`Failed to update ${failedIds.length} order${failedIds.length > 1 ? 's' : ''}: ${reason?.message || 'Unknown error'}`, 'error');
     } else if (nextStatus === 'accepted') {
-      eligible.forEach(requestPrintForOrder);
+      const printTargets = new Map();
+      eligible.forEach(order => {
+        const key = order.table_session_id ? `session:${order.table_session_id}` : `order:${order.id}`;
+        if (!printTargets.has(key)) printTargets.set(key, order);
+      });
+      printTargets.forEach(requestPrintForOrder);
     }
 
     setUpdatingIds(s => {
@@ -623,6 +640,17 @@ export default function KDS() {
                             <p className="kds-label-text text-on-surface-variant mt-1">
                               {ticket.orders.length} order{ticket.orders.length > 1 ? 's' : ''} - oldest #{String(ticket.orders[0]?.id || '').slice(-6).toUpperCase()}
                             </p>
+                            {ticket.orders.some(order => order.table_session_id) && (
+                              <button
+                                type="button"
+                                onClick={() => handlePrintSessionTicket(ticket)}
+                                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-on-surface"
+                                title="Print consolidated ticket for this table"
+                              >
+                                <span className="material-symbols-outlined text-sm">print</span>
+                                Full Table Ticket
+                              </button>
+                            )}
                           </div>
                           <div className="text-right">
                             <div className={`font-headline font-bold mb-1 ${isUrgent ? 'text-error animate-pulse' : 'text-primary'}`}

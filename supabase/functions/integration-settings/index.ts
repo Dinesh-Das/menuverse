@@ -44,6 +44,7 @@ function posSafeConfig(provider: string, input: Record<string, unknown>) {
     return {
       petpooja_restaurant_id: asString(input.restaurant_id),
       petpooja_webhook_url: asString(input.endpoint),
+      petpooja_inventory_url: asString(input.inventory_url),
     };
   }
   return {
@@ -125,6 +126,14 @@ serve(async (req) => {
       config: posSafeConfig(provider, input),
       secrets: posSecretPatch(provider, input),
     });
+    if (provider === 'square' && asString(input.access_token)) {
+      const rotationDeadline = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString();
+      const { error: expiryError } = await supabase
+        .from('IntegrationSecret')
+        .update({ token_expires_at: rotationDeadline, updated_at: new Date().toISOString() })
+        .eq('channel_id', channel.id);
+      if (expiryError) return json({ error: expiryError.message }, 500);
+    }
     const { error } = await supabase
       .from('Restaurant')
       .update({

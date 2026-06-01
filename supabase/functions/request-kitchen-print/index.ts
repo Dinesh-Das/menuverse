@@ -37,8 +37,36 @@ serve(async (req) => {
     return json({ error: 'Not authorized to print kitchen tickets.' }, 403);
   }
 
+  let ticket = body.ticket && typeof body.ticket === 'object'
+    ? body.ticket as Record<string, unknown>
+    : {};
+
+  if (orderId) {
+    const { data: order, error: orderError } = await supabase
+      .from('Order')
+      .select('id, table_session_id')
+      .eq('id', orderId)
+      .eq('restaurant_id', restaurantId)
+      .maybeSingle();
+    if (orderError) return json({ error: orderError.message }, 500);
+
+    if (order?.table_session_id) {
+      const { data: sessionTicket, error: ticketError } = await supabase
+        .rpc('consolidate_session_orders_to_ticket', {
+          p_session_id: order.table_session_id,
+        });
+      if (ticketError) return json({ error: ticketError.message }, 500);
+      ticket = {
+        type: 'session_ticket',
+        ...(sessionTicket && typeof sessionTicket === 'object' ? sessionTicket : {}),
+      };
+    } else {
+      ticket = { type: 'order_ticket', ...ticket };
+    }
+  }
+
   const payload = {
-    ticket: body.ticket || {},
+    ticket,
     requested_at: new Date().toISOString(),
   };
 
