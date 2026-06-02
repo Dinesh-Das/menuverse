@@ -86,7 +86,7 @@ export default function Onboarding() {
   ]);
   const [tableCount, setTableCount] = useState(8);
   const [payments, setPayments] = useState({
-    enabled: Boolean(restaurant.payment_enabled),
+    enabled: Boolean(restaurant?.payment_enabled),
     razorpay_key_id: '',
     razorpay_key_secret: '',
   });
@@ -268,6 +268,10 @@ export default function Onboarding() {
   };
 
   const savePaymentStep = async () => {
+    if (!payments.enabled) {
+      addToast('Enable in-app payments before launching your restaurant.', 'error');
+      return;
+    }
     setSaving(true);
     try {
       await saveProgress(4, {
@@ -284,6 +288,11 @@ export default function Onboarding() {
   };
 
   const completeOnboarding = async () => {
+    if (!payments.enabled) {
+      addToast('Finish payment setup before opening the dashboard.', 'error');
+      setStep(4);
+      return;
+    }
     setSaving(true);
     try {
       await adminUpdateRestaurant(restaurantId, {
@@ -467,6 +476,11 @@ export default function Onboarding() {
                 <span className="text-sm font-bold">Enable payments in the app</span>
                 <input type="checkbox" checked={payments.enabled} onChange={e => setPayments(prev => ({ ...prev, enabled: e.target.checked }))} className="h-5 w-5 accent-primary" />
               </label>
+              {!payments.enabled && (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
+                  Digital payments are required before go-live. You can change providers later in Settings.
+                </p>
+              )}
               {payments.enabled && (
                 <div className="grid gap-4 md:grid-cols-2">
                   <input className={inputClass} value={payments.razorpay_key_id} onChange={e => setPayments(prev => ({ ...prev, razorpay_key_id: e.target.value }))} placeholder="Razorpay Key ID" />
@@ -478,8 +492,8 @@ export default function Onboarding() {
               )}
               <div className="flex justify-between">
                 <button onClick={() => setStep(3)} className="rounded-xl px-5 py-3 text-sm font-bold text-on-surface-variant">Back</button>
-                <button onClick={savePaymentStep} disabled={saving} className="rounded-xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-widest text-on-primary disabled:opacity-50">
-                  {payments.enabled ? 'Save payments' : 'Skip for now'}
+                <button onClick={savePaymentStep} disabled={saving || !payments.enabled} className="rounded-xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-widest text-on-primary disabled:opacity-50">
+                  Save payments
                 </button>
               </div>
             </div>
@@ -490,14 +504,23 @@ export default function Onboarding() {
               <div>
                 <h2 className="font-headline text-3xl font-bold">You are ready</h2>
                 <p className="mt-3 text-on-surface-variant">Your restaurant is live at <span className="font-bold text-primary">{liveUrl}</span></p>
-                {sentimentConfig && (!sentimentConfig.supabase_url_configured || !sentimentConfig.internal_secret_configured) && (
+                {!payments.enabled && (
                   <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
-                    Sentiment workers need post-deploy database settings. Complete the protected `app.settings.supabase_url` and `app.settings.menuverse_internal_secret` setup from `DEPLOY.md`.
+                    Enable digital payments before going live.
+                  </div>
+                )}
+                {sentimentConfig && (
+                  !sentimentConfig.supabase_url_configured
+                  || !sentimentConfig.internal_secret_configured
+                  || !sentimentConfig.required_cron_jobs_configured
+                ) && (
+                  <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
+                    Sentiment workers need post-deploy database settings and active pg_cron jobs. Complete the protected setup from `DEPLOY.md`.
                   </div>
                 )}
                 <div className="mt-6 flex gap-3">
                   <button onClick={() => setStep(4)} className="rounded-xl px-5 py-3 text-sm font-bold text-on-surface-variant">Back</button>
-                  <button onClick={completeOnboarding} disabled={saving} className="rounded-xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-widest text-on-primary disabled:opacity-50">
+                  <button onClick={completeOnboarding} disabled={saving || !payments.enabled} className="rounded-xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-widest text-on-primary disabled:opacity-50">
                     Open my dashboard
                   </button>
                 </div>

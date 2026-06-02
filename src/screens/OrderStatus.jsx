@@ -36,6 +36,7 @@ const STATUS_MESSAGES = {
   cancelled: 'This order was cancelled. Please contact your server.',
 };
 const MAX_FEEDBACK_COMMENT_LENGTH = 200;
+const READY_FEEDBACK_DELAY_MS = 3 * 60 * 1000;
 const CONTACT_CAPTURE_STATUSES = new Set(['accepted', 'preparing', 'ready', 'served', 'completed']);
 
 export default function OrderStatus() {
@@ -55,6 +56,7 @@ export default function OrderStatus() {
   const [feedbackGiven, setFeedbackGiven] = useState(false);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [readyFeedbackVisible, setReadyFeedbackVisible] = useState(false);
   const [guestPhone, setGuestPhone] = useState('');
   const [receiptContactOpen, setReceiptContactOpen] = useState(false);
   const [receiptName, setReceiptName] = useState('');
@@ -66,6 +68,7 @@ export default function OrderStatus() {
   const refreshTimerRef = useRef(null);
   const orderRef = useRef(null);
   const feedbackNudgeSentRef = useRef(false);
+  const readyFeedbackTimerRef = useRef(null);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -131,6 +134,29 @@ export default function OrderStatus() {
       triggerServedFeedbackNudge(order);
     }
   }, [feedbackGiven, order, triggerServedFeedbackNudge]);
+
+  useEffect(() => {
+    if (readyFeedbackTimerRef.current) {
+      window.clearTimeout(readyFeedbackTimerRef.current);
+      readyFeedbackTimerRef.current = null;
+    }
+    if (order?.status !== 'ready' || feedbackGiven) {
+      setReadyFeedbackVisible(false);
+      return undefined;
+    }
+
+    readyFeedbackTimerRef.current = window.setTimeout(() => {
+      setReadyFeedbackVisible(true);
+      readyFeedbackTimerRef.current = null;
+    }, READY_FEEDBACK_DELAY_MS);
+
+    return () => {
+      if (readyFeedbackTimerRef.current) {
+        window.clearTimeout(readyFeedbackTimerRef.current);
+        readyFeedbackTimerRef.current = null;
+      }
+    };
+  }, [feedbackGiven, order?.status]);
 
   // Supabase Realtime updates via socket.js, with token-based refresh as a fallback.
   useEffect(() => {
@@ -480,6 +506,22 @@ export default function OrderStatus() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {order.status === 'ready' && readyFeedbackVisible && !feedbackGiven && (
+          <div className="mb-8 flex items-center justify-between gap-4 rounded-2xl border border-primary/20 bg-primary/5 p-5">
+            <div>
+              <h3 className="font-headline text-lg font-bold text-on-surface">How is your food?</h3>
+              <p className="mt-1 text-sm text-on-surface-variant">A quick rating helps the kitchen improve while your visit is fresh.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowFeedbackModal(true)}
+              className="flex-none rounded-xl bg-primary px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-on-primary"
+            >
+              Rate now
+            </button>
           </div>
         )}
 

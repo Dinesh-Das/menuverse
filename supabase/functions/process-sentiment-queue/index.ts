@@ -24,28 +24,13 @@ serve(async (req) => {
   const requestBody = await req.json().catch(() => ({}));
   const batchSize = Math.max(1, Math.min(20, Number(requestBody.batch_size || 20)));
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data: jobs, error } = await supabase
-    .from('SentimentQueue')
-    .select('*')
-    .in('status', ['pending', 'failed'])
-    .lt('attempts', MAX_ATTEMPTS)
-    .order('created_at', { ascending: true })
-    .limit(batchSize);
+  const { data: jobs, error } = await supabase.rpc('claim_sentiment_queue_jobs', {
+    p_batch_size: batchSize,
+  });
   if (error) return json({ error: error.message }, 500);
 
   const results = [];
   for (const job of jobs || []) {
-    const processingAt = new Date().toISOString();
-    await supabase
-      .from('SentimentQueue')
-      .update({
-        status: 'processing',
-        attempts: Number(job.attempts || 0) + 1,
-        processing_at: processingAt,
-        updated_at: processingAt,
-      })
-      .eq('id', job.id);
-
     const { data, error: invokeError } = await supabase.functions.invoke('analyse-feedback', {
       body: { feedback_id: job.feedback_id },
       headers: { 'X-Menuverse-Internal-Secret': internalSecret },
@@ -65,7 +50,7 @@ serve(async (req) => {
       continue;
     }
 
-    const attempts = Number(job.attempts || 0) + 1;
+    const attempts = Number(job.attempts || 0);
     const nextStatus = attempts >= MAX_ATTEMPTS ? 'dead_letter' : 'failed';
     const message = invokeError?.message || data?.error || 'Feedback analysis failed.';
     await supabase

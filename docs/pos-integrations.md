@@ -44,8 +44,10 @@ Sign custom/Petpooja callbacks with `x-menuverse-signature`, the lowercase hex H
 
 Menuverse can also poll Petpooja item availability every 15 minutes. Set each menu item's **Petpooja Item ID** in **Menu Assets**. If your Petpooja account uses a custom inventory endpoint, enter its `getitems` URL in POS Settings; otherwise Menuverse uses `/api/v1/getitems` under the configured Petpooja API base URL.
 
-## Custom POS webhook
+## POS webhook bridges
 
-Choose **Custom webhook** for a bridge service. Menuverse posts outbound orders to the configured endpoint and accepts signed status callbacks through `pos-status-webhook?provider=webhook`.
+Choose **Custom webhook**, **Toast bridge**, **Lightspeed bridge**, **Revel bridge**, or **NCR Aloha bridge** for a bridge service. Menuverse posts outbound orders to the configured endpoint and accepts signed status callbacks through the generated `pos-status-webhook` URL shown in Settings.
+
+Bridge callbacks use `x-menuverse-signature`, the lowercase hex HMAC-SHA256 digest of the raw request body.
 
 POS sync is controlled per restaurant by `Restaurant.pos_sync_enabled`. It is not blocked by a frontend enable flag. `VITE_DISABLE_POS_EDGE_SYNC=true` is an emergency-only kill switch for browser-triggered manual sync requests.

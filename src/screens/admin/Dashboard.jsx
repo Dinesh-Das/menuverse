@@ -24,6 +24,7 @@ import {
   adminFetchOrders,
   adminFetchPeakHours,
   adminFetchRevenueForecast,
+  adminFetchSentimentConfigurationStatus,
   adminFetchSentimentTrend,
   adminResolveFeedback,
   adminToggleFeedbackAnalysisLock,
@@ -51,6 +52,7 @@ export default function Dashboard() {
   const [peakHours, setPeakHours] = useState([]);
   const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState([]);
+  const [sentimentConfig, setSentimentConfig] = useState(null);
   const cardBg = 'bg-surface-container-low border border-outline-variant/10 shadow-luxury rounded-[2rem] transition-theme';
 
   useEffect(() => {
@@ -79,7 +81,8 @@ export default function Dashboard() {
         adminFetchRevenueForecast(user.restaurantId, 7).catch(() => []),
         adminFetchPeakHours(user.restaurantId).catch(() => []),
         adminFetchAlerts(user.restaurantId).catch(() => []),
-      ]).then(([feedbackInsights, trend, flagged, forecastRows, peakRows, alertRows]) => {
+        adminFetchSentimentConfigurationStatus(user.restaurantId).catch(() => null),
+      ]).then(([feedbackInsights, trend, flagged, forecastRows, peakRows, alertRows, configurationStatus]) => {
         if (cancelled) return;
         setInsights(feedbackInsights);
         setSentimentTrend(trend);
@@ -87,12 +90,13 @@ export default function Dashboard() {
         setForecast(forecastRows);
         setPeakHours(peakRows);
         setAlerts(alertRows);
+        setSentimentConfig(configurationStatus);
       });
     };
 
     const fetchAndSubscribe = async () => {
       try {
-        const [{ data }, feedbackInsights, trend, flagged, forecastRows, peakRows, alertRows] = await Promise.all([
+        const [{ data }, feedbackInsights, trend, flagged, forecastRows, peakRows, alertRows, configurationStatus] = await Promise.all([
           adminFetchOrders(null, user.restaurantId),
           adminFetchFeedbackInsights(user.restaurantId).catch(() => null),
           adminFetchSentimentTrend(user.restaurantId).catch(() => []),
@@ -100,6 +104,7 @@ export default function Dashboard() {
           adminFetchRevenueForecast(user.restaurantId, 7).catch(() => []),
           adminFetchPeakHours(user.restaurantId).catch(() => []),
           adminFetchAlerts(user.restaurantId).catch(() => []),
+          adminFetchSentimentConfigurationStatus(user.restaurantId).catch(() => null),
         ]);
         if (cancelled) return;
         setOrders(data);
@@ -109,6 +114,7 @@ export default function Dashboard() {
         setForecast(forecastRows);
         setPeakHours(peakRows);
         setAlerts(alertRows);
+        setSentimentConfig(configurationStatus);
         setLoading(false);
 
         const channelName = `dashboard_orders:${user.restaurantId}:${crypto.randomUUID()}`;
@@ -237,6 +243,13 @@ export default function Dashboard() {
   const peakMax = Math.max(...peakHours.map(row => Number(row.order_count || 0)), 1);
   const busiest = [...peakHours].sort((a, b) => Number(b.order_count || 0) - Number(a.order_count || 0))[0];
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const sentimentWorkerReady = Boolean(
+    sentimentConfig?.supabase_url_configured
+    && sentimentConfig?.internal_secret_configured
+    && sentimentConfig?.cron_available
+    && sentimentConfig?.required_cron_jobs_configured
+  );
+  const sentimentAnalysisTotal = Number(sentimentConfig?.analyses_last_24h || 0);
 
   return (
     <AdminLayout>
@@ -258,6 +271,47 @@ export default function Dashboard() {
         )}
 
         {/* ── KPI Cards ──────────────────────────────────── */}
+        {sentimentConfig && (
+          <div className={`mb-10 p-6 ${cardBg}`}>
+            <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant">AI Operations</p>
+                <h2 className="mt-1 font-headline text-2xl font-bold text-on-surface">Sentiment worker health</h2>
+              </div>
+              <span className={`w-max rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
+                sentimentWorkerReady ? 'bg-green-500/10 text-green-500' : 'bg-error/10 text-error'
+              }`}>
+                {sentimentWorkerReady ? 'Workers ready' : 'Needs attention'}
+              </span>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-outline-variant/10 bg-surface-container p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Configuration</p>
+                <p className={`mt-2 text-sm font-bold ${sentimentWorkerReady ? 'text-green-500' : 'text-error'}`}>
+                  {sentimentWorkerReady ? 'URL, secret, and cron are active' : 'Protected settings or cron jobs are missing'}
+                </p>
+                {sentimentConfig.missing_cron_jobs?.length > 0 && (
+                  <p className="mt-2 text-xs text-on-surface-variant">{sentimentConfig.missing_cron_jobs.join(', ')}</p>
+                )}
+              </div>
+              <div className="rounded-xl border border-outline-variant/10 bg-surface-container p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Queue</p>
+                <p className="mt-2 text-sm font-bold text-on-surface">{Number(sentimentConfig.queue_pending || 0)} active</p>
+                <p className={`mt-1 text-xs ${Number(sentimentConfig.queue_dead_letter || 0) > 0 ? 'text-error' : 'text-on-surface-variant'}`}>
+                  {Number(sentimentConfig.queue_dead_letter || 0)} dead-letter jobs
+                </p>
+              </div>
+              <div className="rounded-xl border border-outline-variant/10 bg-surface-container p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Last 24 hours</p>
+                <p className="mt-2 text-sm font-bold text-on-surface">{sentimentAnalysisTotal} analyses</p>
+                <p className="mt-1 text-xs text-on-surface-variant">
+                  {Number(sentimentConfig.ai_analyses_last_24h || 0)} AI, {Number(sentimentConfig.baseline_analyses_last_24h || 0)} baseline
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
           {[
             { label: "TODAY'S ORDERS", value: loading ? '-' : todayOrders.length, delta: loading ? '—' : ordersDelta, icon: 'shopping_cart', isUp: ordersDelta.startsWith('+') },

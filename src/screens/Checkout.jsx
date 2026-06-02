@@ -21,6 +21,17 @@ import { supabase } from '../lib/supabase';
 import { createStripePaymentRequest, humanizePaymentFailure, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
 import QRCode from 'qrcode';
 
+const SPLIT_PERSON_STYLES = [
+  { active: 'bg-blue-500 text-white', muted: 'bg-blue-500/10 text-blue-500' },
+  { active: 'bg-emerald-500 text-white', muted: 'bg-emerald-500/10 text-emerald-500' },
+  { active: 'bg-violet-500 text-white', muted: 'bg-violet-500/10 text-violet-500' },
+  { active: 'bg-amber-500 text-white', muted: 'bg-amber-500/10 text-amber-500' },
+  { active: 'bg-rose-500 text-white', muted: 'bg-rose-500/10 text-rose-500' },
+  { active: 'bg-cyan-500 text-white', muted: 'bg-cyan-500/10 text-cyan-500' },
+  { active: 'bg-fuchsia-500 text-white', muted: 'bg-fuchsia-500/10 text-fuchsia-500' },
+  { active: 'bg-lime-600 text-white', muted: 'bg-lime-500/10 text-lime-600' },
+];
+
 function buildCartSplitItems(items) {
   return items.map((item, index) => {
     const modifiersTotal = (item.selectedModifiers || []).reduce((sum, mod) => sum + Number(mod.price_delta || 0), 0);
@@ -1018,8 +1029,8 @@ export default function Checkout() {
                                 onClick={() => setItemAssignments(prev => ({ ...prev, [item.id]: person }))}
                                 className={`rounded-full px-2 py-1 text-[10px] font-bold ${
                                   Number(itemAssignments[item.id] || 1) === person
-                                    ? 'bg-primary text-on-primary'
-                                    : 'bg-surface-container-high text-on-surface-variant'
+                                    ? SPLIT_PERSON_STYLES[person - 1].active
+                                    : SPLIT_PERSON_STYLES[person - 1].muted
                                 }`}
                               >
                                 P{person}
@@ -1031,9 +1042,14 @@ export default function Checkout() {
                       <div className="space-y-2">
                         {itemSplitShares.map(share => (
                           <div key={share.person} className="rounded-xl bg-surface-container border border-outline-variant/10 p-3 flex items-center justify-between gap-3">
-                            <div>
+                            <div className="flex items-center gap-3">
+                              <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${SPLIT_PERSON_STYLES[share.person - 1].active}`}>
+                                {share.person}
+                              </span>
+                              <div>
                               <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Person {share.person}</p>
                               <p className="text-sm text-on-surface-variant">owes &#8377;{share.total.toFixed(2)}</p>
+                              </div>
                             </div>
                             <button
                               type="button"

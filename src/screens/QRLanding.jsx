@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchTableInfo, getGuestProfileForSession, startOrResumeTableSession } from '../lib/api';
+import {
+  fetchTableInfo,
+  getGuestProfileForSession,
+  startOrResumeTableSession,
+  startOrResumeTableSessionForTable,
+} from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 import { getStoredTableSessionToken } from '../lib/tableSessionStorage';
@@ -35,7 +40,16 @@ export default function QRLanding() {
           throw new Error('Invalid QR code');
         }
         const storedSessionToken = getStoredTableSessionToken();
-        const tableData = await fetchTableInfo(tableId);
+        const [tableResult, initialSessionResult] = await Promise.allSettled([
+          fetchTableInfo(tableId),
+          startOrResumeTableSessionForTable({
+            tableId,
+            existingToken: storedSessionToken,
+          }),
+        ]);
+        if (tableResult.status === 'rejected') throw tableResult.reason;
+
+        const tableData = tableResult.value;
         setTable(tableData);
 
         // AQ-09: Persist restaurant name so CustomerTopNav can read it dynamically
@@ -55,11 +69,18 @@ export default function QRLanding() {
         };
 
         try {
-          const tableSession = await startOrResumeTableSession({
-            restaurantId: tableData.restaurant_id,
-            tableId,
-            existingToken: storedSessionToken,
-          });
+          let tableSession;
+          if (initialSessionResult.status === 'fulfilled') {
+            tableSession = initialSessionResult.value;
+          } else if (/start_table_session_for_table|schema cache/i.test(initialSessionResult.reason?.message || '')) {
+            tableSession = await startOrResumeTableSession({
+              restaurantId: tableData.restaurant_id,
+              tableId,
+              existingToken: storedSessionToken,
+            });
+          } else {
+            throw initialSessionResult.reason;
+          }
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
           setActiveSessionToken(sessionPayload.tableSessionToken);
@@ -110,7 +131,7 @@ export default function QRLanding() {
           </div>
           <div className="mx-auto mt-10 h-44 w-44 rounded-full bg-surface-container-high border border-outline-variant/10" />
           <div className="mt-12 h-14 w-full rounded-xl bg-primary/30" />
-          <p className="mt-5 text-on-surface-variant text-xs uppercase tracking-widest">Preparing your table...</p>
+          <p className="mt-5 text-on-surface-variant text-xs uppercase tracking-widest">Connecting to your table...</p>
         </div>
       </div>
     );

@@ -3,20 +3,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 import { asRecord, asString, createAdminAlert, loadIntegrationConfig } from '../_shared/integration-config.ts';
 import { verifyHexHmac } from '../_shared/webhook-crypto.ts';
+import { normalizeAggregatorOrder, signatureForAggregator } from '../_shared/aggregator-adapters.ts';
 
 const SUPPORTED_CHANNELS = new Set(['swiggy', 'zomato', 'ubereats', 'doordash', 'google_food', 'custom']);
-
-function normalizeItems(payload: Record<string, unknown>) {
-  const items = Array.isArray(payload.items) ? payload.items : [];
-  return items.map(raw => {
-    const item = asRecord(raw);
-    return {
-      menu_item_id: asString(item.menu_item_id) || asString(item.item_id) || asString(item.sku),
-      quantity: Math.max(1, Number(item.quantity || item.qty || 1)),
-      modifier_option_ids: Array.isArray(item.modifier_option_ids) ? item.modifier_option_ids : [],
-    };
-  }).filter(item => item.menu_item_id);
-}
 
 serve(async (req) => {
   const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
@@ -46,7 +35,7 @@ serve(async (req) => {
   const valid = await verifyHexHmac(
     asString(loaded.config.webhook_secret),
     rawBody,
-    req.headers.get('x-menuverse-signature') || '',
+    signatureForAggregator(req, channel),
   );
   if (!valid) {
     await createAdminAlert(supabase, {
@@ -60,8 +49,8 @@ serve(async (req) => {
     return json({ error: 'Invalid signature.' }, 403);
   }
 
-  const externalOrderId = asString(payload.external_order_id) || asString(payload.order_id) || asString(payload.id);
-  const items = normalizeItems(payload);
+  const normalized = normalizeAggregatorOrder(channel, payload);
+  const { externalOrderId, items } = normalized;
   if (!externalOrderId || !items.length) return json({ error: 'external_order_id and items are required.' }, 400);
 
   const { data, error } = await supabase.rpc('create_external_channel_order', {
@@ -69,8 +58,8 @@ serve(async (req) => {
     p_channel: channel,
     p_external_order_id: externalOrderId,
     p_items: items,
-    p_customer: asRecord(payload.customer),
-    p_delivery_address: payload.delivery_address ? asRecord(payload.delivery_address) : null,
+    p_customer: normalized.customer,
+    p_delivery_address: normalized.deliveryAddress,
     p_payload: payload,
   });
   if (error) {

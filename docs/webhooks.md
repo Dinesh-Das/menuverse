@@ -69,7 +69,18 @@ Swiggy, Zomato, Uber Eats, DoorDash, Google Food, and custom channel bridges pos
 https://your-project.supabase.co/functions/v1/aggregator-order-webhook?restaurant_id=<id>&channel=zomato
 ```
 
-Use `x-menuverse-signature` with the per-channel signing secret. Payload shape:
+Use the per-channel signing secret configured under **Settings > Integrations**. Bridges may always send `x-menuverse-signature`; provider-specific aliases are also accepted:
+
+| Channel | Accepted signature headers |
+| --- | --- |
+| Swiggy | `x-swiggy-signature`, `x-menuverse-signature` |
+| Zomato | `x-zomato-signature`, `x-menuverse-signature` |
+| Uber Eats | `x-uber-signature`, `x-menuverse-signature` |
+| DoorDash | `x-doordash-signature`, `x-menuverse-signature` |
+| Google Food | `x-google-signature`, `x-menuverse-signature` |
+| Custom | `x-menuverse-signature` |
+
+All signatures are lowercase hex HMAC-SHA256 digests of the raw request body. The canonical payload shape is:
 
 ```json
 {
@@ -79,6 +90,19 @@ Use `x-menuverse-signature` with the per-channel signing secret. Payload shape:
   "delivery_address": { "street": "1 Market Road", "city": "Delhi", "pincode": "110001" }
 }
 ```
+
+The webhook adapter also accepts common provider nesting such as `order.items`, `data.order.items`, `line_items`, `cart_items`, `orderId`, `merchant_item_id`, and `external_id`. Map partner catalog IDs to Menuverse `MenuItem.id` values in the provider bridge before delivery.
+
+## POS bridge adapters
+
+Square and Petpooja have first-party adapters. Toast, Lightspeed, Revel, and NCR Aloha use the signed bridge mode under **Settings > Integrations**:
+
+1. Choose the named bridge provider.
+2. Set the outbound bridge endpoint and shared signing secret.
+3. Copy the generated inbound status callback into the bridge.
+4. Post status callbacks with `x-menuverse-signature`, using lowercase hex HMAC-SHA256 over the raw JSON body.
+
+Inbound callbacks accept `order_id`, `orderid`, or `pos_order_id`, plus `status`, `order_status`, or `state`.
 
 ## Meta social ordering callbacks
 

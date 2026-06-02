@@ -109,6 +109,8 @@ export default function MenuHome() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [dietFilter, setDietFilter] = useState(loadDietFilter); // 'veg', 'vegan', 'non-veg'
+  const [hasExplicitDietFilter, setHasExplicitDietFilter] = useState(() => window.sessionStorage.getItem('mv_diet_filter_explicit') === 'true');
+  const [dietFilterSeededFromProfile, setDietFilterSeededFromProfile] = useState(false);
   const [upsellModal, setUpsellModal] = useState({ isOpen: false, addedItemName: '' });
   const [upsellCandidates, setUpsellCandidates] = useState([]);
   const [serverRecommendations, setServerRecommendations] = useState([]);
@@ -193,6 +195,18 @@ export default function MenuHome() {
     window.sessionStorage.setItem('mv_diet_filter', JSON.stringify(dietFilter));
   }, [dietFilter]);
 
+  useEffect(() => {
+    const preference = guestProfile?.dietary_preference;
+    if (
+      !hasExplicitDietFilter
+      && dietFilter.length === 0
+      && ['veg', 'vegan', 'non-veg'].includes(preference)
+    ) {
+      setDietFilter([preference]);
+      setDietFilterSeededFromProfile(true);
+    }
+  }, [dietFilter.length, guestProfile?.dietary_preference, hasExplicitDietFilter]);
+
   // Safe JSON parse helper for tags
   const parseTags = (value) => {
     if (Array.isArray(value)) return value;
@@ -210,6 +224,9 @@ export default function MenuHome() {
   const modalRecommendations = serverRecommendations.length > 0
     ? serverRecommendations
     : sortRecommendedItems(upsellCandidates, items, categories, guestProfile).slice(0, 6);
+  const homeRecommendations = modalRecommendations
+    .filter(item => dietFilter.length === 0 || dietFilter.includes(item.dietary_flag))
+    .slice(0, 6);
 
   useEffect(() => {
     if (!restaurant?.id || upsellCandidates.length === 0) return;
@@ -239,7 +256,17 @@ export default function MenuHome() {
   });
 
   const toggleDiet = (flag) => {
+    window.sessionStorage.setItem('mv_diet_filter_explicit', 'true');
+    setHasExplicitDietFilter(true);
+    setDietFilterSeededFromProfile(false);
     setDietFilter(prev => prev.includes(flag) ? prev.filter(f => f !== flag) : [...prev, flag]);
+  };
+
+  const dismissProfileDietFilter = () => {
+    setDietFilter([]);
+    window.sessionStorage.setItem('mv_diet_filter_explicit', 'true');
+    setHasExplicitDietFilter(true);
+    setDietFilterSeededFromProfile(false);
   };
 
   const highlightText = (text, query) => {
@@ -558,6 +585,61 @@ export default function MenuHome() {
         </div>
 
         {/* ── Category Tabs ────────────────────────────────── */}
+        {dietFilterSeededFromProfile && (
+          <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+            <p className="text-xs text-on-surface-variant">
+              Showing your saved <span className="font-bold text-primary">{dietFilter[0]}</span> preference.
+            </p>
+            <button type="button" onClick={dismissProfileDietFilter} className="text-[10px] font-bold uppercase tracking-widest text-primary">
+              Show all
+            </button>
+          </div>
+        )}
+
+        {homeRecommendations.length > 0 && activeCategory === 'All' && !search && (
+          <section className="mb-6">
+            <div className="mb-3 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-primary">
+                  {guestProfile ? 'Picked for you' : 'Trending today'}
+                </p>
+                <h2 className="mt-1 font-headline text-2xl font-bold text-on-surface">Try something guests love</h2>
+              </div>
+              <span className="material-symbols-outlined text-primary">auto_awesome</span>
+            </div>
+            <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+              {homeRecommendations.map(item => (
+                <article
+                  key={item.id}
+                  className="flex w-44 flex-none cursor-pointer flex-col overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container-low shadow-sm"
+                  onClick={() => navigate(getDishPath(item.id))}
+                >
+                  <div className="h-28 overflow-hidden bg-surface-container">
+                    <img src={getMenuImageUrl(item.image_url)} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                  </div>
+                  <div className="flex flex-1 flex-col p-3">
+                    <h3 className="line-clamp-2 text-sm font-bold text-on-surface">{item.name}</h3>
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-primary">&#8377;{item.price}</span>
+                      <button
+                        type="button"
+                        aria-label={`Add ${item.name}`}
+                        onClick={event => {
+                          event.stopPropagation();
+                          handleAddWithUpsell(item);
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-on-primary"
+                      >
+                        <span className="material-symbols-outlined text-base">add</span>
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4 sticky top-20 bg-background/80 backdrop-blur-md z-40 -mx-4 px-4 pt-2">
           <button
             onClick={() => setActiveCategory('All')}

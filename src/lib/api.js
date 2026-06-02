@@ -256,6 +256,16 @@ export async function startOrResumeTableSession({ restaurantId, tableId, existin
   return Array.isArray(data) ? data[0] : data;
 }
 
+export async function startOrResumeTableSessionForTable({ tableId, existingToken }) {
+  const { data, error } = await supabase.rpc('start_table_session_for_table', {
+    p_table_id: tableId,
+    p_existing_token: existingToken || null,
+  });
+
+  if (error) throw new Error(error.message);
+  return Array.isArray(data) ? data[0] : data;
+}
+
 export async function fetchMenuItem(dishId) {
   const { data, error } = await supabase.rpc('get_public_menu_item', {
     p_menu_item_id: dishId,

@@ -120,6 +120,7 @@ Verify sentiment processing after deployment:
 3. Confirm the `OrderFeedback.analysis_source` field is populated.
 4. Inspect queued `pg_net` request headers and confirm they contain `X-Menuverse-Internal-Secret`, never `Authorization: Bearer <service-role-key>`.
 5. Confirm Dashboard shows `Sentiment analysis not configured` if either protected database setting is intentionally removed during a staging check.
+6. Confirm Dashboard **AI Operations** shows URL, secret, and pg_cron readiness plus the last-24-hour AI versus baseline distribution.
 
 The secure MVP order path depends on these RPC functions:
 
@@ -208,9 +209,13 @@ If the browser reports `Requested function was not found`, the function has not 
 
 Choose Stripe in Settings when native Apple Pay is required.
 
+For Stripe Apple Pay, register every live customer-ordering domain in Stripe before launch, including restaurant custom domains. Re-test the wallet button on Safari after DNS and HTTPS are live.
+
 ## Runtime Integrations
 
 Owners configure POS, WhatsApp, delivery aggregators, Instagram, Facebook, Google ordering links, and signed custom webhooks under **Settings > Integrations**. Secret values are stored in `IntegrationSecret`, which has no browser-facing RLS policy. The browser receives redacted key names only.
+
+Square and Petpooja use first-party POS adapters. Toast, Lightspeed, Revel, and NCR Aloha are exposed as signed bridge modes: provide an outbound bridge endpoint, then copy the generated inbound status callback URL into the bridge configuration.
 
 The integration endpoints are:
 

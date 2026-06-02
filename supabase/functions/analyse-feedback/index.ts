@@ -155,6 +155,9 @@ serve(async (req) => {
   const comment = feedback.comment || '';
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') || Deno.env.get('CLAUDE_API_KEY');
   const model = Deno.env.get('ANTHROPIC_MODEL') || 'claude-3-5-haiku-20241022';
+  if (!apiKey) {
+    console.warn('[WARN] analyse-feedback: ANTHROPIC_API_KEY not set, using keyword baseline.');
+  }
   const analysis = apiKey && comment.trim()
     ? await anthropicAnalysis(feedback.rating, comment, apiKey, model).catch(() => null)
     : null;

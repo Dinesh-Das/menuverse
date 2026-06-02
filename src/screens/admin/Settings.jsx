@@ -36,6 +36,7 @@ const CHANNEL_OPTIONS = [
   ['google_food', 'Google Food', 'language'],
   ['custom', 'Custom Webhook', 'webhook'],
 ];
+const POS_BRIDGE_PROVIDERS = new Set(['webhook', 'toast', 'lightspeed', 'revel', 'ncr_aloha']);
 const LOGO_SIGNATURES = {
   jpg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
   jpeg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
@@ -50,6 +51,12 @@ function buildInboundWebhookUrl(restaurantId, channelType) {
     ? 'meta-order-webhook'
     : 'aggregator-order-webhook';
   return `${baseUrl}/functions/v1/${functionName}?restaurant_id=${encodeURIComponent(restaurantId)}&channel=${encodeURIComponent(channelType)}`;
+}
+
+function buildPosInboundWebhookUrl(restaurantId, provider) {
+  const baseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+  if (!baseUrl || !restaurantId || !provider || provider === 'none') return '';
+  return `${baseUrl}/functions/v1/pos-status-webhook?restaurant_id=${encodeURIComponent(restaurantId)}&provider=${encodeURIComponent(provider)}`;
 }
 
 function serviceModeFromFlags(takeaway, delivery) {
@@ -351,10 +358,14 @@ export default function Settings() {
   const handleSavePos = async () => {
     setPosSaving(true);
     try {
+      const inboundWebhookUrl = buildPosInboundWebhookUrl(user.restaurantId, posProvider);
       await adminUpdatePosSettings(user.restaurantId, {
         provider: posProvider,
         enabled: posEnabled,
-        settings: posSettings,
+        settings: {
+          ...posSettings,
+          ...(inboundWebhookUrl ? { webhook_url: inboundWebhookUrl } : {}),
+        },
       });
       await loadIntegrationSettings();
       addToast('POS settings saved.', 'success');
@@ -419,6 +430,16 @@ export default function Settings() {
     });
   };
 
+  const copyToClipboard = async (value, label) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      addToast(`${label} copied.`, 'success');
+    } catch {
+      addToast(`Could not copy ${label.toLowerCase()}.`, 'error');
+    }
+  };
+
   const handleSaveChannel = async (channelType) => {
     const channel = channels[channelType] || {};
     setChannelSaving(channelType);
@@ -443,6 +464,8 @@ export default function Settings() {
     manager: 'bg-secondary/10 text-secondary',
     staff:   'bg-surface-container-highest text-on-surface-variant',
   };
+  const posInboundWebhookUrl = buildPosInboundWebhookUrl(user?.restaurantId, posProvider);
+  const isBridgePosProvider = POS_BRIDGE_PROVIDERS.has(posProvider);
 
   return (
     <AdminLayout>
@@ -451,6 +474,16 @@ export default function Settings() {
           title="Settings"
           subtitle="Configure your restaurant's identity, operations, and team."
         />
+        {!loading && !paymentEnabled && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('Operations')}
+            className="mb-8 flex w-full items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-left text-sm text-amber-500"
+          >
+            <span className="material-symbols-outlined">warning</span>
+            <span><strong>Digital payments are disabled.</strong> Enable the payment button before sharing customer QR codes.</span>
+          </button>
+        )}
 
         {/* Tab Bar */}
         <div className="flex gap-2 mb-10">
@@ -705,6 +738,14 @@ export default function Settings() {
                       ? 'Razorpay Standard Checkout exposes payment methods enabled on your Razorpay account, including eligible UPI apps, wallets, and Apple Pay after provider setup.'
                       : 'Manual links depend on the payment page you send to the guest.'}
                 </p>
+                {paymentProvider === 'stripe' && (
+                  <div className="mb-8 rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs text-on-surface-variant">
+                    <p className="font-bold text-on-surface">Apple Pay domain setup</p>
+                    <p className="mt-1">
+                      Register every live customer-ordering domain in Stripe before launch, including restaurant custom domains. Test the wallet button on Safari after DNS and HTTPS are live.
+                    </p>
+                  </div>
+                )}
                 <div className="grid md:grid-cols-2 gap-4">
                   {INTEGRATION_READINESS.map(item => (
                     <div key={item.key} className="p-4 rounded-xl bg-surface-container border border-outline-variant/10">
@@ -737,6 +778,10 @@ export default function Settings() {
                     <option value="square">Square</option>
                     <option value="petpooja">Petpooja</option>
                     <option value="webhook">Custom webhook</option>
+                    <option value="toast">Toast bridge</option>
+                    <option value="lightspeed">Lightspeed bridge</option>
+                    <option value="revel">Revel bridge</option>
+                    <option value="ncr_aloha">NCR Aloha bridge</option>
                   </select>
                   <label className="flex items-center justify-between gap-4 p-4 rounded-xl bg-surface-container border border-outline-variant/10">
                     <span className="text-sm font-bold text-on-surface">Enable POS sync</span>
@@ -762,7 +807,6 @@ export default function Settings() {
                       </select>
                       <input type="password" value={posSettings.access_token || ''} onChange={e => updatePosSetting('access_token', e.target.value)} placeholder={posConfiguredSecrets.includes('square_access_token') ? 'Access token saved - enter to replace' : 'Square access token'} className={inputClass} />
                       <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('square_webhook_signature_key') ? 'Webhook signature key saved - enter to replace' : 'Square webhook signature key'} className={inputClass} />
-                      <input value={posSettings.webhook_url || ''} onChange={e => updatePosSetting('webhook_url', e.target.value)} placeholder="Exact Square webhook URL" className={`${inputClass} md:col-span-2`} />
                       <label className="md:col-span-2 flex items-center justify-between gap-4 p-4 rounded-xl bg-surface-container border border-outline-variant/10">
                         <span className="text-sm font-bold text-on-surface">Sync mapped item availability from Square</span>
                         <input type="checkbox" checked={Boolean(posSettings.availability_sync_enabled)} onChange={e => updatePosSetting('availability_sync_enabled', e.target.checked)} className="w-5 h-5 accent-primary" />
@@ -779,12 +823,34 @@ export default function Settings() {
                       <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('petpooja_webhook_secret') ? 'Webhook secret saved - enter to replace' : 'Petpooja webhook shared secret'} className={`${inputClass} md:col-span-2`} />
                     </>
                   )}
-                  {posProvider === 'webhook' && (
+                  {isBridgePosProvider && (
                     <>
-                      <input value={posSettings.endpoint || ''} onChange={e => updatePosSetting('endpoint', e.target.value)} placeholder="Custom POS order endpoint" className={inputClass} />
-                      <input value={posSettings.webhook_url || ''} onChange={e => updatePosSetting('webhook_url', e.target.value)} placeholder="Inbound status webhook URL" className={inputClass} />
+                      <input value={posSettings.endpoint || ''} onChange={e => updatePosSetting('endpoint', e.target.value)} placeholder={`${posProvider === 'webhook' ? 'Custom POS' : posProvider.replace(/_/g, ' ')} outbound bridge endpoint`} className={`${inputClass} md:col-span-2`} />
                       <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('webhook_secret') ? 'Signing secret saved - enter to replace' : 'Webhook signing secret'} className={`${inputClass} md:col-span-2`} />
                     </>
+                  )}
+                  {posProvider !== 'none' && (
+                    <div className="md:col-span-2 rounded-xl border border-outline-variant/10 bg-surface-container p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Inbound status webhook</p>
+                      <p className="mt-1 text-xs text-on-surface-variant">
+                        Register this callback with your POS provider to receive real-time kitchen status updates.
+                      </p>
+                      <div className="mt-3 flex flex-col gap-2 md:flex-row">
+                        <input readOnly value={posInboundWebhookUrl} aria-label="POS inbound webhook URL" className={`${inputClass} font-mono text-xs`} />
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(posInboundWebhookUrl, 'POS webhook URL')}
+                          className="rounded-xl bg-surface-container-high px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-surface"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      {posProvider === 'square' && (
+                        <p className="mt-3 text-xs text-on-surface-variant">
+                          Subscribe to order fulfillment updates and <code>catalog.version.updated</code>. The exact callback URL is saved automatically for Square signature validation.
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-3 mt-6">
