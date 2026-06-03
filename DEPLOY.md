@@ -91,13 +91,26 @@ Run all SQL migrations under `supabase/migrations/`, then run:
 
 If using the dashboard SQL editor, paste the contents of `supabase/rls-policies.sql`.
 
-## Post-Deploy Configuration
+## Post-Deployment Configuration
 
-Database workers that invoke Edge Functions need the project URL and internal secret available as protected database settings:
+Complete these activation steps after migrations and Edge Function deployment:
+
+1. Set the Supabase project URL for database workers:
 
 ```sql
-alter database postgres set "app.settings.supabase_url" = 'https://your-project.supabase.co';
-alter database postgres set "app.settings.menuverse_internal_secret" = 'same-value-as-MENUVERSE_INTERNAL_SECRET';
+alter database postgres set "app.settings.supabase_url" = 'https://<YOUR_PROJECT_REF>.supabase.co';
+```
+
+2. Set the internal worker secret to the same value as the `MENUVERSE_INTERNAL_SECRET` Edge Function secret:
+
+```sql
+alter database postgres set "app.settings.menuverse_internal_secret" = '<MENUVERSE_INTERNAL_SECRET>';
+```
+
+3. Add the Anthropic Edge Function secret for full NLP sentiment analysis:
+
+```bash
+supabase secrets set ANTHROPIC_API_KEY=<ANTHROPIC_API_KEY>
 ```
 
 Do not store `SUPABASE_SERVICE_ROLE_KEY` in a Postgres app setting. The service-role key stays inside Supabase Edge Function secrets only. Database jobs authenticate to Edge Functions with `X-Menuverse-Internal-Secret`.
@@ -108,10 +121,10 @@ Set these Edge Function secrets:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=server-only-service-role-key
 MENUVERSE_INTERNAL_SECRET=long-random-shared-secret
-ANTHROPIC_API_KEY=optional-recommended
+ANTHROPIC_API_KEY=server-only-anthropic-key
 ```
 
-`ANTHROPIC_API_KEY` is optional. When it is absent, sentiment processing uses the deterministic numeric-rating and keyword baseline and still marks menu rankings for batched recalculation.
+`ANTHROPIC_API_KEY` is required for full NLP sentiment analysis. When it is absent, sentiment processing falls back to the deterministic numeric-rating and keyword baseline and still marks menu rankings for batched recalculation.
 
 Verify sentiment processing after deployment:
 
@@ -215,7 +228,7 @@ For Stripe Apple Pay, register every live customer-ordering domain in Stripe bef
 
 Owners configure POS, WhatsApp, delivery aggregators, Instagram, Facebook, Google ordering links, and signed custom webhooks under **Settings > Integrations**. Secret values are stored in `IntegrationSecret`, which has no browser-facing RLS policy. The browser receives redacted key names only.
 
-Square and Petpooja use first-party POS adapters. Toast, Lightspeed, Revel, and NCR Aloha are exposed as signed bridge modes: provide an outbound bridge endpoint, then copy the generated inbound status callback URL into the bridge configuration.
+Square and Petpooja use first-party POS adapters. Register the generated inbound status callback URL from **Settings > Integrations > POS Settings** in the provider dashboard: Square Developer Console > Webhooks > Add Endpoint for Square, and the callback URL field in the Petpooja POS portal for Petpooja. Custom POS providers use the signed webhook bridge: provide an outbound bridge endpoint, then copy the generated inbound status callback URL into the bridge configuration.
 
 The integration endpoints are:
 
@@ -235,11 +248,11 @@ Square OAuth requires `SQUARE_APP_ID`, `SQUARE_APP_SECRET`, and `APP_URL`. Add t
 https://your-project.supabase.co/functions/v1/square-oauth-callback
 ```
 
-Scheduled Square token refresh, Square catalog polling, and Petpooja availability polling also require the protected database settings under **Post-Deploy Configuration**.
+Scheduled Square token refresh, Square catalog polling, and Petpooja availability polling also require the protected database settings under **Post-Deployment Configuration**.
 
 ## Troubleshooting
 
-- `Sentiment analysis not configured`: set the two protected database settings in **Post-Deploy Configuration**.
+- `Sentiment analysis not configured`: set the two protected database settings in **Post-Deployment Configuration**.
 - Failed `IntegrationJob`: open **Settings > Integrations** to inspect and retry delivery.
 - Failed kitchen print: KDS shows a realtime warning with retry buttons.
 - `SentimentQueue.dead_letter`: inspect `last_error`, restore Edge Function secrets, then requeue the record after fixing the cause.

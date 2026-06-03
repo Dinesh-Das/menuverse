@@ -280,6 +280,10 @@ export async function fetchMenuItem(dishId) {
 }
 
 export async function placeOrder(payload) {
+  if (import.meta.env.PROD && ALLOW_CLIENT_ORDER_FALLBACK) {
+    throw new Error('ALLOW_CLIENT_ORDER_FALLBACK is not permitted in production.');
+  }
+
   const restaurantId = requireRestaurantId(payload.restaurant_id);
   const tableSessionToken = payload.table_session_token || getStoredTableSessionToken();
   const rpcPayload = {

@@ -20,7 +20,6 @@ import { sortRecommendedItems } from '../lib/recommendations';
 import { supabase } from '../lib/supabase';
 import {
   createStripePaymentRequest,
-  getWalletPaymentLabel,
   humanizePaymentFailure,
   loadRazorpayCheckout,
   openRazorpayCheckout,
@@ -53,7 +52,7 @@ function buildCartSplitItems(items) {
   });
 }
 
-function calculateCartSplitShares(lineItems, assignments, splitCount, taxAmount, deliveryFee, discount) {
+function calculateCartSplitShares(lineItems, assignments, splitCount, taxAmount, serviceChargeAmount, deliveryFee, discount) {
   const subtotal = lineItems.reduce((sum, item) => sum + item.lineTotal, 0);
   return Array.from({ length: splitCount }, (_, index) => {
     const person = index + 1;
@@ -63,7 +62,7 @@ function calculateCartSplitShares(lineItems, assignments, splitCount, taxAmount,
     return {
       person,
       items,
-      total: personSubtotal + (taxAmount * ratio) + (deliveryFee * ratio) - (discount * ratio),
+      total: personSubtotal + (taxAmount * ratio) + (serviceChargeAmount * ratio) + (deliveryFee * ratio) - (discount * ratio),
     };
   });
 }
@@ -130,9 +129,18 @@ export default function Checkout() {
     walletPayReadyRef.current = walletPayReady;
   }, [walletPayReady]);
 
-  const gstPct = subtotal > 0
-    ? Math.round((tax / subtotal) * 100)
-    : Math.round(parseFloat(localStorage.getItem('mv_gst_rate') || '0.05') * 100);
+  const restaurantGstRate = restaurant?.gst_rate == null ? null : Number(restaurant.gst_rate);
+  const taxForCheckout = Number.isFinite(restaurantGstRate)
+    ? +(subtotal * restaurantGstRate).toFixed(2)
+    : tax;
+  const gstPct = Number.isFinite(restaurantGstRate)
+    ? Math.round(restaurantGstRate * 100)
+    : null;
+  const serviceChargeRate = restaurant?.service_charge_rate == null ? 0 : Number(restaurant.service_charge_rate);
+  const serviceChargeAmount = Number.isFinite(serviceChargeRate) && serviceChargeRate > 0
+    ? +(subtotal * serviceChargeRate).toFixed(2)
+    : 0;
+  const serviceChargePct = serviceChargeRate > 0 ? Math.round(serviceChargeRate * 100) : 0;
 
   React.useEffect(() => {
     if (!currentSlug) {
@@ -167,10 +175,11 @@ export default function Checkout() {
   const loyaltyPoints = Number(guestProfile?.loyalty_points || 0);
   const pointsPerRupee = 10;
   const redemptionStep = 100;
+  const preDiscountTotal = +(subtotal + taxForCheckout + serviceChargeAmount).toFixed(2);
   const maxRedeemablePoints = loyaltyPoints >= redemptionStep
     ? Math.min(
       Math.floor(loyaltyPoints / redemptionStep) * redemptionStep,
-      Math.max(0, Math.floor(((total * pointsPerRupee) - 1) / redemptionStep) * redemptionStep)
+      Math.max(0, Math.floor(((preDiscountTotal * pointsPerRupee) - 1) / redemptionStep) * redemptionStep)
     )
     : 0;
   const maxRedeemableValue = maxRedeemablePoints / pointsPerRupee;
@@ -178,7 +187,7 @@ export default function Checkout() {
   const deliveryFee = orderType === 'delivery'
     ? Number(deliveryQuote?.fee ?? restaurant?.delivery_fee_flat ?? 0)
     : 0;
-  const checkoutTotal = Math.max(0, total - loyaltyDiscount + deliveryFee);
+  const checkoutTotal = Math.max(0, preDiscountTotal - loyaltyDiscount + deliveryFee);
   const upiString = React.useMemo(() => {
     if (!razorpayOrder?.razorpay_order_id || !restaurant?.upi_vpa) return '';
     return [
@@ -240,8 +249,8 @@ export default function Checkout() {
   }, [staticUpiString]);
   const cartSplitItems = React.useMemo(() => buildCartSplitItems(allItems), [allItems]);
   const itemSplitShares = React.useMemo(
-    () => calculateCartSplitShares(cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount),
-    [cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount]
+    () => calculateCartSplitShares(cartSplitItems, itemAssignments, splitCount, taxForCheckout, serviceChargeAmount, deliveryFee, loyaltyDiscount),
+    [cartSplitItems, itemAssignments, splitCount, taxForCheckout, serviceChargeAmount, deliveryFee, loyaltyDiscount]
   );
   const equalSplitShareAmount = splitCount > 1 ? checkoutTotal / splitCount : checkoutTotal;
   const primaryPaymentAmount = paymentEnabled && paymentProvider === 'razorpay' && splitCount > 1
@@ -737,15 +746,6 @@ export default function Checkout() {
     };
   }, [paymentEnabled, paymentProvider]);
 
-  const razorpayWalletCopy = React.useMemo(() => getWalletPaymentLabel(null, 'razorpay'), []);
-  const razorpayWalletButtonLabel = React.useMemo(() => {
-    if (typeof navigator === 'undefined') return 'Pay with wallet';
-    const ua = navigator.userAgent.toLowerCase();
-    if (/iphone|ipad|macintosh/.test(ua)) return 'Pay with Apple Pay';
-    if (/android/.test(ua)) return 'Pay with Google Pay';
-    return 'Pay with wallet';
-  }, []);
-
   const handleRazorpayWalletPayment = async () => {
     if (!paymentEnabled || paymentProvider !== 'razorpay' || !tableSessionToken) return;
     try {
@@ -762,7 +762,6 @@ export default function Checkout() {
         paymentOrder,
         restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
         tableNumber,
-        preferredMethod: 'wallet',
         onSuccess: () => {
           setCheckoutPhase('confirmed');
           const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
@@ -941,6 +940,27 @@ export default function Checkout() {
               </div>
 
               {/* Order Items */}
+              {loyaltyPoints > 0 && (
+                <button
+                  type="button"
+                  onClick={toggleLoyaltyDiscount}
+                  className="mb-5 w-full rounded-2xl border border-primary/20 bg-primary/5 p-4 text-left transition-colors hover:bg-primary/10"
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="material-symbols-outlined text-primary">workspace_premium</span>
+                    <div>
+                      <p className="text-sm font-bold text-on-surface">
+                        You have {loyaltyPoints} points - worth Rs. {(loyaltyPoints / pointsPerRupee).toFixed(0)} off this order.
+                      </p>
+                      <p className="mt-1 text-xs text-on-surface-variant">
+                        {maxRedeemablePoints > 0
+                          ? pointsToRedeem > 0 ? 'Tap to remove the applied loyalty discount.' : 'Tap to apply your available loyalty discount.'
+                          : 'Redemptions start at 100 points.'}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              )}
               <div className="space-y-4 mb-8">
                 {allItems.map((item, idx) => {
                   const modsPrice = (item.selectedModifiers || []).reduce((sum, mod) => sum + (mod.price_delta || 0), 0);
@@ -1092,10 +1112,18 @@ export default function Checkout() {
                     <span>Subtotal</span>
                     <span className="font-headline font-bold text-on-surface">₹{subtotal.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
-                    <span>GST ({gstPct}%)</span>
-                    <span className="font-headline font-bold text-on-surface">₹{tax.toFixed(2)}</span>
-                  </div>
+                  {restaurant && gstPct !== null && (
+                    <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
+                      <span>GST ({gstPct}%)</span>
+                      <span className="font-headline font-bold text-on-surface">₹{taxForCheckout.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {serviceChargeAmount > 0 && (
+                    <div className="flex justify-between text-sm md:text-base text-on-surface-variant">
+                      <span>Service charge ({serviceChargePct}%)</span>
+                      <span className="font-headline font-bold text-on-surface">₹{serviceChargeAmount.toFixed(2)}</span>
+                    </div>
+                  )}
                   {pointsToRedeem > 0 && (
                     <div className="flex justify-between text-sm md:text-base text-green-500">
                       <span>Loyalty discount</span>
@@ -1281,9 +1309,9 @@ export default function Checkout() {
                   className="mb-3 w-full rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-on-primary disabled:opacity-50"
                 >
                   <span className="material-symbols-outlined mr-2 align-middle text-base">account_balance_wallet</span>
-                  {razorpayWalletButtonLabel}
+                  Pay another way
                   <span className="mt-1 block text-[10px] normal-case tracking-normal opacity-80">
-                    {razorpayWalletCopy.detail}
+                    UPI, cards, netbanking and wallets inside Razorpay.
                   </span>
                 </button>
               )}
@@ -1360,7 +1388,7 @@ export default function Checkout() {
               onClick={() => openPreparedRazorpayCheckout().catch(err => setError(humanizePaymentFailure(err, 'Razorpay')))}
               className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-primary"
             >
-              Pay via Razorpay checkout
+              Pay another way
             </button>
             <button
               type="button"

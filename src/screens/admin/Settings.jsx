@@ -879,7 +879,17 @@ export default function Settings() {
                       </div>
                       {posProvider === 'square' && (
                         <p className="mt-3 text-xs text-on-surface-variant">
-                          Subscribe to order fulfillment updates and <code>catalog.version.updated</code>. The exact callback URL is saved automatically for Square signature validation.
+                          Register this URL in Square Developer Console &gt; Webhooks &gt; Add Endpoint. Subscribe to order fulfillment updates and <code>catalog.version.updated</code>; the exact callback URL is saved automatically for Square signature validation.
+                        </p>
+                      )}
+                      {posProvider === 'petpooja' && (
+                        <p className="mt-3 text-xs text-on-surface-variant">
+                          Add this URL as the callback URL in your Petpooja POS portal so order status changes can return to Menuverse.
+                        </p>
+                      )}
+                      {posProvider === 'webhook' && (
+                        <p className="mt-3 text-xs text-on-surface-variant">
+                          Share this callback with your bridge service and sign outbound updates with the saved webhook secret.
                         </p>
                       )}
                     </div>
