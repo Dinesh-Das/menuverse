@@ -22,6 +22,17 @@ async function isAuthorized(supabase: ReturnType<typeof createClient>, req: Requ
   return !error && Boolean(data);
 }
 
+async function markJobFailed(
+  supabase: ReturnType<typeof createClient>,
+  jobId: string,
+  error: string,
+) {
+  await supabase
+    .from('IntegrationJob')
+    .update({ status: 'failed', error, updated_at: new Date().toISOString() })
+    .eq('id', jobId);
+}
+
 serve(async (req) => {
   const json = (body: unknown, status = 200) => jsonResponse(req, body, status);
   if (req.method === 'OPTIONS') return preflightResponse(req);
@@ -71,7 +82,8 @@ serve(async (req) => {
   const privateConfig = await loadIntegrationConfig(supabase, restaurantId, 'pos');
   const config = asRecord(privateConfig?.config);
   const provider = String(body.provider || existingJob?.provider || restaurant?.pos_provider || privateConfig?.provider || Deno.env.get('POS_PROVIDER') || 'webhook').trim();
-  const webhookUrl = asString(config.webhook_url) || Deno.env.get('POS_WEBHOOK_URL');
+  const webhookUrl = asString(config.webhook_url || config.pos_webhook_url || config.endpoint) || Deno.env.get('POS_WEBHOOK_URL');
+  const webhookSecret = asString(config.webhook_secret || config.webhook_signing_secret);
   const accessToken = asString(config.access_token) || Deno.env.get('POS_ACCESS_TOKEN');
   const adapterMap: Record<string, string> = {
     petpooja: 'pos-adapter-petpooja',
@@ -89,7 +101,7 @@ serve(async (req) => {
       .from('IntegrationJob')
       .update({
         provider,
-        status: webhookUrl || adapterMap[provider] ? 'pending' : 'pending_configuration',
+        status: (provider === 'webhook' && webhookUrl) || adapterMap[provider] ? 'pending' : 'pending_configuration',
         payload,
         retry_count: Number(job.retry_count || 0) + 1,
         error: null,
@@ -108,7 +120,7 @@ serve(async (req) => {
         order_id: orderId,
         job_type: 'pos',
         provider,
-        status: webhookUrl || adapterMap[provider] ? 'pending' : 'pending_configuration',
+        status: (provider === 'webhook' && webhookUrl) || adapterMap[provider] ? 'pending' : 'pending_configuration',
         payload,
       })
       .select('id')
@@ -129,48 +141,73 @@ serve(async (req) => {
 
     if (adapterError || adapterData?.status === 'failed') {
       const error = adapterError?.message || adapterData?.error || 'POS adapter failed.';
-      await supabase
-        .from('IntegrationJob')
-        .update({ status: 'failed', error, updated_at: new Date().toISOString() })
-        .eq('id', job.id);
+      await markJobFailed(supabase, job.id, error);
       return json({ queued: true, status: 'failed', job_id: job.id, error }, 502);
     }
 
     return json({ queued: true, status: adapterData?.status || 'delivered', job_id: job.id, response: adapterData?.response || null });
   }
 
+  if (provider !== 'webhook') {
+    const error = `POS provider "${provider}" is not supported by an active Menuverse adapter. Use Square, Petpooja, or Custom Webhook.`;
+    await markJobFailed(supabase, job.id, error);
+    await createAdminAlert(supabase, {
+      restaurantId,
+      title: 'Unsupported POS provider',
+      message: error,
+      source: 'sync_to_pos',
+      dedupeKey: `pos-provider:${provider}`,
+      metadata: { provider, order_id: orderId || undefined },
+    });
+    return json({ queued: true, status: 'failed', job_id: job.id, error }, 400);
+  }
+
   if (!webhookUrl) {
     await createAdminAlert(supabase, {
       restaurantId,
       title: 'POS sync is missing configuration',
-      message: `Configure ${provider} credentials in Settings > Integrations.`,
+      message: 'Configure the Custom Webhook POS endpoint in Settings > Integrations.',
       source: 'sync_to_pos',
       dedupeKey: `pos-config:${provider}`,
       metadata: { provider, order_id: orderId || undefined },
     });
+    await markJobFailed(supabase, job.id, 'Webhook POS provider is missing webhook_url in pos_config.');
     return json({
       queued: true,
-      status: 'pending_configuration',
+      status: 'failed',
       job_id: job.id,
-      message: 'POS provider webhook is not configured.',
-    }, 202);
+      message: 'Webhook URL not configured.',
+    }, 400);
   }
+
+  const orderPayload = { job_id: job.id, restaurant_id: restaurantId, order_id: orderId, ...payload };
+  const payloadStr = JSON.stringify(orderPayload);
+  const hmacSecret = new TextEncoder().encode(webhookSecret || 'menuverse-unsigned');
+  const payloadBytes = new TextEncoder().encode(payloadStr);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    hmacSecret,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sigBytes = await crypto.subtle.sign('HMAC', cryptoKey, payloadBytes);
+  const sig = Array.from(new Uint8Array(sigBytes)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
   const response = await fetch(webhookUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-Menuverse-Signature': sig,
+      'X-Menuverse-Restaurant-Id': restaurantId,
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: JSON.stringify({ job_id: job.id, restaurant_id: restaurantId, order_id: orderId, ...payload }),
+    body: payloadStr,
   }).catch((error) => error);
 
   if (response instanceof Error || !response.ok) {
     const error = response instanceof Error ? response.message : await response.text().catch(() => 'POS webhook failed.');
-    await supabase
-      .from('IntegrationJob')
-      .update({ status: 'failed', error, updated_at: new Date().toISOString() })
-      .eq('id', job.id);
+    await markJobFailed(supabase, job.id, `Webhook POS returned ${response instanceof Error ? 'network error' : response.status}: ${error.slice(0, 200)}`);
     return json({ queued: true, status: 'failed', job_id: job.id, error }, 502);
   }
 

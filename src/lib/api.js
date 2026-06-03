@@ -68,6 +68,9 @@ function normalizeMenuItem(item) {
     tags: safeParseModifiers(item.tags_json) ?? [],
     modifier_groups: (item.modifier_groups || []).map(group => ({
       ...group,
+      selection_type: group.selection_type || 'single',
+      min_selections: Number(group.min_selections || 0),
+      max_selections: group.max_selections == null ? null : Number(group.max_selections),
       options: group.options || [],
     })),
   };
@@ -795,8 +798,18 @@ export async function adminFetchSentimentConfigurationStatus(restaurantId) {
   const { data, error } = await supabase.rpc('admin_sentiment_configuration_status', {
     p_restaurant_id: restaurantId,
   });
-  if (error) throw new Error(error.message);
-  return data || {};
+  if (!error) {
+    return {
+      ...(data || {}),
+      url_configured: Boolean(data?.url_configured ?? data?.supabase_url_configured),
+    };
+  }
+
+  const { data: fallbackData, error: fallbackError } = await supabase.rpc('sentiment_engine_status', {
+    p_restaurant_id: restaurantId,
+  });
+  if (fallbackError) throw new Error(error.message);
+  return fallbackData || {};
 }
 
 export async function adminFindPossibleGuestDuplicates(restaurantId) {
@@ -1324,6 +1337,11 @@ export async function adminUpdateItemModifiers(itemId, restaurantId, groups) {
       menu_item_id: itemId,
       name: group.name,
       required: Boolean(group.required),
+      selection_type: group.selection_type === 'multi' ? 'multi' : 'single',
+      min_selections: Math.max(0, parseInt(group.min_selections, 10) || 0),
+      max_selections: group.selection_type === 'multi' && group.max_selections !== '' && group.max_selections != null
+        ? Math.max(1, parseInt(group.max_selections, 10) || 1)
+        : null,
       created_at: now(),
       updated_at: now(),
     });

@@ -18,7 +18,14 @@ import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/Toast';
 import { sortRecommendedItems } from '../lib/recommendations';
 import { supabase } from '../lib/supabase';
-import { createStripePaymentRequest, humanizePaymentFailure, openRazorpayCheckout, openStripeCheckout } from '../lib/payments';
+import {
+  createStripePaymentRequest,
+  getWalletPaymentLabel,
+  humanizePaymentFailure,
+  loadRazorpayCheckout,
+  openRazorpayCheckout,
+  openStripeCheckout,
+} from '../lib/payments';
 import QRCode from 'qrcode';
 
 const SPLIT_PERSON_STYLES = [
@@ -81,7 +88,6 @@ export default function Checkout() {
   const [upsellItems, setUpsellItems] = useState([]);
   const [upsellCategories, setUpsellCategories] = useState([]);
   const [celebration, setCelebration] = useState(false);
-  const [contactOpen, setContactOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
@@ -110,10 +116,12 @@ export default function Checkout() {
   const [razorpayOrder, setRazorpayOrder] = useState(null);
   const [pendingOrderResult, setPendingOrderResult] = useState(null);
   const [upiQR, setUpiQR] = useState(null);
+  const [staticUpiQR, setStaticUpiQR] = useState(null);
   const walletButtonRef = React.useRef(null);
   const walletElementRef = React.useRef(null);
   const walletPayReadyRef = React.useRef(null);
   const handleCheckoutRef = React.useRef(null);
+  const contactAutoSaveRef = React.useRef('');
 
   const currentSlug = restaurantSlug || sessionSlug || null;
   const currentRestaurantId = restaurantId || restaurant?.id || null;
@@ -145,7 +153,14 @@ export default function Checkout() {
   React.useEffect(() => {
     if (!tableSessionToken) return;
     getGuestProfileForSession(tableSessionToken)
-      .then(profile => setGuestProfile(profile))
+      .then(profile => {
+        setGuestProfile(profile);
+        if (profile) {
+          setGuestName(profile.name || '');
+          setGuestPhone(profile.phone || '');
+          setGuestEmail(profile.email || '');
+        }
+      })
       .catch(err => console.warn('[Menuverse] Guest profile lookup skipped:', err.message));
   }, [tableSessionToken]);
 
@@ -176,6 +191,16 @@ export default function Checkout() {
     ].join('');
   }, [checkoutTotal, razorpayOrder, restaurant?.name, restaurant?.upi_vpa]);
 
+  const staticUpiString = React.useMemo(() => {
+    if (!restaurant?.upi_vpa) return '';
+    return [
+      'upi://pay',
+      `?pa=${encodeURIComponent(restaurant.upi_vpa)}`,
+      `&pn=${encodeURIComponent(restaurant.name || 'Menuverse')}`,
+      '&cu=INR',
+    ].join('');
+  }, [restaurant?.name, restaurant?.upi_vpa]);
+
   React.useEffect(() => {
     let cancelled = false;
     if (!upiString) {
@@ -194,11 +219,34 @@ export default function Checkout() {
       cancelled = true;
     };
   }, [upiString]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!staticUpiString) {
+      setStaticUpiQR(null);
+      return undefined;
+    }
+    QRCode.toDataURL(staticUpiString, { width: 200, margin: 1 })
+      .then(dataUrl => {
+        if (!cancelled) setStaticUpiQR(dataUrl);
+      })
+      .catch(error => {
+        console.warn('[Menuverse] Static UPI QR generation failed:', error.message);
+        if (!cancelled) setStaticUpiQR(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [staticUpiString]);
   const cartSplitItems = React.useMemo(() => buildCartSplitItems(allItems), [allItems]);
   const itemSplitShares = React.useMemo(
     () => calculateCartSplitShares(cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount),
     [cartSplitItems, itemAssignments, splitCount, tax, deliveryFee, loyaltyDiscount]
   );
+  const equalSplitShareAmount = splitCount > 1 ? checkoutTotal / splitCount : checkoutTotal;
+  const primaryPaymentAmount = paymentEnabled && paymentProvider === 'razorpay' && splitCount > 1
+    ? equalSplitShareAmount
+    : checkoutTotal;
   const deliveryAddressComplete = ['street', 'city', 'pincode'].every(key => deliveryAddress[key].trim());
   const canPlaceWithoutTable = orderType === 'takeaway' || orderType === 'delivery';
   const orderTypeOptions = [
@@ -342,6 +390,52 @@ export default function Checkout() {
     }
   };
 
+  React.useEffect(() => {
+    const normalizedPhone = guestPhone.replace(/\D/g, '');
+    if (!currentRestaurantId || normalizedPhone.length < 10) return undefined;
+
+    const autosaveKey = [
+      currentRestaurantId,
+      tableSessionId || '',
+      normalizedPhone.slice(-10),
+      guestName.trim(),
+      guestEmail.trim(),
+      marketingConsent ? '1' : '0',
+    ].join(':');
+    if (contactAutoSaveRef.current === autosaveKey) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      if (tableSessionToken) {
+        saveGuestContact({
+          restaurantId: currentRestaurantId,
+          tableSessionToken,
+          name: guestName,
+          phone: guestPhone,
+          email: guestEmail,
+          marketingConsent,
+        })
+          .catch(contactErr => console.warn('[Menuverse] Guest contact autosave skipped:', contactErr.message));
+      }
+
+      resolveOrCreateGuestProfile({
+        restaurantId: currentRestaurantId,
+        tableSessionId,
+        name: guestName,
+        phone: guestPhone,
+        email: guestEmail,
+        marketingConsent,
+      })
+        .then(profile => {
+          contactAutoSaveRef.current = autosaveKey;
+          setGuestProfile(profile);
+          localStorage.setItem('mv_contact_saved', 'true');
+        })
+        .catch(contactErr => console.warn('[Menuverse] Guest profile autosave skipped:', contactErr.message));
+    }, 800);
+
+    return () => window.clearTimeout(timeout);
+  }, [currentRestaurantId, guestEmail, guestName, guestPhone, marketingConsent, tableSessionId, tableSessionToken]);
+
   const handleCheckout = async ({ skipCelebration = false } = {}) => {
     if (allItems.length === 0) return;
     let effectiveDeliveryQuote = deliveryQuote;
@@ -456,7 +550,7 @@ export default function Checkout() {
   });
 
   const handleStripeWalletPayment = React.useCallback(async (ev) => {
-    const amountForPayment = checkoutTotal;
+    const amountForPayment = equalSplitShareAmount;
     try {
       const ready = walletPayReadyRef.current;
       if (!ready) throw new Error('Wallet payment is not ready yet.');
@@ -467,6 +561,7 @@ export default function Checkout() {
         amount: amountForPayment,
         split_count: splitCount,
         split_index: 0,
+        split_amount: amountForPayment,
       });
       const result = await ready.stripe.confirmCardPayment(paymentIntent.client_secret, {
         payment_method: ev.paymentMethod.id,
@@ -485,12 +580,12 @@ export default function Checkout() {
       setError(message);
       addToast(message, 'error');
     }
-  }, [addToast, checkoutTotal, navigate, restaurantSlug, splitCount, tableSessionToken]);
+  }, [addToast, equalSplitShareAmount, navigate, restaurantSlug, splitCount, tableSessionToken]);
 
   React.useEffect(() => {
     let cancelled = false;
     setWalletPayReady(null);
-    if (!paymentEnabled || paymentProvider !== 'stripe' || !tableSessionToken || checkoutTotal <= 0) return undefined;
+    if (!paymentEnabled || paymentProvider !== 'stripe' || !tableSessionToken || equalSplitShareAmount <= 0) return undefined;
 
     async function setupWalletButton() {
       try {
@@ -501,7 +596,7 @@ export default function Checkout() {
         if (cancelled || !setup?.publishable_key) return;
         const ready = await createStripePaymentRequest({
           publishableKey: setup.publishable_key,
-          amountPaise: Math.round(checkoutTotal * 100),
+          amountPaise: Math.round(equalSplitShareAmount * 100),
           currency: (setup.currency || currency || 'usd').toLowerCase(),
           restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
           onSuccess: handleStripeWalletPayment,
@@ -520,7 +615,7 @@ export default function Checkout() {
     return () => {
       cancelled = true;
     };
-  }, [checkoutTotal, currency, handleStripeWalletPayment, paymentEnabled, paymentProvider, restaurant?.name, tableSessionToken]);
+  }, [currency, equalSplitShareAmount, handleStripeWalletPayment, paymentEnabled, paymentProvider, restaurant?.name, tableSessionToken]);
 
   React.useEffect(() => {
     if (!walletPayReady || !walletButtonRef.current) return undefined;
@@ -565,6 +660,7 @@ export default function Checkout() {
           amount: share.total,
           split_count: splitCount,
           split_index: share.person - 1,
+          split_amount: share.total,
           split_detail: splitDetail,
         });
         await openStripeCheckout({
@@ -629,6 +725,62 @@ export default function Checkout() {
     });
   };
 
+  React.useEffect(() => {
+    if (!paymentEnabled || paymentProvider !== 'razorpay') return undefined;
+    let cancelled = false;
+    loadRazorpayCheckout()
+      .catch(err => {
+        if (!cancelled) console.warn('[Menuverse] Razorpay preload skipped:', err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentEnabled, paymentProvider]);
+
+  const razorpayWalletCopy = React.useMemo(() => getWalletPaymentLabel(null, 'razorpay'), []);
+  const razorpayWalletButtonLabel = React.useMemo(() => {
+    if (typeof navigator === 'undefined') return 'Pay with wallet';
+    const ua = navigator.userAgent.toLowerCase();
+    if (/iphone|ipad|macintosh/.test(ua)) return 'Pay with Apple Pay';
+    if (/android/.test(ua)) return 'Pay with Google Pay';
+    return 'Pay with wallet';
+  }, []);
+
+  const handleRazorpayWalletPayment = async () => {
+    if (!paymentEnabled || paymentProvider !== 'razorpay' || !tableSessionToken) return;
+    try {
+      const amount = equalSplitShareAmount;
+      const orderResult = await handleCheckout({ skipCelebration: true });
+      setCheckoutPhase('payment');
+      const paymentOrder = await createPayment({
+        table_session_token: tableSessionToken,
+        amount,
+        split_count: splitCount,
+        split_index: 0,
+      });
+      await openRazorpayCheckout({
+        paymentOrder,
+        restaurantName: restaurant?.name || localStorage.getItem('mv_restaurant_name') || 'Menuverse',
+        tableNumber,
+        preferredMethod: 'wallet',
+        onSuccess: () => {
+          setCheckoutPhase('confirmed');
+          const basePath = restaurantSlug ? `/r/${restaurantSlug}` : '';
+          navigate(`${basePath}/order/${orderResult.order_ref}`);
+        },
+        onDismiss: () => {
+          setCheckoutPhase(null);
+          setError(humanizePaymentFailure({ code: 'payment_cancelled' }, 'Razorpay'));
+        },
+      });
+    } catch (err) {
+      setCheckoutPhase(null);
+      const message = humanizePaymentFailure(err, 'Razorpay');
+      setError(message);
+      addToast(message, 'error');
+    }
+  };
+
   const handlePrimaryCheckout = async () => {
     if (!paymentEnabled || paymentProvider !== 'razorpay' || !tableSessionToken) {
       await handleCheckout();
@@ -636,13 +788,14 @@ export default function Checkout() {
     }
 
     try {
-      const amount = checkoutTotal;
+      const amount = equalSplitShareAmount;
       const orderResult = await handleCheckout({ skipCelebration: true });
       setCheckoutPhase('payment');
       const paymentOrder = await createPayment({
         table_session_token: tableSessionToken,
         amount,
         split_count: splitCount,
+        split_index: 0,
       });
       setPendingOrderResult(orderResult);
       setRazorpayOrder({ ...paymentOrder, share_amount: paymentOrder.share_amount || amount });
@@ -1087,38 +1240,59 @@ export default function Checkout() {
                 </div>
               )}
 
-              {!localStorage.getItem('mv_contact_saved') && (
-                <div className="mb-6 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
-                  <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Earn loyalty rewards and get order updates</p>
-                  <p className="mt-1 text-xs text-on-surface-variant">Earn 1 point per &#8377;10 on future visits. Contact details are optional.</p>
-                  <div className="mt-4 space-y-3">
-                    <input value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="Name" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
-                    <input type="tel" value={guestPhone} onChange={e => setGuestPhone(e.target.value)} placeholder="Phone for WhatsApp updates" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
-                    <button type="button" onClick={() => setContactOpen(value => !value)} className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-primary">
-                      <span className="material-symbols-outlined text-base">{contactOpen ? 'expand_less' : 'add'}</span>
-                      {contactOpen ? 'Hide email' : 'Add email receipt'}
-                    </button>
-                    {contactOpen && (
-                      <input type="email" value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="Email receipt" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
-                    )}
-                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
-                      <input type="checkbox" checked={marketingConsent} onChange={e => setMarketingConsent(e.target.checked)} className="w-4 h-4 accent-primary" />
-                      Send me offers and loyalty updates
-                    </label>
-                  </div>
+              <div className="mb-6 bg-surface-container-low p-5 rounded-2xl border border-outline-variant/10">
+                <p className="text-xs font-bold uppercase tracking-widest text-on-surface">
+                  {guestProfile
+                    ? `Welcome back${guestProfile?.name ? `, ${guestProfile.name}` : ''}! You have ${guestProfile?.loyalty_points || 0} pts`
+                    : 'Earn loyalty points'}
+                </p>
+                <p className="mt-1 text-xs text-on-surface-variant">
+                  Enter your phone to earn points and keep receipt updates tied to this visit. Name and email are optional.
+                </p>
+                <div className="mt-4 space-y-3">
+                  <input type="tel" value={guestPhone} onChange={e => setGuestPhone(e.target.value)} placeholder="Phone for loyalty points" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                  <input value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="Name (optional)" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                  <input type="email" value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="Email receipt (optional)" className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50" />
+                  <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-on-surface-variant">
+                    <input type="checkbox" checked={marketingConsent} onChange={e => setMarketingConsent(e.target.checked)} className="w-4 h-4 accent-primary" />
+                    Send me offers and loyalty updates
+                  </label>
                 </div>
-              )}
+              </div>
 
               {/* CTA */}
+              {paymentProvider === 'razorpay' && staticUpiQR && !razorpayOrder && (
+                <div className="mb-4 flex flex-col items-center gap-2 rounded-2xl border border-outline-variant/20 bg-surface-container-low p-4">
+                  <img src={staticUpiQR} alt="UPI QR" className="w-40 h-40 rounded-lg bg-white p-2" />
+                  <p className="text-center text-xs text-on-surface-variant">
+                    UPI: {restaurant.upi_vpa}<br />
+                    <span className="italic">Confirm order to lock in the exact amount</span>
+                  </p>
+                </div>
+              )}
               {walletPayReady && (
                 <div id="payment-request-button" ref={walletButtonRef} className="mb-3" />
+              )}
+              {paymentEnabled && paymentProvider === 'razorpay' && (
+                <button
+                  type="button"
+                  onClick={() => handleRazorpayWalletPayment()}
+                  disabled={loading || (!canPlaceWithoutTable && !tableId)}
+                  className="mb-3 w-full rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-on-primary disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined mr-2 align-middle text-base">account_balance_wallet</span>
+                  {razorpayWalletButtonLabel}
+                  <span className="mt-1 block text-[10px] normal-case tracking-normal opacity-80">
+                    {razorpayWalletCopy.detail}
+                  </span>
+                </button>
               )}
               <button
                 onClick={() => handlePrimaryCheckout().catch(() => {})}
                 disabled={loading || (!canPlaceWithoutTable && !tableId)}
                 className="w-full bg-primary text-on-primary py-4 md:py-5 rounded-xl font-bold uppercase tracking-widest text-sm md:text-base shadow-luxury transition-transform hover:bg-primary-fixed-dim active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2 cursor-pointer mb-4"
               >
-                {loading ? 'Sending your order...' : `${paymentEnabled ? 'Confirm Order' : 'Place Order'} · ₹${checkoutTotal.toFixed(2)}`}
+                {loading ? 'Sending your order...' : `${paymentEnabled ? 'Confirm Order' : 'Place Order'} - Rs. ${primaryPaymentAmount.toFixed(2)}`}
                 <span className="material-symbols-outlined text-lg ml-1">arrow_forward</span>
               </button>
               <div className="flex items-center justify-center gap-3 text-on-surface-variant/40 mt-2 mb-8">

@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
+import { asRecord, asString, loadIntegrationConfig } from '../_shared/integration-config.ts';
 
 function renderTemplate(template: string, values: Record<string, string>) {
   return template.replace(/\{\{(name|first_name|restaurant_name)\}\}/g, (_, key) => values[key] || '');
@@ -91,6 +92,25 @@ serve(async (req) => {
   const { data: recipients, error: recipientsError } = await audienceQuery;
   if (recipientsError) return json({ error: recipientsError.message }, 500);
 
+  const emailChannel = await loadIntegrationConfig(supabase, campaign.restaurant_id, 'email').catch(() => null);
+  const emailConfig = asRecord(emailChannel?.safeConfig);
+  const emailSecrets = asRecord(emailChannel?.secrets);
+  const resendKey = emailChannel?.enabled
+    ? asString(emailSecrets.resend_api_key) || Deno.env.get('RESEND_API_KEY')
+    : Deno.env.get('RESEND_API_KEY');
+  const emailWebhookUrl = emailChannel?.enabled
+    ? asString(emailConfig.email_webhook_url) || Deno.env.get('EMAIL_DELIVERY_WEBHOOK_URL')
+    : Deno.env.get('EMAIL_DELIVERY_WEBHOOK_URL');
+  const emailWebhookToken = Deno.env.get('EMAIL_DELIVERY_WEBHOOK_TOKEN');
+  const fromEmail = campaign.from_email || asString(emailConfig.from_email) || Deno.env.get('RESEND_FROM_EMAIL') || 'Menuverse <no-reply@menuverse.app>';
+  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
+  let sentCount = 0;
+  let failedCount = 0;
+
+  if ((campaign.channel === 'email' || campaign.channel === 'both') && !resendKey && !emailWebhookUrl) {
+    return json({ error: 'Email delivery not configured. Set RESEND_API_KEY or EMAIL_DELIVERY_WEBHOOK_URL.' }, 503);
+  }
+
   await supabase
     .from('MarketingCampaign')
     .update({
@@ -99,18 +119,6 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     })
     .eq('id', campaignId);
-
-  const resendKey = Deno.env.get('RESEND_API_KEY');
-  const emailWebhookUrl = Deno.env.get('EMAIL_DELIVERY_WEBHOOK_URL');
-  const emailWebhookToken = Deno.env.get('EMAIL_DELIVERY_WEBHOOK_TOKEN');
-  const fromEmail = campaign.from_email || Deno.env.get('RESEND_FROM_EMAIL') || 'Menuverse <no-reply@menuverse.app>';
-  const internalSecret = Deno.env.get('MENUVERSE_INTERNAL_SECRET');
-  let sentCount = 0;
-  let failedCount = 0;
-
-  if ((campaign.channel === 'email' || campaign.channel === 'both') && !resendKey && !emailWebhookUrl) {
-    return json({ error: 'Email delivery not configured. Set RESEND_API_KEY or EMAIL_DELIVERY_WEBHOOK_URL.' }, 503);
-  }
 
   for (const recipient of recipients || []) {
     const firstName = String(recipient.name || '').trim().split(/\s+/)[0] || 'there';

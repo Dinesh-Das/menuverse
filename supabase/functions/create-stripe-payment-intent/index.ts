@@ -38,6 +38,7 @@ serve(async (req) => {
   const hasRequestedSplitIndex = Object.prototype.hasOwnProperty.call(body, 'split_index');
   const requestedSplitIndex = clampSplitIndex(body.split_index, splitCount);
   const requestedAmount = Number(body.amount || 0);
+  const splitAmount = Number(body.split_amount || 0);
   const splitDetail = body.split_detail && typeof body.split_detail === 'object' ? body.split_detail : null;
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const stripe = new Stripe(stripeKey, { apiVersion: '2024-04-10' });
@@ -86,7 +87,9 @@ serve(async (req) => {
   const payableOrders = (Array.isArray(ordersResult) ? ordersResult : [])
     .filter((order) => !['cancelled', 'completed'].includes(order.status));
   const totalAmount = payableOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
-  const checkoutAmount = requestedAmount > 0
+  const checkoutAmount = splitAmount > 0
+    ? splitAmount
+    : requestedAmount > 0
     ? requestedAmount
     : isSplitPayment ? totalAmount / splitCount : totalAmount;
   if (!payableOrders.length || checkoutAmount <= 0) {
@@ -128,6 +131,7 @@ serve(async (req) => {
   }
 
   const amountCents = Math.round(checkoutAmount * 100);
+  const idempotencyKey = `${tableSessionToken}:split:${splitIndex}:${splitCount}`;
   const paymentIntent = await stripe.paymentIntents.create({
     amount: amountCents,
     currency,
@@ -142,7 +146,7 @@ serve(async (req) => {
       order_ids: orderIds.join(','),
       split_detail: splitDetail ? JSON.stringify(splitDetail).slice(0, 500) : '',
     },
-  });
+  }, { idempotencyKey });
 
   const paymentRows = payableOrders.map((order) => ({
     id: crypto.randomUUID(),
@@ -154,7 +158,7 @@ serve(async (req) => {
     stripe_payment_intent_id: paymentIntent.id,
     status: 'initiated',
     provider: 'stripe',
-    amount: requestedAmount > 0
+    amount: (splitAmount > 0 || requestedAmount > 0)
       ? checkoutAmount * (Number(order.total_amount || 0) / Math.max(totalAmount, 1))
       : isSplitPayment ? Number(order.total_amount || 0) / splitCount : Number(order.total_amount || 0),
       metadata: {

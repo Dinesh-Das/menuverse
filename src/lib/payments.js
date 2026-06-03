@@ -125,6 +125,7 @@ export async function openRazorpayCheckout({
   paymentOrder,
   restaurantName,
   tableNumber,
+  preferredMethod = null,
   onSuccess,
   onDismiss,
 }) {
@@ -152,6 +153,7 @@ export async function openRazorpayCheckout({
     notes: {
       table_number: tableNumber || '',
     },
+    ...(preferredMethod ? { prefill: { method: preferredMethod } } : {}),
     handler(response) {
       onSuccess?.(response);
     },

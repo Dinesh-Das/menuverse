@@ -36,7 +36,7 @@ const CHANNEL_OPTIONS = [
   ['google_food', 'Google Food', 'language'],
   ['custom', 'Custom Webhook', 'webhook'],
 ];
-const POS_BRIDGE_PROVIDERS = new Set(['webhook', 'toast', 'lightspeed', 'revel', 'ncr_aloha']);
+const POS_BRIDGE_PROVIDERS = new Set(['webhook']);
 const LOGO_SIGNATURES = {
   jpg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
   jpeg: { type: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
@@ -116,6 +116,10 @@ export default function Settings() {
   const [squareOAuthStarting, setSquareOAuthStarting] = useState(false);
   const [channels, setChannels] = useState({});
   const [channelSaving, setChannelSaving] = useState(null);
+  const [resendApiKey, setResendApiKey] = useState('');
+  const [resendFromEmail, setResendFromEmail] = useState('');
+  const [resendKeyConfigured, setResendKeyConfigured] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
 
   // ── Shared ────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -191,6 +195,8 @@ export default function Settings() {
     try {
       const data = await adminFetchIntegrationSettings(user.restaurantId);
       const nextChannels = {};
+      setResendKeyConfigured(false);
+      setResendFromEmail('');
       data.forEach(channel => {
         if (channel.channel_type === 'pos') {
           setPosProvider(channel.provider || 'none');
@@ -199,13 +205,21 @@ export default function Settings() {
             location_id: channel.config?.square_location_id || '',
             environment: channel.config?.square_environment || 'production',
             currency: channel.config?.square_currency || 'USD',
-            webhook_url: channel.config?.square_webhook_url || channel.config?.status_webhook_url || '',
+            webhook_url: channel.provider === 'webhook'
+              ? channel.config?.webhook_url || ''
+              : channel.config?.square_webhook_url || channel.config?.status_webhook_url || '',
+            webhook_secret: '',
             availability_sync_enabled: Boolean(channel.config?.availability_sync_enabled),
             restaurant_id: channel.config?.petpooja_restaurant_id || '',
             endpoint: channel.config?.petpooja_webhook_url || channel.config?.webhook_url || '',
             inventory_url: channel.config?.petpooja_inventory_url || '',
           });
           setPosConfiguredSecrets(channel.configured_secret_keys || []);
+          return;
+        }
+        if (channel.channel_type === 'email') {
+          setResendKeyConfigured(Boolean(channel.configured_secret_keys?.includes('resend_api_key')));
+          setResendFromEmail(channel.config?.from_email || '');
           return;
         }
         nextChannels[channel.channel_type] = {
@@ -364,7 +378,7 @@ export default function Settings() {
         enabled: posEnabled,
         settings: {
           ...posSettings,
-          ...(inboundWebhookUrl ? { webhook_url: inboundWebhookUrl } : {}),
+          ...(inboundWebhookUrl ? { status_webhook_url: inboundWebhookUrl } : {}),
         },
       });
       await loadIntegrationSettings();
@@ -456,6 +470,28 @@ export default function Settings() {
       addToast(`Channel save failed: ${err.message}`, 'error');
     } finally {
       setChannelSaving(null);
+    }
+  };
+
+  const handleSaveEmailSettings = async () => {
+    setEmailSaving(true);
+    try {
+      await adminUpdateIntegrationChannel(user.restaurantId, {
+        channel_type: 'email',
+        provider: 'resend',
+        enabled: Boolean(resendFromEmail.trim() || resendApiKey.trim() || resendKeyConfigured),
+        settings: {
+          from_email: resendFromEmail.trim(),
+          resend_api_key: resendApiKey.trim(),
+        },
+      });
+      setResendApiKey('');
+      await loadIntegrationSettings();
+      addToast('Email delivery settings saved.', 'success');
+    } catch (err) {
+      addToast(`Email settings save failed: ${err.message}`, 'error');
+    } finally {
+      setEmailSaving(false);
     }
   };
 
@@ -777,11 +813,7 @@ export default function Settings() {
                     <option value="none">No POS provider</option>
                     <option value="square">Square</option>
                     <option value="petpooja">Petpooja</option>
-                    <option value="webhook">Custom webhook</option>
-                    <option value="toast">Toast bridge</option>
-                    <option value="lightspeed">Lightspeed bridge</option>
-                    <option value="revel">Revel bridge</option>
-                    <option value="ncr_aloha">NCR Aloha bridge</option>
+                    <option value="webhook">Custom Webhook (Toast, Lightspeed, etc.)</option>
                   </select>
                   <label className="flex items-center justify-between gap-4 p-4 rounded-xl bg-surface-container border border-outline-variant/10">
                     <span className="text-sm font-bold text-on-surface">Enable POS sync</span>
@@ -825,8 +857,8 @@ export default function Settings() {
                   )}
                   {isBridgePosProvider && (
                     <>
-                      <input value={posSettings.endpoint || ''} onChange={e => updatePosSetting('endpoint', e.target.value)} placeholder={`${posProvider === 'webhook' ? 'Custom POS' : posProvider.replace(/_/g, ' ')} outbound bridge endpoint`} className={`${inputClass} md:col-span-2`} />
-                      <input type="password" value={posSettings.webhook_signing_secret || ''} onChange={e => updatePosSetting('webhook_signing_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('webhook_secret') ? 'Signing secret saved - enter to replace' : 'Webhook signing secret'} className={`${inputClass} md:col-span-2`} />
+                      <input value={posSettings.webhook_url || ''} onChange={e => updatePosSetting('webhook_url', e.target.value)} placeholder="POS Webhook URL" className={`${inputClass} md:col-span-2`} />
+                      <input type="password" value={posSettings.webhook_secret || ''} onChange={e => updatePosSetting('webhook_secret', e.target.value)} placeholder={posConfiguredSecrets.includes('webhook_secret') ? 'Signing secret saved - enter to replace' : 'Leave blank for unsigned requests'} className={`${inputClass} md:col-span-2`} />
                     </>
                   )}
                   {posProvider !== 'none' && (
@@ -866,6 +898,37 @@ export default function Settings() {
                     </button>
                   )}
                 </div>
+              </div>
+
+              <div className={`p-8 mb-8 ${cardBg}`}>
+                <h3 className="font-headline text-xl font-bold text-on-surface">Email Delivery</h3>
+                <p className="text-sm text-on-surface-variant mt-1 mb-6">
+                  Required for email marketing campaigns. Uses Resend.
+                </p>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <input
+                    type="password"
+                    value={resendApiKey}
+                    onChange={e => setResendApiKey(e.target.value)}
+                    placeholder={resendKeyConfigured ? 'API key saved - enter to replace' : 'Resend API Key (re_...)'}
+                    className={inputClass}
+                  />
+                  <input
+                    type="email"
+                    value={resendFromEmail}
+                    onChange={e => setResendFromEmail(e.target.value)}
+                    placeholder="From email (e.g. orders@yourrestaurant.com)"
+                    className={inputClass}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveEmailSettings}
+                  disabled={emailSaving}
+                  className="mt-4 rounded-xl bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-on-primary disabled:opacity-50"
+                >
+                  {emailSaving ? 'Saving...' : 'Save Email Settings'}
+                </button>
               </div>
 
               <div className={`p-8 mb-8 ${cardBg}`}>

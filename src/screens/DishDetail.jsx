@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import {
@@ -29,6 +29,7 @@ export default function DishDetail() {
   const [arSupported, setArSupported] = useState(true);
   const [modelViewerReady, setModelViewerReady] = useState(false);
   const [preferredLocale, setPreferredLocale] = useState(getPreferredMenuLocale);
+  const firstRequiredGroupRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -45,7 +46,7 @@ export default function DishDetail() {
         // Initialize selected modifiers for required groups
         const initial = {};
         (data.modifier_groups || []).forEach(group => {
-          initial[group.id] = null;
+          initial[group.id] = group.selection_type === 'multi' ? [] : null;
         });
         setSelectedModifiers(initial);
         setArAsset(null);
@@ -90,30 +91,74 @@ export default function DishDetail() {
     [dish]
   );
   const allRequiredSelected = useMemo(() =>
-    requiredGroups.every(g => selectedModifiers[g.id] != null),
+    requiredGroups.every(group => {
+      const value = selectedModifiers[group.id];
+      if (group.selection_type === 'multi') {
+        return Array.isArray(value) && value.length >= (Number(group.min_selections) || 1);
+      }
+      return value != null;
+    }),
     [requiredGroups, selectedModifiers]
   );
+  const firstUnsatisfiedRequiredGroupId = useMemo(() => {
+    const group = requiredGroups.find(candidate => {
+      const value = selectedModifiers[candidate.id];
+      if (candidate.selection_type === 'multi') {
+        return !Array.isArray(value) || value.length < (Number(candidate.min_selections) || 1);
+      }
+      return value == null;
+    });
+    return group?.id || null;
+  }, [requiredGroups, selectedModifiers]);
+  const unsatisfiedRequiredCount = useMemo(() => requiredGroups.filter(group => {
+    const value = selectedModifiers[group.id];
+    if (group.selection_type === 'multi') {
+      return !Array.isArray(value) || value.length < (Number(group.min_selections) || 1);
+    }
+    return value == null;
+  }).length, [requiredGroups, selectedModifiers]);
 
   // Build the modifiers array for the cart
   const modifiersForCart = useMemo(() => {
     return Object.values(selectedModifiers)
-      .filter(Boolean)
+      .flatMap(value => Array.isArray(value) ? value : value ? [value] : [])
       .map(opt => ({ id: opt.id, name: opt.name, price_delta: opt.price_delta || 0 }));
   }, [selectedModifiers]);
 
   // Modifier price contribution
   const modsPrice = modifiersForCart.reduce((sum, m) => sum + (m.price_delta || 0), 0);
 
-  const handleSelectModifier = (groupId, option) => {
+  const handleSelectModifier = (group, option) => {
+    if (group.selection_type === 'multi') {
+      setSelectedModifiers(prev => {
+        const current = Array.isArray(prev[group.id]) ? prev[group.id] : [];
+        const alreadySelected = current.some(selected => selected.id === option.id);
+        if (alreadySelected) {
+          return { ...prev, [group.id]: current.filter(selected => selected.id !== option.id) };
+        }
+        const maxSelections = Number(group.max_selections) || Infinity;
+        if (current.length >= maxSelections) return prev;
+        return { ...prev, [group.id]: [...current, option] };
+      });
+      return;
+    }
+
     setSelectedModifiers(prev => ({
       ...prev,
-      [groupId]: prev[groupId]?.id === option.id ? null : option,
+      [group.id]: prev[group.id]?.id === option.id ? null : option,
     }));
   };
 
   const handleAdd = () => {
     if (!dish?.available) return;
-    if (!allRequiredSelected) return;
+    if (!allRequiredSelected) {
+      firstRequiredGroupRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      firstRequiredGroupRef.current?.classList.add('ring-2', 'ring-error', 'ring-offset-2', 'ring-offset-background');
+      window.setTimeout(() => {
+        firstRequiredGroupRef.current?.classList.remove('ring-2', 'ring-error', 'ring-offset-2', 'ring-offset-background');
+      }, 2000);
+      return;
+    }
     addItem(dish, qty, modifiersForCart, itemNote);
     setAddedFeedback(true);
     setTimeout(() => setAddedFeedback(false), 2000);
@@ -221,8 +266,20 @@ export default function DishDetail() {
           {/* ── Modifier Groups (CB-6) ──────────────────────────── */}
           {hasModifiers && (
             <div className="mb-8 space-y-6">
-              {dish.modifier_groups.map(group => (
-                <div key={group.id}>
+              {dish.modifier_groups.map(group => {
+                const currentValue = selectedModifiers[group.id];
+                const selectedOptions = Array.isArray(currentValue) ? currentValue : currentValue ? [currentValue] : [];
+                const isMulti = group.selection_type === 'multi';
+                const minSelections = Number(group.min_selections) || (group.required ? 1 : 0);
+                const maxSelections = Number(group.max_selections) || null;
+                const isUnsatisfied = group.required && selectedOptions.length < minSelections;
+                const isFirstUnsatisfiedRequired = group.id === firstUnsatisfiedRequiredGroupId;
+                return (
+                <div
+                  key={group.id}
+                  ref={isFirstUnsatisfiedRequired ? firstRequiredGroupRef : null}
+                  className="rounded-2xl transition-shadow"
+                >
                   <div className="flex items-center gap-2 mb-3">
                     <h3 className="text-[10px] md:text-xs uppercase font-bold tracking-[0.2em] text-on-surface-variant">
                       {group.name}
@@ -233,13 +290,23 @@ export default function DishDetail() {
                       </span>
                     )}
                   </div>
+                  {isMulti && (
+                    <p className="mb-3 text-[10px] uppercase tracking-widest text-on-surface-variant">
+                      {maxSelections
+                        ? `Choose up to ${maxSelections}`
+                        : minSelections > 0
+                          ? `Choose at least ${minSelections}`
+                          : 'Choose any'}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     {(group.options || []).map(option => {
-                      const isSelected = selectedModifiers[group.id]?.id === option.id;
+                      const isSelected = selectedOptions.some(selected => selected.id === option.id);
                       return (
                         <button
                           key={option.id}
-                          onClick={() => handleSelectModifier(group.id, option)}
+                          type="button"
+                          onClick={() => handleSelectModifier(group, option)}
                           disabled={isUnavailable}
                           className={`px-4 py-2.5 rounded-full text-sm font-bold transition-all cursor-pointer border disabled:cursor-not-allowed disabled:opacity-50 ${
                             isSelected
@@ -247,6 +314,13 @@ export default function DishDetail() {
                               : 'bg-surface-container-high text-on-surface-variant border-outline-variant/20 hover:border-primary/50 hover:bg-surface-container-highest'
                           }`}
                         >
+                          {isMulti && (
+                            <span className={`mr-2 inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
+                              isSelected ? 'border-on-primary bg-on-primary text-primary' : 'border-outline-variant/40'
+                            }`}>
+                              {isSelected && <span className="material-symbols-outlined text-[10px]">check</span>}
+                            </span>
+                          )}
                           {option.name}
                           {option.price_delta > 0 && (
                             <span className={`ml-1 text-xs ${isSelected ? 'text-on-primary/70' : 'text-primary'}`}>
@@ -257,14 +331,17 @@ export default function DishDetail() {
                       );
                     })}
                   </div>
-                  {group.required && !selectedModifiers[group.id] && (
+                  {isUnsatisfied && (
                     <p className="text-[10px] text-error mt-2 flex items-center gap-1">
                       <span className="material-symbols-outlined text-xs">warning</span>
-                      Please select a {group.name.toLowerCase()}
+                      {isMulti
+                        ? `Please select at least ${minSelections} from ${group.name.toLowerCase()}`
+                        : `Please select a ${group.name.toLowerCase()}`}
                     </p>
                   )}
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
 
@@ -282,7 +359,7 @@ export default function DishDetail() {
             />
           </div>
 
-          <div className="fixed bottom-0 left-0 w-full p-6 glass-bottom-dark rounded-t-3xl z-50 flex items-center justify-between gap-6 md:static md:bg-transparent md:backdrop-blur-none md:p-0 md:mt-8 md:justify-start md:border-none md:shadow-none">
+          <div className="fixed bottom-0 left-0 w-full p-6 glass-bottom-dark rounded-t-3xl z-50 flex flex-wrap items-center justify-between gap-4 md:static md:bg-transparent md:backdrop-blur-none md:p-0 md:mt-8 md:justify-start md:border-none md:shadow-none md:gap-6">
             <div className="flex items-center gap-4 bg-surface-container-high md:bg-surface-container-low rounded-full px-2 py-1.5 border border-outline-variant/20 md:border-outline-variant md:scale-110 md:origin-left">
               <button
                 onClick={() => setQty(Math.max(1, qty - 1))}
@@ -301,9 +378,14 @@ export default function DishDetail() {
               </button>
             </div>
 
+            {!allRequiredSelected && !isUnavailable && (
+              <p className="order-first w-full text-center text-[10px] font-bold uppercase tracking-widest text-error md:order-none md:w-auto md:max-w-[15rem]">
+                Please select {unsatisfiedRequiredCount} required option{unsatisfiedRequiredCount === 1 ? '' : 's'} above.
+              </p>
+            )}
             <button
               onClick={handleAdd}
-              disabled={isUnavailable || !allRequiredSelected || addedFeedback}
+              disabled={isUnavailable || addedFeedback}
               className={`flex-1 md:flex-none md:px-12 md:py-5 py-4 rounded-full font-bold uppercase tracking-widest text-sm shadow-luxury transition-all duration-300 flex justify-center items-center gap-2 ${
                 addedFeedback 
                   ? 'bg-green-500 text-white shadow-green-500/30'

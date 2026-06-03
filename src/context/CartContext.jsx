@@ -64,7 +64,7 @@ export function CartProvider({ children }) {
     return ORDER_TYPES.has(stored) ? stored : 'dine_in';
   });
   const [gstRateState, setGstRateState] = useState(localStorage.getItem('mv_gst_rate') || '0.05');
-  const [paymentEnabled, setPaymentEnabled] = useState(localStorage.getItem('mv_payment_enabled') === 'true');
+  const [paymentEnabled, setPaymentEnabled] = useState(false);
   const [paymentProvider, setPaymentProvider] = useState(localStorage.getItem('mv_payment_provider') || 'razorpay');
   const [currency, setCurrency] = useState(localStorage.getItem('mv_currency') || 'inr');
 
@@ -171,7 +171,6 @@ export function CartProvider({ children }) {
     }
     if (sessionData.paymentEnabled !== undefined) {
       setPaymentEnabled(Boolean(sessionData.paymentEnabled));
-      localStorage.setItem('mv_payment_enabled', String(Boolean(sessionData.paymentEnabled)));
     }
     if (sessionData.paymentProvider !== undefined) {
       setPaymentProvider(sessionData.paymentProvider || 'razorpay');

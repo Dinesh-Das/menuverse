@@ -9,6 +9,7 @@ import {
   adminEstimateCampaignRecipients,
   adminFetchCampaignAnalytics,
   adminFetchCampaigns,
+  adminFetchIntegrationSettings,
   adminPublishSocialPost,
   adminSendCampaign,
 } from '../../lib/api';
@@ -35,6 +36,7 @@ export default function Campaigns() {
   const [analyticsByCampaign, setAnalyticsByCampaign] = useState({});
   const [socialPost, setSocialPost] = useState({ channel_type: 'instagram', message: '', image_url: '', ordering_link: '' });
   const [socialPublishing, setSocialPublishing] = useState(false);
+  const [emailDeliveryConfigured, setEmailDeliveryConfigured] = useState(false);
 
   const audienceFilter = React.useMemo(() => ({
     min_visits: Number(form.min_visits || 0),
@@ -56,6 +58,22 @@ export default function Campaigns() {
     loadCampaigns();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.restaurantId]);
+
+  useEffect(() => {
+    if (!user?.restaurantId) return;
+    adminFetchIntegrationSettings(user.restaurantId)
+      .then(settings => {
+        const emailChannel = (settings || []).find(channel => channel.channel_type === 'email');
+        setEmailDeliveryConfigured(Boolean(emailChannel?.enabled && emailChannel?.configured_secret_keys?.includes('resend_api_key')));
+      })
+      .catch(() => setEmailDeliveryConfigured(false));
+  }, [user?.restaurantId]);
+
+  useEffect(() => {
+    if (!emailDeliveryConfigured && (form.channel === 'email' || form.channel === 'both')) {
+      setForm(current => ({ ...current, channel: 'whatsapp' }));
+    }
+  }, [emailDeliveryConfigured, form.channel]);
 
   useEffect(() => {
     if (!user?.restaurantId || !showForm) return;
@@ -172,10 +190,15 @@ export default function Campaigns() {
                 className="rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface focus:outline-none focus:border-primary"
               >
                 <option value="whatsapp">WhatsApp</option>
-                <option value="email">Email</option>
-                <option value="both">Both</option>
+                <option value="email" disabled={!emailDeliveryConfigured}>Email{emailDeliveryConfigured ? '' : ' (configure in Settings > Integrations)'}</option>
+                <option value="both" disabled={!emailDeliveryConfigured}>Both{emailDeliveryConfigured ? '' : ' (configure email first)'}</option>
               </select>
             </div>
+            {!emailDeliveryConfigured && (
+              <p className="-mt-2 mb-4 text-xs text-on-surface-variant">
+                Email campaigns unlock after Resend is configured in Settings &gt; Integrations.
+              </p>
+            )}
             {(form.channel === 'email' || form.channel === 'both') && (
               <div className="grid md:grid-cols-2 gap-4 mb-4">
                 <input

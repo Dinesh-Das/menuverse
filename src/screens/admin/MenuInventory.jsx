@@ -22,6 +22,18 @@ const TRANSLATION_LOCALES = [
   { value: 'te', label: 'Telugu' },
 ];
 
+function normalizeModifierGroup(group = {}) {
+  return {
+    ...group,
+    name: group.name || '',
+    required: Boolean(group.required),
+    selection_type: group.selection_type || 'single',
+    min_selections: group.min_selections ?? 0,
+    max_selections: group.max_selections ?? '',
+    options: group.options || [],
+  };
+}
+
 export default function MenuInventory() {
   const { user } = useAuth();
   const { addToast } = useToast();
@@ -78,7 +90,7 @@ export default function MenuInventory() {
       available: item.available,
       pos_catalog_variation_id: item.pos_catalog_variation_id || '',
       petpooja_item_id: item.petpooja_item_id || '',
-      modifiers: item.modifier_groups || []
+      modifiers: (item.modifier_groups || []).map(normalizeModifierGroup)
     });
     setEditingItem(item);
   };
@@ -383,7 +395,7 @@ export default function MenuInventory() {
                       type="button" 
                       onClick={() => setFormData(prev => ({ 
                         ...prev, 
-                        modifiers: [...prev.modifiers, { name: '', required: false, options: [] }] 
+                        modifiers: [...prev.modifiers, normalizeModifierGroup()] 
                       }))}
                       className="px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer border border-outline-variant/30 hover:bg-surface-container-high text-on-surface flex items-center gap-1"
                     >
@@ -429,6 +441,62 @@ export default function MenuInventory() {
                           >
                             <span className="material-symbols-outlined text-sm">delete</span>
                           </button>
+                        </div>
+
+                        <div className="grid md:grid-cols-3 gap-3">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                            Selection type
+                            <select
+                              value={group.selection_type || 'single'}
+                              onChange={e => {
+                                const newMods = [...formData.modifiers];
+                                newMods[gIdx] = {
+                                  ...newMods[gIdx],
+                                  selection_type: e.target.value,
+                                  max_selections: e.target.value === 'multi' ? newMods[gIdx].max_selections || '' : '',
+                                  min_selections: e.target.value === 'multi' ? newMods[gIdx].min_selections || 0 : 0,
+                                };
+                                setFormData({...formData, modifiers: newMods});
+                              }}
+                              className="mt-2 w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
+                            >
+                              <option value="single">Single</option>
+                              <option value="multi">Multiple</option>
+                            </select>
+                          </label>
+                          {group.selection_type === 'multi' && (
+                            <>
+                              <label className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                                Min selections
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={group.min_selections ?? 0}
+                                  onChange={e => {
+                                    const newMods = [...formData.modifiers];
+                                    newMods[gIdx].min_selections = e.target.value;
+                                    setFormData({...formData, modifiers: newMods});
+                                  }}
+                                  className="mt-2 w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
+                                />
+                              </label>
+                              <label className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                                Max selections
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={group.max_selections ?? ''}
+                                  onChange={e => {
+                                    const newMods = [...formData.modifiers];
+                                    newMods[gIdx].max_selections = e.target.value;
+                                    setFormData({...formData, modifiers: newMods});
+                                  }}
+                                  className="mt-2 w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
+                                  placeholder="No limit"
+                                />
+                              </label>
+                            </>
+                          )}
                         </div>
                         
                         <div className="pl-6 border-l-2 border-outline-variant/20 space-y-2">

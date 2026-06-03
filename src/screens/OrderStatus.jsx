@@ -17,6 +17,7 @@ const STATUS_LABELS = {
   preparing: 'Preparing',
   ready:     'Ready for Pickup',
   served:    'Served',
+  completed: 'Completed',
   cancelled: 'Cancelled',
 };
 const STATUS_ICONS = {
@@ -25,6 +26,7 @@ const STATUS_ICONS = {
   preparing: 'outdoor_grill',
   ready:     'lunch_dining',
   served:    'check_circle',
+  completed: 'check_circle',
   cancelled: 'cancel',
 };
 const STATUS_MESSAGES = {
@@ -33,10 +35,13 @@ const STATUS_MESSAGES = {
   preparing: 'Our chefs are crafting your meal right now.',
   ready:     'Your food is ready! A waiter will bring it to your table shortly.',
   served:    'Enjoy your meal! Let us know if you need anything.',
+  completed: 'Thanks for dining with us. Your receipt is ready.',
   cancelled: 'This order was cancelled. Please contact your server.',
 };
 const MAX_FEEDBACK_COMMENT_LENGTH = 200;
 const READY_FEEDBACK_DELAY_MS = 3 * 60 * 1000;
+const COMPLETED_FEEDBACK_DELAY_MS = 3 * 60 * 1000;
+const RATE_CTA_DELAY_MS = 2 * 60 * 1000;
 const CONTACT_CAPTURE_STATUSES = new Set(['accepted', 'preparing', 'ready', 'served', 'completed']);
 
 export default function OrderStatus() {
@@ -57,6 +62,7 @@ export default function OrderStatus() {
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [readyFeedbackVisible, setReadyFeedbackVisible] = useState(false);
+  const [showRateCTA, setShowRateCTA] = useState(false);
   const [guestPhone, setGuestPhone] = useState('');
   const [receiptContactOpen, setReceiptContactOpen] = useState(false);
   const [receiptName, setReceiptName] = useState('');
@@ -69,6 +75,8 @@ export default function OrderStatus() {
   const orderRef = useRef(null);
   const feedbackNudgeSentRef = useRef(false);
   const readyFeedbackTimerRef = useRef(null);
+  const completedFeedbackTimerRef = useRef(null);
+  const rateCtaTimerRef = useRef(null);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -100,6 +108,9 @@ export default function OrderStatus() {
 
   const triggerServedFeedbackNudge = useCallback((servedOrder) => {
     if (feedbackGiven) return;
+    const nudgeKey = `mv_feedback_${orderId}_nudged`;
+    if (window.sessionStorage.getItem(nudgeKey)) return;
+    window.sessionStorage.setItem(nudgeKey, '1');
     setShowFeedbackModal(true);
 
     if (feedbackNudgeSentRef.current) return;
@@ -127,13 +138,31 @@ export default function OrderStatus() {
       });
       if (result?.status === 'disabled') return;
     }).catch(err => console.warn('[Menuverse] Feedback WhatsApp nudge skipped:', err.message));
-  }, [feedbackGiven, guestPhone]);
+  }, [feedbackGiven, guestPhone, orderId]);
 
   useEffect(() => {
-    if (!feedbackGiven && ['served', 'completed'].includes(order?.status)) {
-      triggerServedFeedbackNudge(order);
+    if (completedFeedbackTimerRef.current) {
+      window.clearTimeout(completedFeedbackTimerRef.current);
+      completedFeedbackTimerRef.current = null;
     }
-  }, [feedbackGiven, order, triggerServedFeedbackNudge]);
+    if (feedbackGiven) return undefined;
+    if (order?.status === 'served') {
+      triggerServedFeedbackNudge(orderRef.current);
+    }
+    if (order?.status === 'completed') {
+      completedFeedbackTimerRef.current = window.setTimeout(() => {
+        triggerServedFeedbackNudge(orderRef.current);
+        completedFeedbackTimerRef.current = null;
+      }, COMPLETED_FEEDBACK_DELAY_MS);
+    }
+
+    return () => {
+      if (completedFeedbackTimerRef.current) {
+        window.clearTimeout(completedFeedbackTimerRef.current);
+        completedFeedbackTimerRef.current = null;
+      }
+    };
+  }, [feedbackGiven, order?.status, triggerServedFeedbackNudge]);
 
   useEffect(() => {
     if (readyFeedbackTimerRef.current) {
@@ -154,6 +183,30 @@ export default function OrderStatus() {
       if (readyFeedbackTimerRef.current) {
         window.clearTimeout(readyFeedbackTimerRef.current);
         readyFeedbackTimerRef.current = null;
+      }
+    };
+  }, [feedbackGiven, order?.status]);
+
+  useEffect(() => {
+    if (rateCtaTimerRef.current) {
+      window.clearTimeout(rateCtaTimerRef.current);
+      rateCtaTimerRef.current = null;
+    }
+
+    if (feedbackGiven || !['served', 'completed'].includes(order?.status)) {
+      setShowRateCTA(false);
+      return undefined;
+    }
+
+    rateCtaTimerRef.current = window.setTimeout(() => {
+      setShowRateCTA(true);
+      rateCtaTimerRef.current = null;
+    }, RATE_CTA_DELAY_MS);
+
+    return () => {
+      if (rateCtaTimerRef.current) {
+        window.clearTimeout(rateCtaTimerRef.current);
+        rateCtaTimerRef.current = null;
       }
     };
   }, [feedbackGiven, order?.status]);
@@ -694,6 +747,16 @@ export default function OrderStatus() {
         )}
 
       </main>
+
+      {showRateCTA && !feedbackGiven && (
+        <button
+          onClick={() => setShowFeedbackModal(true)}
+          className="fixed bottom-20 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-bold text-on-primary shadow-lg"
+        >
+          <span className="material-symbols-outlined text-base">star</span>
+          Rate your order
+        </button>
+      )}
 
       {showFeedbackModal && (
         <div className="fixed inset-0 z-[120] flex items-end justify-center">

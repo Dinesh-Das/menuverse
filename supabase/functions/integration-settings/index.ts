@@ -25,7 +25,7 @@ function posSecretPatch(provider: string, input: Record<string, unknown>) {
     };
   }
   return {
-    webhook_secret: asString(input.webhook_signing_secret),
+    webhook_secret: asString(input.webhook_secret) || asString(input.webhook_signing_secret),
     access_token: asString(input.access_token),
   };
 }
@@ -36,7 +36,7 @@ function posSafeConfig(provider: string, input: Record<string, unknown>) {
       square_location_id: asString(input.location_id),
       square_environment: asString(input.environment) || 'production',
       square_currency: (asString(input.currency) || 'USD').toUpperCase(),
-      square_webhook_url: asString(input.webhook_url),
+      square_webhook_url: asString(input.status_webhook_url) || asString(input.webhook_url),
       availability_sync_enabled: Boolean(input.availability_sync_enabled),
     };
   }
@@ -48,8 +48,8 @@ function posSafeConfig(provider: string, input: Record<string, unknown>) {
     };
   }
   return {
-    webhook_url: asString(input.endpoint),
-    status_webhook_url: asString(input.webhook_url),
+    webhook_url: asString(input.webhook_url) || asString(input.endpoint),
+    status_webhook_url: asString(input.status_webhook_url),
   };
 }
 
@@ -150,13 +150,17 @@ serve(async (req) => {
   if (action === 'save_channel') {
     const channelType = asString(body.channel_type);
     if (!channelType || channelType === 'pos') return json({ error: 'A non-POS channel_type is required.' }, 400);
-    const settings = asRecord(body.settings);
-    const channel = await upsertIntegrationConfig(supabase, {
-      restaurantId,
-      channelType,
-      provider: asString(body.provider) || channelType,
-      enabled: Boolean(body.enabled),
-      config: {
+    const settings = {
+      ...asRecord(body.config),
+      ...asRecord(body.settings),
+    };
+    const explicitSecrets = asRecord(body.secrets);
+    const config = channelType === 'email'
+      ? {
+        from_email: asString(settings.from_email),
+        email_webhook_url: asString(settings.email_webhook_url),
+      }
+      : {
         endpoint: asString(settings.endpoint),
         menu_sync_url: asString(settings.menu_sync_url),
         publish_url: asString(settings.publish_url),
@@ -164,13 +168,24 @@ serve(async (req) => {
         account_id: asString(settings.account_id),
         phone_number_id: asString(settings.phone_number_id),
         webhook_url: asString(settings.webhook_url),
-      },
-      secrets: {
+      };
+    const secrets = channelType === 'email'
+      ? {
+        resend_api_key: asString(explicitSecrets.resend_api_key) || asString(settings.resend_api_key),
+      }
+      : {
         access_token: asString(settings.access_token),
         webhook_secret: asString(settings.webhook_secret),
         verify_token: asString(settings.verify_token),
         app_secret: asString(settings.app_secret),
-      },
+      };
+    const channel = await upsertIntegrationConfig(supabase, {
+      restaurantId,
+      channelType,
+      provider: asString(body.provider) || channelType,
+      enabled: Boolean(body.enabled),
+      config,
+      secrets,
     });
     if (channelType === 'whatsapp') {
       await supabase
