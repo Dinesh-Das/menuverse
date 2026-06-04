@@ -38,6 +38,13 @@ const SPLIT_PERSON_STYLES = [
   { active: 'bg-lime-600 text-white', muted: 'bg-lime-500/10 text-lime-600' },
 ];
 
+function isMobilePaymentDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)
+    || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+}
+
 function buildCartSplitItems(items) {
   return items.map((item, index) => {
     const modifiersTotal = (item.selectedModifiers || []).reduce((sum, mod) => sum + Number(mod.price_delta || 0), 0);
@@ -124,6 +131,7 @@ export default function Checkout() {
 
   const currentSlug = restaurantSlug || sessionSlug || null;
   const currentRestaurantId = restaurantId || restaurant?.id || null;
+  const mobilePaymentDevice = React.useMemo(() => isMobilePaymentDevice(), []);
 
   React.useEffect(() => {
     walletPayReadyRef.current = walletPayReady;
@@ -199,6 +207,7 @@ export default function Checkout() {
       `&tn=${encodeURIComponent(`Menuverse order ${razorpayOrder.razorpay_order_id.slice(-6)}`)}`,
     ].join('');
   }, [checkoutTotal, razorpayOrder, restaurant?.name, restaurant?.upi_vpa]);
+  const showUpiAppCta = paymentProvider === 'razorpay' && mobilePaymentDevice && Boolean(upiString);
 
   const staticUpiString = React.useMemo(() => {
     if (!restaurant?.upi_vpa) return '';
@@ -1302,18 +1311,23 @@ export default function Checkout() {
                 <div id="payment-request-button" ref={walletButtonRef} className="mb-3" />
               )}
               {paymentEnabled && paymentProvider === 'razorpay' && (
-                <button
-                  type="button"
-                  onClick={() => handleRazorpayWalletPayment()}
-                  disabled={loading || (!canPlaceWithoutTable && !tableId)}
-                  className="mb-3 w-full rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-on-primary disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined mr-2 align-middle text-base">account_balance_wallet</span>
-                  Pay another way
-                  <span className="mt-1 block text-[10px] normal-case tracking-normal opacity-80">
-                    UPI, cards, netbanking and wallets inside Razorpay.
-                  </span>
-                </button>
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={() => handleRazorpayWalletPayment()}
+                    disabled={loading || (!canPlaceWithoutTable && !tableId)}
+                    className="w-full rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-on-primary disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined mr-2 align-middle text-base">account_balance_wallet</span>
+                    Pay another way
+                    <span className="mt-1 block text-[10px] normal-case tracking-normal opacity-80">
+                      UPI, cards, netbanking and wallets inside Razorpay.
+                    </span>
+                  </button>
+                  <p className="mt-2 text-center text-[10px] text-on-surface-variant">
+                    Browser-native Apple Pay and Google Pay appear only for Stripe-enabled restaurants.
+                  </p>
+                </div>
               )}
               <button
                 onClick={() => handlePrimaryCheckout().catch(() => {})}
@@ -1323,6 +1337,20 @@ export default function Checkout() {
                 {loading ? 'Sending your order...' : `${paymentEnabled ? 'Confirm Order' : 'Place Order'} - Rs. ${primaryPaymentAmount.toFixed(2)}`}
                 <span className="material-symbols-outlined text-lg ml-1">arrow_forward</span>
               </button>
+              {paymentEnabled && (
+                <button
+                  type="button"
+                  onClick={() => handleCheckout().catch(() => {})}
+                  disabled={loading || (!canPlaceWithoutTable && !tableId)}
+                  className="mb-4 w-full rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-surface-variant transition-colors hover:bg-surface-container disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined mr-2 align-middle text-base">payments</span>
+                  Pay at restaurant
+                  <span className="mt-1 block text-[10px] normal-case tracking-normal opacity-80">
+                    Cash, card machine, or staff-assisted payment after ordering.
+                  </span>
+                </button>
+              )}
               <div className="flex items-center justify-center gap-3 text-on-surface-variant/40 mt-2 mb-8">
                 <span className="material-symbols-outlined text-sm">lock</span>
                 <span className="text-[10px] uppercase tracking-widest font-bold">Secure Order</span>
@@ -1370,13 +1398,36 @@ export default function Checkout() {
             <p className="mt-2 text-sm text-on-surface-variant">
               Razorpay checkout is verified automatically. Direct UPI QR transfers are verified by restaurant staff.
             </p>
-            {upiQR ? (
-              <div className="mt-5 flex flex-col items-center gap-2 rounded-xl bg-surface-container p-4">
-                <p className="text-sm font-bold text-on-surface">Scan with any UPI app</p>
-                <img src={upiQR} alt="UPI QR code" className="h-52 w-52 rounded-lg bg-white p-2" />
-                <p className="text-xs text-on-surface-variant">
-                  &#8377;{Number(razorpayOrder.share_amount || checkoutTotal).toFixed(2)} - {restaurant?.name}
-                </p>
+            {upiQR || upiString ? (
+              <div className="mt-5">
+                {showUpiAppCta && (
+                  <a
+                    href={upiString}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-primary"
+                  >
+                    <span className="material-symbols-outlined text-base">account_balance</span>
+                    Pay with UPI app
+                  </a>
+                )}
+                {upiQR && (
+                  <div className={`${showUpiAppCta ? 'mt-3' : ''} flex flex-col items-center gap-2 rounded-xl bg-surface-container p-4`}>
+                    <p className="text-sm font-bold text-on-surface">
+                      {showUpiAppCta ? 'Or scan with any UPI app' : 'Scan with any UPI app'}
+                    </p>
+                    <img src={upiQR} alt="UPI QR code" className="h-52 w-52 rounded-lg bg-white p-2" />
+                    <p className="text-xs text-on-surface-variant">
+                      &#8377;{Number(razorpayOrder.share_amount || checkoutTotal).toFixed(2)} - {restaurant?.name}
+                    </p>
+                  </div>
+                )}
+                {!showUpiAppCta && upiString && (
+                  <a
+                    href={upiString}
+                    className="mt-3 block rounded-xl border border-outline-variant/20 px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-surface-variant"
+                  >
+                    Open UPI app on this device
+                  </a>
+                )}
               </div>
             ) : (
               <p className="mt-5 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-500">

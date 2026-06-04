@@ -30,6 +30,13 @@ const TAG_CONFIG = {
   needs_review: { label: 'Needs Review', color: 'bg-error text-on-error', icon: 'priority_high' },
   ar: { label: 'AR Preview', color: 'bg-blue-600 text-white', icon: 'view_in_ar' },
 };
+const DIET_FILTER_OPTIONS = [
+  { key: 'all', label: 'All', icon: 'restaurant_menu', flags: [] },
+  { key: 'veg', label: 'Veg', icon: 'eco', flags: ['veg', 'vegan'] },
+  { key: 'vegan', label: 'Vegan', icon: 'spa', flags: ['vegan'] },
+  { key: 'non-veg', label: 'Non-Veg', icon: 'ramen_dining', flags: ['non-veg'] },
+];
+const INLINE_SENTIMENT_BADGES = new Set(['loved', 'trending']);
 const MENU_IMAGE_TRANSFORM = 'width=400&quality=75&format=webp';
 
 function getMenuImageUrl(src) {
@@ -77,7 +84,8 @@ function DishImage({ src, alt }) {
 
 function loadDietFilter() {
   try {
-    const parsed = JSON.parse(window.sessionStorage.getItem('mv_diet_filter') || '[]');
+    const saved = window.sessionStorage.getItem('mv_diet_filter') || window.localStorage.getItem('mv_diet_filter') || '[]';
+    const parsed = JSON.parse(saved);
     return Array.isArray(parsed) ? parsed.filter(flag => ['veg', 'vegan', 'non-veg'].includes(flag)) : [];
   } catch {
     return [];
@@ -193,6 +201,7 @@ export default function MenuHome() {
 
   useEffect(() => {
     window.sessionStorage.setItem('mv_diet_filter', JSON.stringify(dietFilter));
+    window.localStorage.setItem('mv_diet_filter', JSON.stringify(dietFilter));
   }, [dietFilter]);
 
   useEffect(() => {
@@ -255,11 +264,18 @@ export default function MenuHome() {
     return catMatch && searchMatch && dietMatch;
   });
 
-  const toggleDiet = (flag) => {
+  const activeDietKey = (() => {
+    if (dietFilter.length === 0) return 'all';
+    if (dietFilter.length === 2 && dietFilter.includes('veg') && dietFilter.includes('vegan')) return 'veg';
+    if (dietFilter.length === 1) return dietFilter[0];
+    return 'custom';
+  })();
+
+  const selectDietFilter = (flags) => {
     window.sessionStorage.setItem('mv_diet_filter_explicit', 'true');
     setHasExplicitDietFilter(true);
     setDietFilterSeededFromProfile(false);
-    setDietFilter(prev => prev.includes(flag) ? prev.filter(f => f !== flag) : [...prev, flag]);
+    setDietFilter(flags);
   };
 
   const dismissProfileDietFilter = () => {
@@ -350,6 +366,9 @@ export default function MenuHome() {
       if (dish.has_ar_preview || dish.ar_preview_enabled) return TAG_CONFIG.ar;
       return getPrimaryTag(dish.tags_json);
     })();
+    const sentimentBadge = INLINE_SENTIMENT_BADGES.has(dish.sentiment_badge)
+      ? TAG_CONFIG[dish.sentiment_badge]
+      : null;
     const cartItems = items.filter(i => i.id === dish.id);
     const totalQty = cartItems.reduce((sum, i) => sum + i.qty, 0);
     const hasModifiers = dish.modifier_groups && dish.modifier_groups.length > 0;
@@ -390,9 +409,16 @@ export default function MenuHome() {
           <div className="text-[10px] uppercase tracking-widest font-bold text-primary mb-1.5">
             {categories.find(c => c.id === dish.category_id)?.name}
           </div>
-          <h3 className="font-headline text-lg font-bold text-on-surface leading-tight mb-2" title={dish.original_name || undefined}>
-            {highlightText(dish.name, search)}
-          </h3>
+          <div className="mb-2 flex items-start justify-between gap-2">
+            <h3 className="min-w-0 flex-1 font-headline text-lg font-bold text-on-surface leading-tight" title={dish.original_name || undefined}>
+              {highlightText(dish.name, search)}
+            </h3>
+            {sentimentBadge && (
+              <span className="flex-none rounded-full bg-primary/10 px-2 py-1 text-[9px] font-extrabold uppercase tracking-widest text-primary">
+                {sentimentBadge.label}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-on-surface-variant leading-relaxed line-clamp-2 mb-3 opacity-80" title={dish.original_description || undefined}>
             {dish.description}
           </p>
@@ -568,18 +594,18 @@ export default function MenuHome() {
 
         {/* ── Dietary Filter Chips ─────────────────────────── */}
         <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar pb-1">
-          {[['veg', 'Veg', 'eco'], ['vegan', 'Vegan', 'spa'], ['non-veg', 'Non-Veg', 'ramen_dining']].map(([flag, label, icon]) => (
+          {DIET_FILTER_OPTIONS.map(option => (
             <button
-              key={flag}
-              onClick={() => toggleDiet(flag)}
+              key={option.key}
+              onClick={() => selectDietFilter(option.flags)}
               className={`flex-none flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all cursor-pointer ${
-                dietFilter.includes(flag)
+                activeDietKey === option.key
                   ? 'bg-primary text-on-primary shadow-md'
                   : 'bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest'
               }`}
             >
-              <span className="material-symbols-outlined text-sm">{icon}</span>
-              {label}
+              <span className="material-symbols-outlined text-sm">{option.icon}</span>
+              {option.label}
             </button>
           ))}
         </div>

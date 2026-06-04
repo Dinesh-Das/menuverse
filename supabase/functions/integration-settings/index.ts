@@ -37,6 +37,11 @@ function posSafeConfig(provider: string, input: Record<string, unknown>) {
       square_environment: asString(input.environment) || 'production',
       square_currency: (asString(input.currency) || 'USD').toUpperCase(),
       square_webhook_url: asString(input.status_webhook_url) || asString(input.webhook_url),
+      square_webhook_subscription_id: asString(input.webhook_subscription_id),
+      square_webhook_registration_status: asString(input.webhook_registration_status),
+      square_webhook_registration_error: asString(input.webhook_registration_error),
+      square_webhook_registered_at: asString(input.webhook_registered_at),
+      square_webhook_event_types: Array.isArray(input.webhook_event_types) ? input.webhook_event_types : undefined,
       availability_sync_enabled: Boolean(input.availability_sync_enabled),
     };
   }

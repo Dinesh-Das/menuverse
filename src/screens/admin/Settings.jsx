@@ -208,6 +208,11 @@ export default function Settings() {
             webhook_url: channel.provider === 'webhook'
               ? channel.config?.webhook_url || ''
               : channel.config?.square_webhook_url || channel.config?.status_webhook_url || '',
+            webhook_registration_status: channel.config?.square_webhook_registration_status || '',
+            webhook_registration_error: channel.config?.square_webhook_registration_error || channel.last_error || '',
+            webhook_subscription_id: channel.config?.square_webhook_subscription_id || '',
+            webhook_registered_at: channel.config?.square_webhook_registered_at || '',
+            webhook_event_types: channel.config?.square_webhook_event_types || [],
             webhook_secret: '',
             availability_sync_enabled: Boolean(channel.config?.availability_sync_enabled),
             restaurant_id: channel.config?.petpooja_restaurant_id || '',
@@ -878,9 +883,24 @@ export default function Settings() {
                         </button>
                       </div>
                       {posProvider === 'square' && (
-                        <p className="mt-3 text-xs text-on-surface-variant">
-                          Register this URL in Square Developer Console &gt; Webhooks &gt; Add Endpoint. Subscribe to order fulfillment updates and <code>catalog.version.updated</code>; the exact callback URL is saved automatically for Square signature validation.
-                        </p>
+                        <div className="mt-3 rounded-xl border border-outline-variant/10 bg-surface-container-low p-3 text-xs text-on-surface-variant">
+                          <p>
+                            Square OAuth registers this callback automatically for order updates, fulfillment updates, and catalog availability sync. Keep the URL for manual recovery or sandbox checks.
+                          </p>
+                          {posSettings.webhook_registration_status && (
+                            <p className={`mt-2 font-bold ${posSettings.webhook_registration_status === 'registered' ? 'text-green-500' : 'text-amber-500'}`}>
+                              Webhook registration: {posSettings.webhook_registration_status}
+                            </p>
+                          )}
+                          {posSettings.webhook_subscription_id && (
+                            <p className="mt-1 font-mono text-[10px] text-on-surface-variant">
+                              Subscription {posSettings.webhook_subscription_id}
+                            </p>
+                          )}
+                          {posSettings.webhook_registration_error && (
+                            <p className="mt-2 text-amber-500">{posSettings.webhook_registration_error}</p>
+                          )}
+                        </div>
                       )}
                       {posProvider === 'petpooja' && (
                         <p className="mt-3 text-xs text-on-surface-variant">

@@ -1,6 +1,6 @@
 # Menuverse Deployment Guide
 
-Last updated: May 2026. Production architecture is Supabase-native.
+Last updated: June 2026. Production architecture is Supabase-native.
 
 ## 1. Frontend Hosting
 
@@ -90,6 +90,46 @@ Run all SQL migrations under `supabase/migrations/`, then run:
 ```
 
 If using the dashboard SQL editor, paste the contents of `supabase/rls-policies.sql`.
+
+### Required Supabase Extensions
+
+Enable these in the hosted Supabase dashboard before running migrations:
+
+- `pgcrypto` for UUID and crypto helpers.
+- `pg_net` for database-triggered Edge Function calls.
+- `pg_cron` for sentiment processing, ranking refreshes, POS retry, token refresh, WhatsApp expiry, and catalog sync workers.
+
+Migrations attempt to create these extensions, but hosted Supabase projects can require a dashboard toggle under **Project Settings > Database > Extensions**. If `pg_cron` was enabled after migrations already ran, rerun the latest migrations or schedule the jobs manually:
+
+```sql
+select cron.schedule('retry-failed-integration-jobs', '*/2 * * * *', 'select public.retry_failed_integration_jobs();');
+select cron.schedule('process-sentiment-queue', '* * * * *', 'select public.process_sentiment_queue_tick();');
+select cron.schedule('recalculate-dirty-menu-rankings', '*/10 * * * *', 'select public.process_dirty_menu_rankings();');
+select cron.schedule('queue-pending-pos-jobs', '* * * * *', 'select public.queue_pending_pos_jobs();');
+select cron.schedule('expire-stale-whatsapp-sessions', '*/30 * * * *', $$
+  update "WhatsAppSession"
+  set state = 'expired',
+      updated_at = now()
+  where updated_at < now() - interval '2 hours'
+    and state not in ('completed', 'expired');
+$$);
+select cron.schedule('process-ar-video-queue', '*/1 * * * *', $$
+  select net.http_post(
+    url := current_setting('app.settings.supabase_url') || '/functions/v1/process-ar-video',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'X-Menuverse-Internal-Secret', current_setting('app.settings.menuverse_internal_secret')
+    ),
+    body := '{}'::jsonb
+  );
+$$);
+select cron.schedule('integration-token-expiry-check', '0 9 * * *', 'select public.check_integration_token_expiry();');
+select cron.schedule('refresh-square-oauth-tokens', '0 9 * * *', 'select public.queue_square_token_refresh_tick();');
+select cron.schedule('sync-square-catalog-availability', '*/30 * * * *', 'select public.queue_square_catalog_sync_tick();');
+select cron.schedule('refresh-menu-item-stats', '*/15 * * * *', 'select public.refresh_all_menu_item_stats();');
+select cron.schedule('sync-petpooja-availability', '*/15 * * * *', 'select public.queue_petpooja_availability_sync_tick();');
+select public.verify_required_cron_jobs();
+```
 
 ## Post-Deployment Configuration
 
@@ -228,7 +268,7 @@ For Stripe Apple Pay, register every live customer-ordering domain in Stripe bef
 
 Owners configure POS, WhatsApp, delivery aggregators, Instagram, Facebook, Google ordering links, and signed custom webhooks under **Settings > Integrations**. Secret values are stored in `IntegrationSecret`, which has no browser-facing RLS policy. The browser receives redacted key names only.
 
-Square and Petpooja use first-party POS adapters. Register the generated inbound status callback URL from **Settings > Integrations > POS Settings** in the provider dashboard: Square Developer Console > Webhooks > Add Endpoint for Square, and the callback URL field in the Petpooja POS portal for Petpooja. Custom POS providers use the signed webhook bridge: provide an outbound bridge endpoint, then copy the generated inbound status callback URL into the bridge configuration.
+Square and Petpooja use first-party POS adapters. Square OAuth automatically registers the generated inbound status callback URL and stores the returned signing key for webhook verification. If OAuth registration fails, use **Settings > Integrations > POS Settings** to copy the same URL into Square Developer Console > Webhooks > Add Endpoint. Petpooja still requires pasting the callback URL into the Petpooja POS portal. Custom POS providers use the signed webhook bridge: provide an outbound bridge endpoint, then copy the generated inbound status callback URL into the bridge configuration.
 
 The integration endpoints are:
 

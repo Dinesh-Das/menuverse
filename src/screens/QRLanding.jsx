@@ -3,12 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   fetchTableInfo,
   getGuestProfileForSession,
+  resolveOrCreateGuestProfile,
+  saveGuestContact,
   startOrResumeTableSession,
   startOrResumeTableSessionForTable,
 } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import { useTheme } from '../context/ThemeContext';
 import { getStoredTableSessionToken } from '../lib/tableSessionStorage';
+import { useToast } from '../components/Toast';
 
 function surfaceWelcome(table) {
   const identifier = table?.surface_label || table?.number || '';
@@ -24,12 +27,18 @@ export default function QRLanding() {
   const navigate = useNavigate();
   const { setSession, count } = useCart();
   const { isDark, toggleTheme } = useTheme();
+  const { addToast } = useToast();
   const [table, setTable] = useState(null);
+  const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeSessionToken, setActiveSessionToken] = useState(null);
   const [returningGuest, setReturningGuest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sessionError, setSessionError] = useState(null);
+  const [guestLookupPhone, setGuestLookupPhone] = useState(localStorage.getItem('mv_guest_phone') || '');
+  const [guestLookupName, setGuestLookupName] = useState(localStorage.getItem('mv_guest_name') || '');
+  const [guestLookupSaving, setGuestLookupSaving] = useState(false);
+  const [guestLookupDismissed, setGuestLookupDismissed] = useState(window.sessionStorage.getItem('mv_guest_lookup_dismissed') === 'true');
   const [deliveryAddress, setDeliveryAddress] = useState(localStorage.getItem('mv_delivery_address') || '');
   const cachedRestaurantName = localStorage.getItem('mv_restaurant_name') || restaurantSlug?.replace(/-/g, ' ') || 'Menuverse';
 
@@ -83,6 +92,7 @@ export default function QRLanding() {
           }
           sessionPayload.tableSessionId = tableSession?.id;
           sessionPayload.tableSessionToken = tableSession?.token || tableSession?.session_code;
+          setActiveSessionId(sessionPayload.tableSessionId || null);
           setActiveSessionToken(sessionPayload.tableSessionToken);
         } catch (sessionErr) {
           console.warn('[Menuverse] Table session RPC unavailable:', sessionErr.message);
@@ -113,6 +123,51 @@ export default function QRLanding() {
       localStorage.setItem('mv_delivery_address', deliveryAddress.trim());
     }
     navigate(`/r/${restaurantSlug}/menu`);
+  };
+
+  const handleGuestLookup = async () => {
+    const phone = guestLookupPhone.trim();
+    const name = guestLookupName.trim();
+    if (!phone || phone.replace(/\D/g, '').length < 10) {
+      addToast('Add a valid phone number to continue.', 'error');
+      return;
+    }
+    if (!table?.restaurant_id || !activeSessionToken) {
+      addToast('Your table session is still starting. Try again in a moment.', 'error');
+      return;
+    }
+
+    setGuestLookupSaving(true);
+    try {
+      await saveGuestContact({
+        restaurantId: table.restaurant_id,
+        tableSessionToken: activeSessionToken,
+        name,
+        phone,
+        marketingConsent: false,
+      });
+      const profile = await resolveOrCreateGuestProfile({
+        restaurantId: table.restaurant_id,
+        tableSessionId: activeSessionId,
+        name,
+        phone,
+        marketingConsent: false,
+      });
+      setReturningGuest(profile);
+      localStorage.setItem('mv_contact_saved', 'true');
+      localStorage.setItem('mv_guest_phone', phone);
+      if (name) localStorage.setItem('mv_guest_name', name);
+      addToast('Visit linked. Your menu is ready.', 'success');
+    } catch (err) {
+      addToast(`Could not link this visit: ${err.message}`, 'error');
+    } finally {
+      setGuestLookupSaving(false);
+    }
+  };
+
+  const dismissGuestLookup = () => {
+    window.sessionStorage.setItem('mv_guest_lookup_dismissed', 'true');
+    setGuestLookupDismissed(true);
   };
 
   const handleRescan = () => {
@@ -195,6 +250,47 @@ export default function QRLanding() {
               placeholder="Delivery address"
               className="mt-4 w-full rounded-xl bg-surface-container-high border border-outline-variant/20 px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
             />
+          )}
+          {activeSessionToken && !returningGuest && !guestLookupDismissed && (
+            <div className="mt-4 rounded-xl border border-outline-variant/10 bg-surface-container p-4 text-left">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-on-surface">Personalize this visit</p>
+                  <p className="mt-1 text-xs text-on-surface-variant">Add a phone number to use saved preferences and loyalty.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissGuestLookup}
+                  className="material-symbols-outlined text-base text-on-surface-variant"
+                  aria-label="Skip personalization"
+                >
+                  close
+                </button>
+              </div>
+              <div className="space-y-2">
+                <input
+                  type="tel"
+                  value={guestLookupPhone}
+                  onChange={e => setGuestLookupPhone(e.target.value)}
+                  placeholder="Phone"
+                  className="w-full rounded-xl border border-outline-variant/20 bg-surface-container-high px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                />
+                <input
+                  value={guestLookupName}
+                  onChange={e => setGuestLookupName(e.target.value)}
+                  placeholder="Name (optional)"
+                  className="w-full rounded-xl border border-outline-variant/20 bg-surface-container-high px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                />
+                <button
+                  type="button"
+                  onClick={handleGuestLookup}
+                  disabled={guestLookupSaving}
+                  className="w-full rounded-xl bg-primary px-4 py-3 text-xs font-bold uppercase tracking-widest text-on-primary disabled:opacity-50"
+                >
+                  {guestLookupSaving ? 'Saving...' : 'Save Visit'}
+                </button>
+              </div>
+            </div>
           )}
           {activeSessionToken && count > 0 && (
             <button

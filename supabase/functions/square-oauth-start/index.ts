@@ -6,6 +6,7 @@ import { asString, requireRestaurantRole } from '../_shared/integration-config.t
 const SQUARE_SCOPES = [
   'ITEMS_READ',
   'MERCHANT_PROFILE_READ',
+  'ORDERS_READ',
   'ORDERS_WRITE',
 ].join(' ');
 

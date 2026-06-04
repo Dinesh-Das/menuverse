@@ -251,6 +251,12 @@ export default function Dashboard() {
   );
   const sentimentUrlConfigured = Boolean(sentimentConfig?.url_configured ?? sentimentConfig?.supabase_url_configured);
   const sentimentAnalysisTotal = Number(sentimentConfig?.analyses_last_24h || 0);
+  const sentimentQueuePending = Number(sentimentConfig?.queue_pending || 0);
+  const sentimentCronMissing = Boolean(
+    sentimentConfig
+    && (!sentimentConfig.cron_available || !sentimentConfig.required_cron_jobs_configured)
+  );
+  const sentimentQueueStalled = Boolean(sentimentConfig && sentimentQueuePending > 0 && sentimentAnalysisTotal === 0);
 
   return (
     <AdminLayout>
@@ -275,6 +281,25 @@ export default function Dashboard() {
               <pre className="mt-2 select-all overflow-x-auto whitespace-pre-wrap break-all rounded-lg bg-black/40 px-3 py-2 text-xs text-amber-200">
                 {`ALTER DATABASE postgres SET "app.settings.edge_function_base_url" = 'https://YOUR_PROJECT_REF.supabase.co/functions/v1';`}
               </pre>
+            </div>
+          </div>
+        )}
+
+        {(sentimentCronMissing || sentimentQueueStalled) && (
+          <div className="mb-8 flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+            <span className="material-symbols-outlined mt-0.5 text-amber-400">schedule</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-amber-300">Sentiment analysis is not running</p>
+              <p className="mt-1 text-xs text-amber-300/70">
+                {sentimentCronMissing
+                  ? 'Enable pg_cron in Supabase and run the scheduled-job setup from DEPLOY.md to activate AI feedback processing.'
+                  : 'Feedback is queued, but no analysis has completed in the last 24 hours. Check pg_cron jobs and Edge Function secrets.'}
+              </p>
+              {sentimentConfig?.missing_cron_jobs?.length > 0 && (
+                <p className="mt-2 text-xs text-amber-200">
+                  Missing jobs: {sentimentConfig.missing_cron_jobs.join(', ')}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -316,7 +341,7 @@ export default function Dashboard() {
               </div>
               <div className="rounded-xl border border-outline-variant/10 bg-surface-container p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Queue</p>
-                <p className="mt-2 text-sm font-bold text-on-surface">{Number(sentimentConfig.queue_pending || 0)} active</p>
+                <p className="mt-2 text-sm font-bold text-on-surface">{sentimentQueuePending} active</p>
                 <p className={`mt-1 text-xs ${Number(sentimentConfig.queue_dead_letter || 0) > 0 ? 'text-error' : 'text-on-surface-variant'}`}>
                   {Number(sentimentConfig.queue_dead_letter || 0)} dead-letter jobs
                 </p>
